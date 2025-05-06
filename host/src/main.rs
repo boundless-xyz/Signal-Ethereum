@@ -19,7 +19,7 @@ use url::Url;
 const DATA_PATH: &str = "./data/sepolia/states/";
 const HTTP_CACHE: &str = "./data/http/";
 
-/// CLI for generating and submitting Lido oracle proofs
+/// CLI for generating and submitting ZKasper proofs
 #[derive(Parser, Debug)]
 #[clap(author, version, about, long_about = None)]
 struct Args {

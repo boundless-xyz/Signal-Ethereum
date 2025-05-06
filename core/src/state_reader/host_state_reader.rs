@@ -1,0 +1,207 @@
+use ethereum_consensus::{electra::compute_epoch_at_slot, state_transition::Context};
+use ssz_rs::prelude::*;
+use thiserror::Error;
+use tracing::info;
+
+use crate::{
+    Epoch, PublicKey, Root, StateReader, ValidatorInfo, beacon_state::mainnet::BeaconState,
+};
+use std::{collections::BTreeMap, io::Write};
+
+use super::{StateReaderError, TrackingStateReader};
+
+#[derive(Error, Debug)]
+pub enum HostReaderError {
+    #[error("Io: {0}")]
+    Io(#[from] std::io::Error),
+    #[error("SszDeserialize: {0}")]
+    SszDeserialize(#[from] ssz_rs::DeserializeError),
+    #[error("SszMerklize: {0}")]
+    SszMerkleization(#[from] ssz_rs::MerkleizationError),
+}
+
+pub struct HostStateReader {
+    /// Epochs to state roots
+    pub state_root: BTreeMap<Epoch, Root>,
+    /// Map from state_root to map of gindex and hash or value
+    pub cache: BTreeMap<Root, BeaconState>,
+
+    pub validator_cache: Vec<ValidatorInfo>,
+
+    pub context: Context,
+}
+
+impl HostStateReader {
+    pub fn new(context: Context) -> Self {
+        Self {
+            state_root: BTreeMap::new(),
+            cache: BTreeMap::new(),
+            validator_cache: Vec::new(),
+            context,
+        }
+    }
+
+    pub fn track(self, at_epoch: Epoch) -> TrackingStateReader {
+        TrackingStateReader::new(self, at_epoch)
+    }
+
+    pub fn build_validator_cache(&mut self, epoch: Epoch) -> Result<(), StateReaderError> {
+        info!("Starting to build validator cache");
+        let info: Vec<_> = self
+            .get_beacon_state_by_epoch(epoch)
+            .map(|state| {
+                state
+                    .validators()
+                    .iter()
+                    .map(|v| ValidatorInfo {
+                        pubkey: v.public_key.clone().into(),
+                        effective_balance: v.effective_balance,
+                        activation_epoch: v.activation_epoch,
+                        exit_epoch: v.exit_epoch,
+                    })
+                    .collect()
+            })
+            .unwrap();
+        self.validator_cache = info;
+        Ok(())
+    }
+
+    pub fn load_all_from_file(dir: &str, ctx: Context) -> Result<Self, HostReaderError> {
+        let mut reader = Self::new(ctx);
+        let data_dir = std::fs::read_dir(dir)?;
+        for path in data_dir {
+            let path = path?.path();
+            if path.is_file() {
+                let mut file = std::fs::File::open(path)?;
+                let mut state_bytes = Vec::new();
+                std::io::Read::read_to_end(&mut file, &mut state_bytes)?;
+                let state: BeaconState = ssz_rs::deserialize(&state_bytes)?;
+                let root = state.hash_tree_root()?;
+                let epoch = compute_epoch_at_slot(state.slot(), &reader.context);
+                reader.cache.insert(root, state);
+                reader.state_root.insert(epoch, root);
+            }
+        }
+        info!("Loaded states epochs: {:?}", reader.state_root.keys());
+        Ok(reader)
+    }
+
+    pub fn save_to_files(&self, dir: &str) -> Result<(), HostReaderError> {
+        std::fs::create_dir_all(dir)?;
+        let mut new_write = 0;
+        let mut skipped = 0;
+        for (epoch, root) in &self.state_root {
+            if let Some(state) = self.cache.get(root) {
+                let file_path = format!("{}/{}_{}_beacon_state.ssz", dir, epoch, root);
+                match std::fs::File::create_new(&file_path) {
+                    Ok(mut file) => {
+                        file.write_all(&ssz_rs::serialize(state).unwrap())?;
+                        new_write += 1;
+                    }
+                    Err(_e) => {
+                        skipped += 1;
+                    }
+                }
+            } else {
+                unreachable!("Should be a 1-1 mapping of state_root and cache");
+            }
+        }
+        info!(
+            "Saved {} new states and skipped {} existing ones",
+            new_write, skipped
+        );
+        Ok(())
+    }
+
+    pub fn get_beacon_state(&self, root: Root) -> Option<&BeaconState> {
+        self.cache.get(&root)
+    }
+
+    #[tracing::instrument(skip(self), fields(epoch = %epoch))]
+    pub fn get_beacon_state_by_epoch(&self, epoch: Epoch) -> Option<&BeaconState> {
+        info!("Get beacon state by epoch: {}", epoch);
+        let root = self.state_root.get(&epoch)?;
+        self.cache.get(root)
+    }
+}
+
+impl StateReader for HostStateReader {
+    type Error = HostReaderError;
+    #[tracing::instrument(skip(self), fields(epoch = %epoch))]
+    fn get_randao(&self, epoch: u64) -> Result<Option<[u8; 32]>, Self::Error> {
+        let mix_epoch = (epoch
+            + (self.context.epochs_per_historical_vector - self.context.min_seed_lookahead)
+            - 1)
+            % self.context.epochs_per_historical_vector;
+        info!("Mix epoch: {}", mix_epoch);
+        let state = self.get_beacon_state_by_epoch(epoch).unwrap();
+
+        Ok(state
+            .randao_mixes()
+            .get(mix_epoch as usize)
+            .map(|x| {
+                let mut mix = [0u8; 32];
+                mix.copy_from_slice(x.as_ref());
+                Some(mix)
+            })
+            .expect("randao mix index invalid"))
+    }
+
+    #[tracing::instrument(skip(self), fields(epoch = %epoch))]
+    fn get_validator_count(&self, epoch: Epoch) -> Result<Option<usize>, Self::Error> {
+        Ok(self
+            .get_beacon_state_by_epoch(epoch)
+            .map(|state| state.validators().len()))
+    }
+    // return the single aggregate signature and combined active balance obtained from validators indexed by the given indices
+    // not that validators indices never change so this is valid even if using a newer state than the current epoch
+    fn aggregate_validator_keys_and_balance(
+        &self,
+        indices: &[usize],
+    ) -> Result<(Vec<PublicKey>, u64), Self::Error> {
+        let mut pk_acc: Vec<PublicKey> = Vec::with_capacity(indices.len());
+        let mut bal_acc = 0;
+        for idx in indices.iter() {
+            let ValidatorInfo {
+                pubkey: pk,
+                effective_balance: bal,
+                ..
+            } = &self.validator_cache[*idx];
+            pk_acc.push(pk.clone());
+            bal_acc += bal;
+        }
+        Ok((pk_acc, bal_acc))
+    }
+
+    fn get_validator_activation_and_exit_epochs(
+        &self,
+        //TODO(ec2): Handle this
+        _epoch: Epoch,
+        validator_index: usize,
+    ) -> Result<(u64, u64), Self::Error> {
+        Ok((
+            self.validator_cache[validator_index].activation_epoch,
+            self.validator_cache[validator_index].exit_epoch,
+        ))
+    }
+
+    #[tracing::instrument(skip(self), fields(epoch = %epoch))]
+    fn get_total_active_balance(&self, epoch: u64) -> Result<u64, Self::Error> {
+        self.aggregate_validator_keys_and_balance(&self.get_active_validator_indices(epoch)?)
+            .map(|x| x.1)
+    }
+
+    // can override if there is already a cached copy of this available
+    #[tracing::instrument(skip(self), fields(epoch = %epoch))]
+    fn get_active_validator_indices(&self, epoch: u64) -> Result<Vec<usize>, Self::Error> {
+        Ok((0_usize..self.get_validator_count(epoch)?.unwrap())
+            .filter(|validator_index| {
+                // TODO: Remove this unwrap
+                let (activation, exit) = self
+                    .get_validator_activation_and_exit_epochs(epoch, *validator_index)
+                    .unwrap();
+                activation <= epoch && epoch < exit
+            })
+            .collect())
+    }
+}

@@ -1,0 +1,32 @@
+[package]
+name = "ssz-multiproofs"
+version = "0.1.0"
+edition = "2021"
+
+[features]
+default = []
+builder = ["dep:ssz_rs", "dep:ethereum-consensus", "dep:rayon"]
+progress-bar = ["dep:indicatif"]
+
+[dependencies]
+serde.workspace = true
+sha2.workspace = true
+alloy-primitives.workspace = true
+risc0-zkvm.workspace = true
+bitvec.workspace = true
+thiserror = "2.0.6"
+tracing.workspace = true
+
+# Optional dependencies for builder feature
+ssz_rs = { workspace = true, optional = true }
+ethereum-consensus = { workspace = true, optional = true , features = ["serde"] }
+rayon = { version = "1.10.0", optional = true }
+indicatif = { version = "0.17.9", features = ["rayon"], optional = true }
+itertools = "0.14.0"
+
+[dev-dependencies]
+# gindices.workspace = true
+ethereum-consensus = {workspace = true, features = ["serde"] }
+serde_json = "1.0.133"
+anyhow.workspace = true
+postcard = { version = "1.1.1", features = ["use-std"] }

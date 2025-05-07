@@ -54,6 +54,6 @@ pub trait StateReader {
         return [144, 0, 0, 116];
 
         #[cfg(not(feature = "sepolia"))]
-        return [0, 0, 0, 6];
+        return [5, 0, 0, 0];
     }
 }

@@ -9,7 +9,7 @@ use crate::{
 use alloc::collections::BTreeMap;
 use sha2::Digest;
 use ssz_rs::prelude::*;
-use tracing::{debug, info, warn};
+use tracing::{debug, error, info, trace, warn};
 pub fn verify<S: StateReader, C: Ctx>(state_reader: &mut S, input: Input, context: &C) -> bool {
     // 0. pre-conditions
     assert_eq!(
@@ -49,24 +49,49 @@ pub fn verify<S: StateReader, C: Ctx>(state_reader: &mut S, input: Input, contex
                 .enumerate()
                 .flat_map(|(i, bit)| bit.then_some(i))
                 .collect();
+            trace!("Committee indices: {:?}", committee_indices);
 
-            let mut attesting_indices = BTreeSet::new();
+            let mut attesting_indices = vec![];
+            let committees = committee_cache
+                .get_beacon_committees_at_slot(attestation.data.slot, context)
+                .unwrap();
+            let mut committee_offset = 0;
 
-            for (committee_offset, index) in committee_indices.clone().into_iter().enumerate() {
-                let committee = committee_cache
-                    .get_beacon_committee(attestation.data.slot, index, context)
-                    .unwrap();
-                for (i, validator_index) in committee.iter().enumerate() {
-                    if attestation.aggregation_bits[committee_offset + i] {
-                        attesting_indices.insert(*validator_index);
-                    }
+            let committee_count_per_slot = committees.len();
+            for committee_index in committee_indices {
+                let beacon_committee = committees
+                    .get(committee_index as usize)
+                    .expect("No committee found");
+
+                if committee_index >= committee_count_per_slot {
+                    error!("Invalid committee index: {}", committee_index);
                 }
+
+                let committee_attesters = beacon_committee
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(i, &index)| {
+                        if attestation
+                            .aggregation_bits
+                            .get(committee_offset + i)
+                            .unwrap_or(false)
+                        {
+                            Some(index)
+                        } else {
+                            None
+                        }
+                    })
+                    .collect::<BTreeSet<usize>>();
+
+                if committee_attesters.is_empty() {
+                    error!("Empty Committee");
+                }
+
+                attesting_indices.extend(committee_attesters);
+                committee_offset += beacon_committee.len();
             }
-
-            debug!("Attestation has {} participants", attesting_indices.len());
-
-            // TODO(ec2): We definitely can get around having to copy the indices
-            let attesting_indices: Vec<usize> = attesting_indices.into_iter().collect();
+            attesting_indices.sort_unstable();
+            info!("Attestation has {} participants", attesting_indices.len());
 
             let (pubkeys, attesting_balance) = state_reader
                 .aggregate_validator_keys_and_balance(&attesting_indices)
@@ -76,24 +101,24 @@ pub fn verify<S: StateReader, C: Ctx>(state_reader: &mut S, input: Input, contex
             let signing_root = compute_signing_root(&attestation.data, domain);
             let agg_pk = PublicKey::aggregate(&pubkeys).unwrap();
 
-            if let Err(_e) = fast_aggregate_verify_pre_aggregated(
+            if let Err(e) = fast_aggregate_verify_pre_aggregated(
                 &agg_pk,
                 signing_root.as_ref(),
                 &attestation.signature,
             ) {
-                // TODO(ec2): Dont actually need to panic here i dont think... we can just continue
-                panic!("Signature verification failed");
-            }
-            if let Some(idx) = links.iter().position(|x| x.0 == source && x.1 == target) {
-                balances
-                    .get_mut(&idx)
-                    .map(|c| *c += attesting_balance)
-                    .expect("should already exist");
+                warn!("Signature verification failed: {:?}", e);
             } else {
-                balances.insert(links.len(), attesting_balance);
-            }
-            if !links.contains(&(source.clone(), target.clone())) {
-                links.push((source.clone(), target.clone()));
+                if let Some(idx) = links.iter().position(|x| x.0 == source && x.1 == target) {
+                    balances
+                        .get_mut(&idx)
+                        .map(|c| *c += attesting_balance)
+                        .expect("should already exist");
+                } else {
+                    balances.insert(links.len(), attesting_balance);
+                }
+                if !links.contains(&(source.clone(), target.clone())) {
+                    links.push((source.clone(), target.clone()));
+                }
             }
         });
     let balances = balances.values().copied().collect::<Vec<_>>();

@@ -22,3 +22,4 @@ default = ["host"]
 host = [
     "dep:ethereum-consensus","ssz-multiproofs/builder", "blst/default"
 ]
+sepolia = []

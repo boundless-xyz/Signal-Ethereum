@@ -1,3 +1,4 @@
+use const_format::concatcp;
 use std::{io::Write, path::PathBuf};
 use z_core::{verify, GuestContext, HostContext, HostStateReader, Input, SszStateReader};
 
@@ -16,7 +17,12 @@ use ssz_rs::prelude::*;
 use tracing::{debug, error, info, warn};
 use url::Url;
 
-const DATA_PATH: &str = "./data/sepolia/states/";
+#[cfg(feature = "sepolia")]
+const NETWORK: &str = "sepolia";
+#[cfg(not(feature = "sepolia"))]
+const NETWORK: &str = "mainnet";
+
+const DATA_PATH: &str = concatcp!("./data/", NETWORK, "/states/");
 const HTTP_CACHE: &str = "./data/http/";
 
 /// CLI for generating and submitting ZKasper proofs
@@ -45,6 +51,8 @@ enum Command {
     NativeExec,
     #[clap(name = "daemon")]
     Daemon,
+    #[clap(name = "get-state")]
+    GetState,
 }
 
 #[tokio::main]
@@ -53,9 +61,11 @@ async fn main() {
     tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::filter::EnvFilter::from_default_env())
         .init();
+    #[cfg(feature = "sepolia")]
     let context = Context::for_sepolia();
 
-    let mut reader = HostStateReader::load_all_from_file(DATA_PATH, context.clone()).unwrap();
+    #[cfg(not(feature = "sepolia"))]
+    let context = Context::for_mainnet();
 
     let args = Args::parse();
 
@@ -64,7 +74,21 @@ async fn main() {
         beacon_client::BeaconClient::new_with_cache(Url::parse(&url).unwrap(), HTTP_CACHE).unwrap();
 
     match args.command {
+        Command::GetState => {
+            let mut state_bytes = beacon_client
+                .get_beacon_state_ssz_bytes(StateId::Finalized)
+                .await
+                .unwrap();
+            let b: z_core::mainnet::BeaconState = ssz_rs::deserialize(&state_bytes).unwrap();
+
+            info!("Deserialized as: {}", b.version());
+            let mut file = std::fs::File::create("test.ssz".to_owned()).unwrap();
+            file.write_all(&mut state_bytes).unwrap();
+        }
         Command::Exec => {
+            let mut reader =
+                HostStateReader::load_all_from_file(DATA_PATH, context.clone()).unwrap();
+
             let trusted_epoch = args.trusted_epoch.expect("trusted_epoch is required");
             let trusted_checkpoint = Checkpoint {
                 epoch: trusted_epoch,
@@ -105,6 +129,9 @@ async fn main() {
             info!("Journal: {:?}", journal);
         }
         Command::NativeExec => {
+            let mut reader =
+                HostStateReader::load_all_from_file(DATA_PATH, context.clone()).unwrap();
+
             let trusted_epoch = args.trusted_epoch.expect("trusted_epoch is required");
             let trusted_checkpoint = Checkpoint {
                 epoch: trusted_epoch,
@@ -246,35 +273,12 @@ async fn daemon(beacon_client: &beacon_client::BeaconClient) {
         .get_finality_checkpoints(StateId::Head)
         .await
         .unwrap();
-    info!("Previous Justified Checkpoint: {:?}", cp.previous_justified);
-    info!("Current Justified Checkpoint: {:?}", cp.current_justified);
-    info!("Current Finalize Checkpoint: {:?}", cp.finalized);
-
-    info!("Fetch Current Finalized Checkpoint Beacon State");
-
-    let state_bytes = if let Ok(mut file) = open_beacon_state_file(cp.finalized.epoch) {
-        let mut state_bytes = Vec::new();
-        std::io::Read::read_to_end(&mut file, &mut state_bytes).unwrap();
-        state_bytes
-    } else {
-        info!("Fetching Finalized Beacon from API");
-        let block = beacon_client
-            .get_block_header(BlockId::Root(cp.finalized.root))
-            .await
-            .unwrap();
-        let s = beacon_client
-            .get_beacon_state(StateId::Root(block.message.state_root))
-            .await
-            .unwrap();
-
-        let state_bytes = ssz_rs::serialize(&s).unwrap();
-        save_beacon_state_to_file(cp.finalized.epoch, &state_bytes).unwrap();
-        state_bytes
-    };
-
-    let b: z_core::mainnet::BeaconState = ssz_rs::deserialize(&state_bytes).unwrap();
-
-    info!("Beacon State Fork Version: {:?}", b.fork());
+    info!(
+        r#"Previous Justified Checkpoint: {:?}
+   Current Justified Checkpoint: {:?}
+   Current Finalize Checkpoint: {:?}"#,
+        cp.previous_justified, cp.current_justified, cp.finalized
+    );
 
     let mut event_stream = beacon_client
         .get_events(&[EventTopic::Head, EventTopic::FinalizedCheckpoint])
@@ -296,7 +300,7 @@ async fn daemon(beacon_client: &beacon_client::BeaconClient) {
                     cp.epoch, cp.block, cp.state
                 );
                 let s = beacon_client
-                    .get_beacon_state(StateId::Root(cp.state))
+                    .get_beacon_state_ssz(StateId::Root(cp.state))
                     .await
                     .unwrap();
                 save_beacon_state_to_file(cp.epoch, &ssz_rs::serialize(&s).unwrap()).unwrap();

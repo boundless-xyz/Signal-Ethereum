@@ -38,6 +38,7 @@ use tracing::{info, warn};
 use url::Url;
 
 use z_core::mainnet::BeaconState;
+
 /// Errors returned by the [BeaconClient].
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -49,6 +50,8 @@ pub enum Error {
     Middleware(#[from] reqwest_middleware::Error),
     #[error("version field does not match data version")]
     VersionMismatch,
+    #[error("Ssz deserialize error: {0}")]
+    SszDeserialize(#[from] ssz_rs::DeserializeError),
 }
 
 /// Response returned by the `get_block_header` API.
@@ -246,12 +249,21 @@ impl BeaconClient {
     }
 
     #[tracing::instrument(skip(self), fields(state_id = %state_id))]
-    /// TODO(ec2): This is borked... It just keeps getting json instead of octet-stream
-    pub async fn get_beacon_state_ssz(&self, state_id: impl Display) -> Result<Vec<u8>, Error> {
+    pub async fn get_beacon_state_ssz_bytes(
+        &self,
+        state_id: impl Display,
+    ) -> Result<Vec<u8>, Error> {
         let path = format!("eth/v2/debug/beacon/states/{state_id}");
-
         let result: Vec<u8> = self.http_get_ssz(&path).await?;
         Ok(result)
+    }
+
+    #[tracing::instrument(skip(self), fields(state_id = %state_id))]
+    pub async fn get_beacon_state_ssz(&self, state_id: impl Display) -> Result<BeaconState, Error> {
+        info!("Get beacon state ssz: {}", state_id);
+        let state_bytes = self.get_beacon_state_ssz_bytes(state_id).await?;
+        let state: BeaconState = ssz_rs::deserialize(&state_bytes)?;
+        Ok(state)
     }
 
     #[tracing::instrument(skip(self), fields(state_id = %state_id))]

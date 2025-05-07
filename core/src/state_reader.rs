@@ -42,11 +42,18 @@ pub trait StateReader {
 
     // TODO(ec2): This is hardcoded for sepola. We can get this from the state.
     fn genesis_validators_root(&self) -> B256 {
-        b256!("d8ea171f3c94aea21ebc42a1ed61052acf3f9209c00e4efbaaddac09ed9b8078")
+        #[cfg(feature = "sepolia")]
+        return b256!("d8ea171f3c94aea21ebc42a1ed61052acf3f9209c00e4efbaaddac09ed9b8078");
+        #[cfg(not(feature = "sepolia"))]
+        return b256!("4b363db94e286120d76eb905340fdd4e54bfe9f06bf33ff6cf5ad27f511bfe95");
     }
 
     // TODO(ec2): This is hardcoded for sepolia electra. We can get this from the state.
     fn fork_version(&self) -> [u8; 4] {
-        [144, 0, 0, 116]
+        #[cfg(feature = "sepolia")]
+        return [144, 0, 0, 116];
+
+        #[cfg(not(feature = "sepolia"))]
+        return [0, 0, 0, 6];
     }
 }

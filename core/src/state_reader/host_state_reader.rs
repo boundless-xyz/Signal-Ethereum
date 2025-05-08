@@ -6,7 +6,11 @@ use tracing::info;
 use crate::{
     Epoch, PublicKey, Root, StateReader, ValidatorInfo, beacon_state::mainnet::BeaconState,
 };
-use std::{collections::BTreeMap, io::Write};
+use std::{
+    collections::BTreeMap,
+    io::Write,
+    path::{Path, PathBuf},
+};
 
 use super::{StateReaderError, TrackingStateReader};
 
@@ -30,7 +34,7 @@ pub struct HostStateReader {
 
     pub context: Context,
 
-    dir: Option<String>,
+    dir: Option<PathBuf>,
 }
 
 impl HostStateReader {
@@ -44,13 +48,18 @@ impl HostStateReader {
         }
     }
 
-    pub fn new_with_dir(dir: impl Into<String>, context: Context) -> Result<Self, HostReaderError> {
+    pub fn new_with_dir(
+        dir: impl Into<PathBuf>,
+        context: Context,
+    ) -> Result<Self, HostReaderError> {
+        let mut dir = dir.into();
+        dir.push("states/");
         let mut reader = Self {
             state_root: BTreeMap::new(),
             cache: BTreeMap::new(),
             validator_cache: Vec::new(),
             context,
-            dir: Some(dir.into()),
+            dir: Some(dir),
         };
         reader.load_all_from_file()?;
         Ok(reader)
@@ -58,11 +67,14 @@ impl HostStateReader {
 
     /// For testing
     pub fn test_with_just_one_dir(
-        dir: impl Into<String>,
+        dir: impl Into<PathBuf>,
         epoch: Epoch,
         context: Context,
     ) -> Result<Self, HostReaderError> {
         let mut reader = Self::new_empty(context);
+
+        let mut dir = dir.into();
+        dir.push("states/");
         reader.dir = Some(dir.into());
 
         let state = reader
@@ -126,17 +138,28 @@ impl HostStateReader {
             }
         }
         info!("Loaded states epochs: {:?}", self.state_root.keys());
-        self.save_to_files(dir)?;
+        self.save_to_files()?;
         Ok(())
     }
 
-    pub fn save_to_files(&self, dir: &str) -> Result<(), HostReaderError> {
-        std::fs::create_dir_all(dir)?;
+    pub fn save_to_files(&self) -> Result<(), HostReaderError> {
+        let dir = self
+            .dir
+            .as_ref()
+            .ok_or(HostReaderError::Io(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "No directory provided",
+            )))?;
         let mut new_write = 0;
         let mut skipped = 0;
         for (epoch, root) in self.state_root.iter() {
             if let Some(state) = self.cache.get(root) {
-                let file_path = format!("{}/{}_{}_beacon_state.ssz", dir, epoch, root);
+                let file_path = format!(
+                    "{}/{}_{}_beacon_state.ssz",
+                    dir.to_string_lossy(),
+                    epoch,
+                    root
+                );
                 match std::fs::File::create_new(&file_path) {
                     Ok(mut file) => {
                         file.write_all(&ssz_rs::serialize(state).unwrap())?;
@@ -307,5 +330,16 @@ impl StateReader for HostStateReader {
                 activation <= epoch && epoch < exit
             })
             .collect())
+    }
+
+    fn genesis_validators_root(&self) -> alloy_primitives::B256 {
+        let (_, state) = self.cache.first_key_value().unwrap();
+        state.genesis_validators_root()
+    }
+
+    fn fork_version(&self, epoch: Epoch) -> [u8; 4] {
+        self.get_beacon_state_by_epoch(epoch)
+            .map(|state| state.fork().current_version)
+            .unwrap()
     }
 }

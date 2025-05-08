@@ -95,7 +95,7 @@ pub fn verify<S: StateReader, C: Ctx>(state_reader: &mut S, input: Input, contex
                 .aggregate_validator_keys_and_balance(attesting_indices)
                 .unwrap();
 
-            let domain = beacon_attester_signing_domain(state_reader);
+            let domain = beacon_attester_signing_domain(state_reader, attestation_epoch);
             let signing_root = compute_signing_root(&attestation.data, domain);
             let agg_pk = PublicKey::aggregate(&pubkeys).unwrap();
 
@@ -227,10 +227,11 @@ fn get_supermajority_links<S: StateReader>(
         .collect()
 }
 
-fn beacon_attester_signing_domain<S: StateReader>(state_reader: &S) -> [u8; 32] {
+fn beacon_attester_signing_domain<S: StateReader>(state_reader: &S, epoch: Epoch) -> [u8; 32] {
     // let domain_type = Self::DomainBeaconAttester::to_u32().to_le_bytes();
     let domain_type = BEACON_ATTESTER_DOMAIN;
-    let fork_data_root = fork_data_root(state_reader, state_reader.genesis_validators_root());
+    let fork_data_root =
+        fork_data_root(state_reader, state_reader.genesis_validators_root(), epoch);
     let mut domain = [0_u8; 32];
     domain[..4].copy_from_slice(&domain_type);
     domain[4..].copy_from_slice(&fork_data_root.as_slice()[..28]);
@@ -256,6 +257,7 @@ pub fn compute_signing_root<T: SimpleSerialize>(ssz_object: &T, domain: Domain) 
 fn fork_data_root<S: StateReader>(
     state_reader: &S,
     genesis_validators_root: ssz_rs::Node,
+    epoch: Epoch,
 ) -> ssz_rs::Node {
     #[derive(SimpleSerialize)]
     struct ForkData {
@@ -263,7 +265,7 @@ fn fork_data_root<S: StateReader>(
         pub genesis_validators_root: Root,
     }
     ForkData {
-        current_version: state_reader.fork_version(),
+        current_version: state_reader.fork_version(epoch),
         genesis_validators_root,
     }
     .hash_tree_root()

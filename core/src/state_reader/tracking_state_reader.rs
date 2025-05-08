@@ -60,6 +60,8 @@ impl TrackingStateReader {
 
         let state_multiproof = match state {
             BeaconState::Electra(state) => state_builder
+                .with_path::<ElectraBeaconState>(&["genesis_validators_root".into()])
+                .with_path::<ElectraBeaconState>(&["fork".into(), "current_version".into()])
                 .with_path::<ElectraBeaconState>(&["validators".into()])
                 .with_gindex(randao_mixes_gindex)
                 .build(state)
@@ -169,5 +171,13 @@ impl StateReader for TrackingStateReader {
 
     fn get_active_validator_indices(&self, epoch: Epoch) -> Result<Vec<usize>, Self::Error> {
         Ok(self.reader.get_active_validator_indices(epoch)?)
+    }
+
+    fn genesis_validators_root(&self) -> alloy_primitives::B256 {
+        self.reader.genesis_validators_root()
+    }
+
+    fn fork_version(&self, epoch: Epoch) -> [u8; 4] {
+        self.reader.fork_version(epoch)
     }
 }

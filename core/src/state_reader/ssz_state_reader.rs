@@ -101,8 +101,8 @@ impl SszStateReader<'_> {
 
             let pubkey = PublicKey::from_bytes(buf.as_slice()).unwrap();
             #[cfg(not(feature = "host"))]
-            if read_vcount % 50000 == 0 {
-                info!("Validator Cache Construction {}", read_vcount);
+            if _i % 50000 == 0 {
+                info!("Validator Cache Construction at {} validators", _i);
             }
 
             validator_cache.insert(
@@ -183,8 +183,18 @@ impl StateReader for SszStateReader<'_> {
         epoch: crate::Epoch,
         validator_index: usize,
     ) -> Result<(u64, u64), Self::Error> {
-        let mut activation = self.cache.validators[&(validator_index as u64)].activation_epoch;
-        let mut exit = self.cache.validators[&(validator_index as u64)].exit_epoch;
+        let mut activation = self
+            .cache
+            .validators
+            .get(&(validator_index as u64))
+            .ok_or(())?
+            .activation_epoch;
+        let mut exit = self
+            .cache
+            .validators
+            .get(&(validator_index as u64))
+            .ok_or(())?
+            .exit_epoch;
         // replace any activations/exists with their most recent patch updates if any
         for (epoch, patch) in self.patches.iter().filter(|(e, _)| *e <= &epoch) {
             if patch

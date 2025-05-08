@@ -157,19 +157,23 @@ impl StateReader for HostStateReader {
     // not that validators indices never change so this is valid even if using a newer state than the current epoch
     fn aggregate_validator_keys_and_balance(
         &self,
-        indices: &[usize],
+        indices: impl IntoIterator<Item = usize>,
     ) -> Result<(Vec<PublicKey>, u64), Self::Error> {
-        let mut pk_acc: Vec<PublicKey> = Vec::with_capacity(indices.len());
         let mut bal_acc = 0;
-        for idx in indices.iter() {
-            let ValidatorInfo {
-                pubkey: pk,
-                effective_balance: bal,
-                ..
-            } = &self.validator_cache[*idx];
-            pk_acc.push(pk.clone());
-            bal_acc += bal;
-        }
+        let pk_acc = indices
+            .into_iter()
+            .map(|idx| {
+                let ValidatorInfo {
+                    pubkey,
+                    effective_balance,
+                    ..
+                } = &self.validator_cache[idx];
+                bal_acc += effective_balance;
+
+                pubkey.clone()
+            })
+            .collect();
+
         Ok((pk_acc, bal_acc))
     }
 
@@ -187,7 +191,7 @@ impl StateReader for HostStateReader {
 
     #[tracing::instrument(skip(self), fields(epoch = %epoch))]
     fn get_total_active_balance(&self, epoch: u64) -> Result<u64, Self::Error> {
-        self.aggregate_validator_keys_and_balance(&self.get_active_validator_indices(epoch)?)
+        self.aggregate_validator_keys_and_balance(self.get_active_validator_indices(epoch)?)
             .map(|x| x.1)
     }
 

@@ -68,7 +68,7 @@ impl SszStateReader<'_> {
 
             let pubkey = PublicKey::from_bytes(buf.as_slice()).unwrap();
             validator_cache.push(ValidatorInfo {
-                pubkey: pubkey.into(),
+                pubkey,
                 effective_balance,
                 activation_epoch,
                 exit_epoch,
@@ -80,7 +80,7 @@ impl SszStateReader<'_> {
         assert_eq!(v_count, validator_count);
 
         self.cache.validators = validator_cache;
-        self.cache.validator_count = v_count as u64;
+        self.cache.validator_count = v_count;
         self.cache.randao = *randao;
     }
 }
@@ -106,19 +106,23 @@ impl StateReader for SszStateReader<'_> {
 
     fn aggregate_validator_keys_and_balance(
         &self,
-        indices: &[usize],
+        indices: impl IntoIterator<Item = usize>,
     ) -> Result<(Vec<PublicKey>, u64), Self::Error> {
-        let mut pk_acc: Vec<PublicKey> = Vec::with_capacity(indices.len());
         let mut bal_acc = 0;
-        for idx in indices.iter() {
-            let ValidatorInfo {
-                pubkey: pk,
-                effective_balance: bal,
-                ..
-            } = &self.cache.validators[*idx];
-            pk_acc.push(pk.clone());
-            bal_acc += bal;
-        }
+        let pk_acc = indices
+            .into_iter()
+            .map(|idx| {
+                let ValidatorInfo {
+                    pubkey,
+                    effective_balance,
+                    ..
+                } = &self.cache.validators[idx];
+                bal_acc += effective_balance;
+
+                pubkey.clone()
+            })
+            .collect();
+
         Ok((pk_acc, bal_acc))
     }
 
@@ -172,7 +176,7 @@ impl StateReader for SszStateReader<'_> {
     }
 
     fn get_total_active_balance(&self, epoch: crate::Epoch) -> Result<u64, Self::Error> {
-        self.aggregate_validator_keys_and_balance(&self.get_active_validator_indices(epoch)?)
+        self.aggregate_validator_keys_and_balance(self.get_active_validator_indices(epoch)?)
             .map(|x| x.1)
     }
 

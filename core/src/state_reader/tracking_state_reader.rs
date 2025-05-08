@@ -79,8 +79,26 @@ impl TrackingStateReader {
             .unwrap();
         let active_validator_count = active_validators.len();
         info!("Number of active validators: {active_validator_count}");
+        let patches: BTreeMap<u64, StatePatch> = self.patches.replace(BTreeMap::new());
+
+        // Get all the validator indices in patches (activations and exits)
+        let patched_val_indices = patches
+            .values()
+            .flat_map(|patch| {
+                patch
+                    .activations
+                    .iter()
+                    .chain(patch.exits.iter())
+                    .map(|idx| *idx as usize)
+            })
+            .collect::<Vec<_>>();
+        info!(
+            "Number of patched validators: {}",
+            patched_val_indices.len()
+        );
         let g_indices = active_validators
             .into_iter()
+            .chain(patched_val_indices)
             .map(|idx| {
                 let public_key_path: &[Path] = &[
                     &[idx.into(), "public_key".into(), 0.into()],
@@ -119,7 +137,6 @@ impl TrackingStateReader {
 
         validator_multiproof.verify(&validators_root).unwrap();
 
-        let patches = self.patches.replace(BTreeMap::new());
         SszStateReader {
             trusted_epoch: self.trusted_epoch,
             beacon_state: state_multiproof,

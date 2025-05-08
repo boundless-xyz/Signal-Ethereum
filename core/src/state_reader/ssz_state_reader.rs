@@ -89,7 +89,7 @@ impl SszStateReader<'_> {
 
             // We are calulating the validator index from the gindex.
             let validator_index =
-                (exit_epoch_gindex >> VALIDATOR_TREE_DEPTH) - (1 << VALIDATOR_LIST_TREE_DEPTH) + 1;
+                (exit_epoch_gindex >> VALIDATOR_TREE_DEPTH) - (1 << VALIDATOR_LIST_TREE_DEPTH);
 
             buf[0..32].copy_from_slice(&pk0[0..32]);
             buf[32..48].copy_from_slice(&pk1[0..16]);

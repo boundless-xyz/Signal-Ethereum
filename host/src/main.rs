@@ -51,8 +51,6 @@ enum Command {
     NativeExec,
     #[clap(name = "daemon")]
     Daemon,
-    #[clap(name = "get-state")]
-    GetState,
 }
 
 #[tokio::main]
@@ -74,20 +72,8 @@ async fn main() {
         beacon_client::BeaconClient::new_with_cache(Url::parse(&url).unwrap(), HTTP_CACHE).unwrap();
 
     match args.command {
-        Command::GetState => {
-            let mut state_bytes = beacon_client
-                .get_beacon_state_ssz_bytes(StateId::Finalized)
-                .await
-                .unwrap();
-            let b: z_core::mainnet::BeaconState = ssz_rs::deserialize(&state_bytes).unwrap();
-
-            info!("Deserialized as: {}", b.version());
-            let mut file = std::fs::File::create("test.ssz".to_owned()).unwrap();
-            file.write_all(&mut state_bytes).unwrap();
-        }
         Command::Exec => {
-            let mut reader =
-                HostStateReader::load_all_from_file(DATA_PATH, context.clone()).unwrap();
+            let mut reader = HostStateReader::new_with_dir(DATA_PATH, context.clone()).unwrap();
 
             let trusted_epoch = args.trusted_epoch.expect("trusted_epoch is required");
             let trusted_checkpoint = Checkpoint {
@@ -129,8 +115,7 @@ async fn main() {
             info!("Journal: {:?}", journal);
         }
         Command::NativeExec => {
-            let mut reader =
-                HostStateReader::load_all_from_file(DATA_PATH, context.clone()).unwrap();
+            let mut reader = HostStateReader::new_with_dir(DATA_PATH, context.clone()).unwrap();
 
             let trusted_epoch = args.trusted_epoch.expect("trusted_epoch is required");
             let trusted_checkpoint = Checkpoint {
@@ -180,10 +165,20 @@ fn execute_guest_program(
     context: GuestContext,
 ) -> Vec<u8> {
     info!("Executing guest program");
+    let ssz_reader = bincode::serialize(&ssz_reader).unwrap();
+    info!("Serialized SszStateReader: {} bytes", ssz_reader.len());
+    let input = bincode::serialize(&input).unwrap();
+    info!("Serialized Input: {} bytes", input.len());
+    let context = bincode::serialize(&context).unwrap();
+    info!("Serialized Context: {} bytes", context.len());
+    info!(
+        "Total Input: {} bytes",
+        ssz_reader.len() + input.len() + context.len()
+    );
     let env = ExecutorEnv::builder()
-        .write_frame(&bincode::serialize(&ssz_reader).unwrap())
-        .write_frame(&bincode::serialize(&input).unwrap())
-        .write_frame(&bincode::serialize(&context).unwrap())
+        .write_frame(&ssz_reader)
+        .write_frame(&input)
+        .write_frame(&context)
         .build()
         .unwrap();
     let executor = default_executor();

@@ -11,6 +11,7 @@ type Node = [u8; 32];
 
 #[derive(Default)]
 pub struct ComputedCache {
+    // TODO(ec2): We should really only need the active ones. Can store in a map.
     pub validators: Vec<ValidatorInfo>,
     pub randao: [u8; 32],
     pub validator_count: u64,
@@ -19,14 +20,19 @@ pub struct ComputedCache {
 #[derive(Deserialize, Serialize)]
 pub struct SszStateReader<'a> {
     pub trusted_epoch: u64,
+    #[serde(borrow)]
     pub beacon_state: Multiproof<'a>,
+    #[serde(borrow)]
     pub validators: Multiproof<'a>,
     pub patches: BTreeMap<Epoch, StatePatch>,
+
+    // TODO(ec2): We can give hints from tthe host for the active validator count so we can proactively allocate memory
     #[serde(skip)]
     pub cache: ComputedCache,
 }
 
 impl SszStateReader<'_> {
+    #[tracing::instrument(skip(self, trusted_state_root))]
     pub fn verify_and_cache(&mut self, trusted_state_root: [u8; 32]) {
         // TODO(ec2): verify patches are valid
         info!("Patches: {:?}", self.patches);
@@ -39,11 +45,12 @@ impl SszStateReader<'_> {
         self.beacon_state
             .verify(&trusted_state_root)
             .expect("Beacon state root mismatch");
+        info!("Beacon state root verified");
         // merkle verify validators root
         self.validators
             .verify(validators_root)
             .expect("Validators root mismatch");
-
+        info!("Validators root verified");
         let validator_count = self.validators.get(3).unwrap();
         let validator_count = u64_from_b256(validator_count, 0);
 
@@ -67,6 +74,10 @@ impl SszStateReader<'_> {
             let exit_epoch = u64_from_b256(exit_epoch, 0);
 
             let pubkey = PublicKey::from_bytes(buf.as_slice()).unwrap();
+            #[cfg(not(feature = "host"))]
+            if _i % 50000 == 0 {
+                info!("Validator Cache Construction {}/{}", _i, validator_count);
+            }
             validator_cache.push(ValidatorInfo {
                 pubkey: pubkey.into(),
                 effective_balance,
@@ -74,6 +85,7 @@ impl SszStateReader<'_> {
                 exit_epoch,
             });
         }
+        info!("Validator Cache Construction complete");
 
         let (_, v_count) = values.next().unwrap();
         let v_count = u64_from_b256(v_count, 0);
@@ -127,39 +139,46 @@ impl StateReader for SszStateReader<'_> {
         epoch: crate::Epoch,
         validator_index: usize,
     ) -> Result<(u64, u64), Self::Error> {
-        let mut activation = self.cache.validators[validator_index].activation_epoch;
-        let mut exit = self.cache.validators[validator_index].exit_epoch;
-        // replace any activations/exists with their most recent patch updates if any
-        for (epoch, patch) in self.patches.iter().filter(|(e, _)| *e <= &epoch) {
-            if patch
-                .activations
-                .iter()
-                .filter(|vi| **vi == validator_index as u32)
-                .next_back()
-                .is_some()
-            {
-                info!(
-                    "validator {} Patched! activation: {} exit: {}",
-                    validator_index, activation, exit
-                );
-                activation = *epoch;
+        if let Some(&ValidatorInfo {
+            mut activation_epoch,
+            mut exit_epoch,
+            ..
+        }) = self.cache.validators.get(validator_index)
+        {
+            // replace any activations/exists with their most recent patch updates if any
+            for (epoch, patch) in self.patches.iter().filter(|(e, _)| *e <= &epoch) {
+                if patch
+                    .activations
+                    .iter()
+                    .filter(|vi| **vi == validator_index as u32)
+                    .next_back()
+                    .is_some()
+                {
+                    info!(
+                        "validator {} Patched! activation: {} exit: {}",
+                        validator_index, activation_epoch, exit_epoch
+                    );
+                    activation_epoch = *epoch;
+                }
+                if patch
+                    .exits
+                    .iter()
+                    .filter(|vi| **vi == validator_index as u32)
+                    .next_back()
+                    .is_some()
+                {
+                    info!(
+                        "validator {} Patched! activation: {} exit: {}",
+                        validator_index, activation_epoch, exit_epoch
+                    );
+                    exit_epoch = *epoch;
+                }
             }
-            if patch
-                .exits
-                .iter()
-                .filter(|vi| **vi == validator_index as u32)
-                .next_back()
-                .is_some()
-            {
-                info!(
-                    "validator {} Patched! activation: {} exit: {}",
-                    validator_index, activation, exit
-                );
-                exit = *epoch;
-            }
-        }
 
-        Ok((activation, exit))
+            Ok((activation_epoch, exit_epoch))
+        } else {
+            return Err(());
+        }
     }
 
     fn get_validator_count(&self, epoch: crate::Epoch) -> Result<Option<usize>, Self::Error> {
@@ -179,11 +198,13 @@ impl StateReader for SszStateReader<'_> {
     fn get_active_validator_indices(&self, epoch: crate::Epoch) -> Result<Vec<usize>, Self::Error> {
         Ok((0_usize..self.get_validator_count(epoch)?.unwrap())
             .filter(|validator_index| {
-                // TODO: Remove this unwrap
-                let (activation, exit) = self
-                    .get_validator_activation_and_exit_epochs(epoch, *validator_index)
-                    .unwrap();
-                activation <= epoch && epoch < exit
+                if let Ok((activation, exit)) =
+                    self.get_validator_activation_and_exit_epochs(epoch, *validator_index)
+                {
+                    activation <= epoch && epoch < exit
+                } else {
+                    false
+                }
             })
             .collect())
     }

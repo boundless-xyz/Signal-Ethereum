@@ -29,22 +29,58 @@ pub struct HostStateReader {
     pub validator_cache: Vec<ValidatorInfo>,
 
     pub context: Context,
+
+    dir: Option<String>,
 }
 
 impl HostStateReader {
-    pub fn new(context: Context) -> Self {
+    pub fn new_empty(context: Context) -> Self {
         Self {
             state_root: BTreeMap::new(),
             cache: BTreeMap::new(),
             validator_cache: Vec::new(),
             context,
+            dir: None,
         }
+    }
+
+    pub fn new_with_dir(dir: impl Into<String>, context: Context) -> Result<Self, HostReaderError> {
+        let mut reader = Self {
+            state_root: BTreeMap::new(),
+            cache: BTreeMap::new(),
+            validator_cache: Vec::new(),
+            context,
+            dir: Some(dir.into()),
+        };
+        reader.load_all_from_file()?;
+        Ok(reader)
+    }
+
+    /// For testing
+    pub fn test_with_just_one_dir(
+        dir: impl Into<String>,
+        epoch: Epoch,
+        context: Context,
+    ) -> Result<Self, HostReaderError> {
+        let mut reader = Self::new_empty(context);
+        reader.dir = Some(dir.into());
+
+        let state = reader
+            .load_state_file_by_epoch(epoch)?
+            .expect("State not found");
+        let c_epoch = compute_epoch_at_slot(state.slot(), &reader.context);
+        let root = state.hash_tree_root()?;
+        assert!(c_epoch == epoch, "Epoch mismatch: {} != {}", c_epoch, epoch);
+        reader.cache.insert(root, state);
+        reader.state_root.insert(epoch, root);
+        Ok(reader)
     }
 
     pub fn track(self, at_epoch: Epoch) -> TrackingStateReader {
         TrackingStateReader::new(self, at_epoch)
     }
 
+    #[tracing::instrument(skip(self), fields(epoch = %epoch))]
     pub fn build_validator_cache(&mut self, epoch: Epoch) -> Result<(), StateReaderError> {
         info!("Starting to build validator cache");
         let info: Vec<_> = self
@@ -66,8 +102,15 @@ impl HostStateReader {
         Ok(())
     }
 
-    pub fn load_all_from_file(dir: &str, ctx: Context) -> Result<Self, HostReaderError> {
-        let mut reader = Self::new(ctx);
+    #[tracing::instrument(skip(self))]
+    fn load_all_from_file(&mut self) -> Result<(), HostReaderError> {
+        let dir = self
+            .dir
+            .as_ref()
+            .ok_or(HostReaderError::Io(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "No directory provided",
+            )))?;
         let data_dir = std::fs::read_dir(dir)?;
         for path in data_dir {
             let path = path?.path();
@@ -77,20 +120,21 @@ impl HostStateReader {
                 std::io::Read::read_to_end(&mut file, &mut state_bytes)?;
                 let state: BeaconState = ssz_rs::deserialize(&state_bytes)?;
                 let root = state.hash_tree_root()?;
-                let epoch = compute_epoch_at_slot(state.slot(), &reader.context);
-                reader.cache.insert(root, state);
-                reader.state_root.insert(epoch, root);
+                let epoch = compute_epoch_at_slot(state.slot(), &self.context);
+                self.cache.insert(root, state);
+                self.state_root.insert(epoch, root);
             }
         }
-        info!("Loaded states epochs: {:?}", reader.state_root.keys());
-        Ok(reader)
+        info!("Loaded states epochs: {:?}", self.state_root.keys());
+        self.save_to_files(dir)?;
+        Ok(())
     }
 
     pub fn save_to_files(&self, dir: &str) -> Result<(), HostReaderError> {
         std::fs::create_dir_all(dir)?;
         let mut new_write = 0;
         let mut skipped = 0;
-        for (epoch, root) in &self.state_root {
+        for (epoch, root) in self.state_root.iter() {
             if let Some(state) = self.cache.get(root) {
                 let file_path = format!("{}/{}_{}_beacon_state.ssz", dir, epoch, root);
                 match std::fs::File::create_new(&file_path) {
@@ -122,6 +166,62 @@ impl HostStateReader {
         info!("Get beacon state by epoch: {}", epoch);
         let root = self.state_root.get(&epoch)?;
         self.cache.get(root)
+    }
+
+    fn load_state_file_by_epoch(
+        &self,
+        epoch: Epoch,
+    ) -> Result<Option<BeaconState>, HostReaderError> {
+        let dir = self
+            .dir
+            .as_ref()
+            .ok_or(HostReaderError::Io(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "No directory provided",
+            )))?;
+        // loop through the directory and find the file that starts with epoch
+        let data_dir = std::fs::read_dir(dir)?;
+        for path in data_dir {
+            let path = path?.path();
+            if path.is_file() {
+                let file_name = path.file_name().unwrap().to_str().unwrap();
+                if file_name.starts_with(&format!("{}_", epoch)) {
+                    info!("Found file: {}", file_name);
+                    let mut file = std::fs::File::open(path)?;
+                    let mut state_bytes = Vec::new();
+                    std::io::Read::read_to_end(&mut file, &mut state_bytes)?;
+                    let state: BeaconState = ssz_rs::deserialize(&state_bytes)?;
+                    return Ok(Some(state));
+                }
+            }
+        }
+        Ok(None)
+    }
+
+    fn _load_state_file_by_root(&self, root: Root) -> Result<Option<BeaconState>, HostReaderError> {
+        let dir = self
+            .dir
+            .as_ref()
+            .ok_or(HostReaderError::Io(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "No directory provided",
+            )))?;
+        // loop through the directory and find the file that contains the root
+        let data_dir = std::fs::read_dir(dir)?;
+        for path in data_dir {
+            let path = path?.path();
+            if path.is_file() {
+                let file_name = path.file_name().unwrap().to_str().unwrap();
+                if file_name.contains(&format!("_{}_", root)) {
+                    let mut file = std::fs::File::open(path)?;
+                    let mut state_bytes = Vec::new();
+                    std::io::Read::read_to_end(&mut file, &mut state_bytes)?;
+                    let state: BeaconState = ssz_rs::deserialize(&state_bytes)?;
+                    return Ok(Some(state));
+                }
+            }
+        }
+        Ok(None)
     }
 }
 

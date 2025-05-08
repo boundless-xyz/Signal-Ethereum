@@ -1,4 +1,3 @@
-use core::panic;
 use std::collections::BTreeSet;
 
 use crate::{
@@ -91,7 +90,7 @@ pub fn verify<S: StateReader, C: Ctx>(state_reader: &mut S, input: Input, contex
                 committee_offset += beacon_committee.len();
             }
             attesting_indices.sort_unstable();
-            info!("Attestation has {} participants", attesting_indices.len());
+            debug!("Attestation has {} participants", attesting_indices.len());
 
             let (pubkeys, attesting_balance) = state_reader
                 .aggregate_validator_keys_and_balance(&attesting_indices)

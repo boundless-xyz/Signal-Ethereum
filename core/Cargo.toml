@@ -20,6 +20,6 @@ serde_arrays = { version = "0.2.0"}
 [features]
 default = ["host"]
 host = [
-    "dep:ethereum-consensus","ssz-multiproofs/builder", "blst/default"
+    "dep:ethereum-consensus", "ssz-multiproofs/builder", "blst/default", "ssz-multiproofs/progress-bar"
 ]
 sepolia = []

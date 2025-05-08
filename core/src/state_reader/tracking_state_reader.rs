@@ -38,6 +38,7 @@ impl TrackingStateReader {
         &self.reader
     }
 
+    #[tracing::instrument(skip(self))]
     pub fn build(&mut self) -> SszStateReader {
         let state = self
             .reader
@@ -94,22 +95,21 @@ impl TrackingStateReader {
                             .unwrap()
                     })
                     .collect::<Vec<_>>();
-                if idx == 0 {
-                    info!("Validator g_indices: {:?}", g_indices);
-                }
+
                 g_indices
             })
             .flatten();
-
         let v_count_gindex =
             <List<Validator, VALIDATOR_REGISTRY_LIMIT>>::generalized_index(&[PathElement::Length])
                 .unwrap();
         let g_indices = g_indices.chain(std::iter::once(v_count_gindex));
 
+        info!("Building Validator multiproof");
         let validator_multiproof = MultiproofBuilder::new()
             .with_gindices(g_indices)
             .build(state.validators())
             .unwrap();
+        info!("Validator multiproof finished");
 
         validator_multiproof.verify(&validators_root).unwrap();
 

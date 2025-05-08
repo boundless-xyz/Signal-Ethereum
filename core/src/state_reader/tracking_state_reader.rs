@@ -74,31 +74,28 @@ impl TrackingStateReader {
         let validators_root = state.validators().hash_tree_root().unwrap();
 
         info!("Number of validators: {}", state.validators().len());
-        let g_indices = (0..state.validators().len())
-            .map(|idx| {
-                let public_key_path: &[Path] = &[
-                    &[idx.into(), "public_key".into(), 0.into()],
-                    &[idx.into(), "public_key".into(), 47.into()], // public key is a Vector<u8, 48>, so it takes up 2 leafs
-                ];
+        let g_indices = (0..state.validators().len()).flat_map(|idx| {
+            let public_key_path: &[Path] = &[
+                &[idx.into(), "public_key".into(), 0.into()],
+                &[idx.into(), "public_key".into(), 47.into()], // public key is a Vector<u8, 48>, so it takes up 2 leafs
+            ];
 
-                let balance_epoch_path: &[Path] = &[
-                    &[idx.into(), "effective_balance".into()],
-                    &[idx.into(), "activation_epoch".into()],
-                    &[idx.into(), "exit_epoch".into()],
-                ];
+            let balance_epoch_path: &[Path] = &[
+                &[idx.into(), "effective_balance".into()],
+                &[idx.into(), "activation_epoch".into()],
+                &[idx.into(), "exit_epoch".into()],
+            ];
 
-                let g_indices = public_key_path
-                    .iter()
-                    .chain(balance_epoch_path)
-                    .map(|path| {
-                        <List<Validator, VALIDATOR_REGISTRY_LIMIT>>::generalized_index(path)
-                            .unwrap()
-                    })
-                    .collect::<Vec<_>>();
+            let g_indices = public_key_path
+                .iter()
+                .chain(balance_epoch_path)
+                .map(|path| {
+                    <List<Validator, VALIDATOR_REGISTRY_LIMIT>>::generalized_index(path).unwrap()
+                })
+                .collect::<Vec<_>>();
 
-                g_indices
-            })
-            .flatten();
+            g_indices
+        });
         let v_count_gindex =
             <List<Validator, VALIDATOR_REGISTRY_LIMIT>>::generalized_index(&[PathElement::Length])
                 .unwrap();
@@ -147,7 +144,7 @@ impl StateReader for TrackingStateReader {
 
     fn aggregate_validator_keys_and_balance(
         &self,
-        indices: &[usize],
+        indices: impl IntoIterator<Item = usize>,
     ) -> Result<(Vec<PublicKey>, u64), Self::Error> {
         Ok(self.reader.aggregate_validator_keys_and_balance(indices)?)
     }

@@ -39,7 +39,7 @@ pub const MAX_VALIDATORS_PER_COMMITTEE: usize = 2048; // 2**11
 pub const MAX_COMMITTEES_PER_SLOT: usize = 64; // 2**6
 pub const BEACON_ATTESTER_DOMAIN: [u8; 4] = 1u32.to_le_bytes();
 
-#[derive(Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Input {
     pub trusted_checkpoint: Checkpoint, // Already finalized Checkpoint
     pub candidate_checkpoint: Checkpoint, // Justified Checkpoint we are trying to finalize
@@ -62,9 +62,7 @@ pub struct ValidatorInfo {
     pub exit_epoch: u64,
 }
 
-#[derive(
-    Default, Clone, Debug, SimpleSerialize, PartialEq, Eq, serde::Serialize, serde::Deserialize,
-)]
+#[derive(Clone, Debug, SimpleSerialize, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct AttestationData {
     pub slot: Slot,
     pub index: CommitteeIndex,
@@ -83,12 +81,23 @@ pub struct Attestation<const MAX_VALIDATORS_PER_SLOT: usize, const MAX_COMMITTEE
 }
 
 #[derive(
-    Default, Clone, Debug, SimpleSerialize, PartialEq, Eq, serde::Serialize, serde::Deserialize,
+    Clone,
+    Debug,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    SimpleSerialize,
+    serde::Serialize,
+    serde::Deserialize,
 )]
 pub struct Checkpoint {
     pub epoch: Epoch,
     pub root: Root,
 }
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Link(pub Checkpoint, pub Checkpoint);
 
 #[cfg(feature = "host")]
 impl From<ethereum_consensus::electra::Checkpoint> for Checkpoint {

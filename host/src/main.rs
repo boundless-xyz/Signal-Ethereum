@@ -204,7 +204,7 @@ async fn compute_next_candidate(
     );
 
     // Get the next state where theres a the states finalized checkpoint epoch is larger than the trusted_state
-    let next_state = (trusted_checkpoint.epoch..).into_iter().find_map(|epoch| {
+    let next_state = (trusted_checkpoint.epoch..).find_map(|epoch| {
         if let Some(state) = reader.get_beacon_state_by_epoch(epoch) {
             if state.finalized_checkpoint().epoch > trusted_checkpoint.epoch {
                 return Some(state);
@@ -229,13 +229,9 @@ async fn compute_next_candidate(
     let mut blocks = Vec::new();
     for slot in trusted_state.slot()..=next_state.slot() {
         let block = beacon_client.get_block(BlockId::Slot(slot)).await;
-        if let Ok(block) = block {
-            blocks.push(block);
-        } else {
-            warn!(
-                "Error fetching block at slot possibly missed slot: {}",
-                slot
-            );
+        match block {
+            Ok(block) => blocks.push(block),
+            Err(e) => warn!("Failed to get block {}: {}", slot, e),
         }
     }
 

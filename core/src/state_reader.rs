@@ -28,7 +28,7 @@ pub trait StateReader {
     fn get_randao(&self, epoch: Epoch) -> Result<Option<[u8; 32]>, Self::Error>;
     fn aggregate_validator_keys_and_balance(
         &self,
-        indices: &[usize],
+        indices: impl IntoIterator<Item = usize>,
     ) -> Result<(Vec<PublicKey>, u64), Self::Error>;
     fn get_validator_activation_and_exit_epochs(
         &self,

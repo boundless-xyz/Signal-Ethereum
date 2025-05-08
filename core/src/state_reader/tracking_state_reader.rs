@@ -73,8 +73,14 @@ impl TrackingStateReader {
 
         let validators_root = state.validators().hash_tree_root().unwrap();
 
-        info!("Number of validators: {}", state.validators().len());
-        let g_indices = (0..state.validators().len())
+        info!("Total Number of validators: {}", state.validators().len());
+        let active_validators = self
+            .get_active_validator_indices(self.trusted_epoch)
+            .unwrap();
+        let active_validator_count = active_validators.len();
+        info!("Number of active validators: {active_validator_count}");
+        let g_indices = active_validators
+            .into_iter()
             .map(|idx| {
                 let public_key_path: &[Path] = &[
                     &[idx.into(), "public_key".into(), 0.into()],
@@ -87,9 +93,9 @@ impl TrackingStateReader {
                     &[idx.into(), "exit_epoch".into()],
                 ];
 
-                let g_indices = public_key_path
+                let g_indices = balance_epoch_path
                     .iter()
-                    .chain(balance_epoch_path)
+                    .chain(public_key_path)
                     .map(|path| {
                         <List<Validator, VALIDATOR_REGISTRY_LIMIT>>::generalized_index(path)
                             .unwrap()

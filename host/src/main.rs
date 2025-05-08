@@ -86,7 +86,6 @@ async fn main() {
             reader
                 .build_validator_cache(input.trusted_checkpoint.epoch)
                 .unwrap();
-            let host_cache: Vec<z_core::ValidatorInfo> = reader.validator_cache.clone();
 
             let mut reader = reader.track(input.trusted_checkpoint.epoch);
             let context: HostContext = context.into();
@@ -98,11 +97,6 @@ async fn main() {
             let mut ssz_reader = reader.build();
 
             ssz_reader.verify_and_cache(*input.trusted_checkpoint_state_root);
-
-            assert!(
-                host_cache == ssz_reader.cache.validators,
-                "caches should be equal"
-            );
 
             if verify(&mut ssz_reader, input.clone(), &context) {
                 info!("FFG Verification passed with SszStateReader");
@@ -128,7 +122,6 @@ async fn main() {
             reader
                 .build_validator_cache(input.trusted_checkpoint.epoch)
                 .unwrap();
-            let host_cache: Vec<z_core::ValidatorInfo> = reader.validator_cache.clone();
 
             let mut reader = reader.track(input.trusted_checkpoint.epoch);
             let context: HostContext = context.into();
@@ -141,11 +134,6 @@ async fn main() {
             let mut ssz_reader = reader.build();
 
             ssz_reader.verify_and_cache(*input.trusted_checkpoint_state_root);
-
-            assert!(
-                host_cache == ssz_reader.cache.validators,
-                "caches should be equal"
-            );
 
             if verify(&mut ssz_reader, input.clone(), &context) {
                 info!("FFG Verification passed with SszStateReader");

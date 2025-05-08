@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use crate::{Epoch, PublicKey};
+use crate::{Epoch, PublicKey, VALIDATOR_LIST_TREE_DEPTH, VALIDATOR_TREE_DEPTH};
 use crate::{StatePatch, ValidatorInfo};
 use serde::{Deserialize, Serialize};
 use ssz_multiproofs::Multiproof;
@@ -12,7 +12,7 @@ type Node = [u8; 32];
 #[derive(Default)]
 pub struct ComputedCache {
     // TODO(ec2): We should really only need the active ones. Can store in a map.
-    pub validators: Vec<ValidatorInfo>,
+    pub validators: BTreeMap<u64, ValidatorInfo>,
     pub randao: [u8; 32],
     pub validator_count: u64,
 }
@@ -23,6 +23,11 @@ pub struct SszStateReader<'a> {
     #[serde(borrow)]
     pub beacon_state: Multiproof<'a>,
     #[serde(borrow)]
+    // Ideally this is only validators that are accessed in the verification of all attestations given to us.
+    // The second best thing is to have all the active validators.
+    // The worst thing is to have all the validators. This is what we do now.
+    // It should be a security issue to underpopulate this list, because Attestation verification will just fail.
+    // We may fail to finalize a checkpoint, but we cannot finalize an invalid checkpoint since this is still merkle proved.
     pub validators: Multiproof<'a>,
     pub patches: BTreeMap<Epoch, StatePatch>,
 
@@ -54,15 +59,24 @@ impl SszStateReader<'_> {
         let validator_count = self.validators.get(3).unwrap();
         let validator_count = u64_from_b256(validator_count, 0);
 
-        let mut validator_cache = Vec::new();
+        let mut validator_cache = BTreeMap::new();
         let mut buf: [u8; 48] = [0; 48];
         let mut values = self.validators.values();
 
+        let mut read_vcount = 0;
+
         for _i in 0..validator_count {
-            let (_, pk0) = values.next().unwrap();
-            buf[0..32].copy_from_slice(&pk0[0..32]);
-            let (_, pk1) = values.next().unwrap();
-            buf[32..48].copy_from_slice(&pk1[0..16]);
+            let pk0_maybe = values.next();
+            let pk1_maybe = values.next();
+            if pk1_maybe.is_none() {
+                // we are at the end of the multiproof, the last read value is the total validator count (not just the actives ones)
+                let (_, v_count) = pk0_maybe.unwrap();
+                read_vcount = u64_from_b256(v_count, 0);
+                break;
+            }
+            let (_, pk0) = pk0_maybe.unwrap();
+
+            let (_, pk1) = pk1_maybe.unwrap();
 
             let (_, effective_balance) = values.next().unwrap();
             let effective_balance = u64_from_b256(effective_balance, 0);
@@ -70,29 +84,43 @@ impl SszStateReader<'_> {
             let (_, activation_epoch) = values.next().unwrap();
             let activation_epoch = u64_from_b256(activation_epoch, 0);
 
-            let (_, exit_epoch) = values.next().unwrap();
+            let (exit_epoch_gindex, exit_epoch) = values.next().unwrap();
             let exit_epoch = u64_from_b256(exit_epoch, 0);
+
+            // We are calulating the validator index from the gindex.
+            let validator_index =
+                (exit_epoch_gindex >> VALIDATOR_TREE_DEPTH) - (1 << VALIDATOR_LIST_TREE_DEPTH) + 1;
+
+            buf[0..32].copy_from_slice(&pk0[0..32]);
+            buf[32..48].copy_from_slice(&pk1[0..16]);
 
             let pubkey = PublicKey::from_bytes(buf.as_slice()).unwrap();
             #[cfg(not(feature = "host"))]
-            if _i % 50000 == 0 {
-                info!("Validator Cache Construction {}/{}", _i, validator_count);
+            if read_vcount % 50000 == 0 {
+                info!("Validator Cache Construction {}", read_vcount);
             }
-            validator_cache.push(ValidatorInfo {
-                pubkey: pubkey.into(),
-                effective_balance,
-                activation_epoch,
-                exit_epoch,
-            });
-        }
-        info!("Validator Cache Construction complete");
 
-        let (_, v_count) = values.next().unwrap();
-        let v_count = u64_from_b256(v_count, 0);
-        assert_eq!(v_count, validator_count);
+            validator_cache.insert(
+                validator_index,
+                ValidatorInfo {
+                    pubkey: pubkey.into(),
+                    effective_balance,
+                    activation_epoch,
+                    exit_epoch,
+                },
+            );
+        }
+
+        info!("Validator Cache Construction complete");
+        assert_eq!(read_vcount, validator_count);
+
+        assert!(
+            values.next().is_none(),
+            "Validator multiproof has more than expected values"
+        );
 
         self.cache.validators = validator_cache;
-        self.cache.validator_count = v_count as u64;
+        self.cache.validator_count = read_vcount as u64;
         self.cache.randao = *randao;
     }
 }
@@ -127,7 +155,11 @@ impl StateReader for SszStateReader<'_> {
                 pubkey: pk,
                 effective_balance: bal,
                 ..
-            } = &self.cache.validators[*idx];
+            } = &self
+                .cache
+                .validators
+                .get(&(*idx as u64))
+                .expect("Validator not found. Cache is incorrectly constructed");
             pk_acc.push(pk.clone());
             bal_acc += bal;
         }
@@ -143,7 +175,7 @@ impl StateReader for SszStateReader<'_> {
             mut activation_epoch,
             mut exit_epoch,
             ..
-        }) = self.cache.validators.get(validator_index)
+        }) = self.cache.validators.get(&(validator_index as u64))
         {
             // replace any activations/exists with their most recent patch updates if any
             for (epoch, patch) in self.patches.iter().filter(|(e, _)| *e <= &epoch) {

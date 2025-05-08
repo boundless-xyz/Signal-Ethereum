@@ -22,6 +22,8 @@ pub fn verify<S: StateReader, C: Ctx>(state_reader: &mut S, input: Input, contex
 
     let mut links: Vec<(Checkpoint, Checkpoint)> = vec![];
     let mut balances: BTreeMap<usize, u64> = BTreeMap::new();
+    let mut successfully_verified_attestations = 0;
+    let mut failed_attestations = 0;
     input
         .attestations
         .iter()
@@ -105,6 +107,7 @@ pub fn verify<S: StateReader, C: Ctx>(state_reader: &mut S, input: Input, contex
                 signing_root.as_ref(),
                 &attestation.signature,
             ) {
+                failed_attestations += 1;
                 warn!("Signature verification failed: {:?}", e);
             } else {
                 if let Some(idx) = links.iter().position(|x| x.0 == source && x.1 == target) {
@@ -113,6 +116,7 @@ pub fn verify<S: StateReader, C: Ctx>(state_reader: &mut S, input: Input, contex
                         .map(|c| *c += attesting_balance)
                         .expect("should already exist");
                 } else {
+                    successfully_verified_attestations += 1;
                     balances.insert(links.len(), attesting_balance);
                 }
                 if !links.contains(&(source.clone(), target.clone())) {
@@ -120,6 +124,10 @@ pub fn verify<S: StateReader, C: Ctx>(state_reader: &mut S, input: Input, contex
                 }
             }
         });
+    info!(
+        "Successfully verified {} attestations, failed {}",
+        successfully_verified_attestations, failed_attestations
+    );
     let balances = balances.values().copied().collect::<Vec<_>>();
     debug!(
         "Links and balances: {:#?}",

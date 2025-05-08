@@ -2,14 +2,15 @@ use core::panic;
 use std::collections::BTreeSet;
 
 use crate::{
-    Attestation, BEACON_ATTESTER_DOMAIN, Checkpoint, CommitteeCache, CommitteeIndex, Ctx, Domain,
-    Epoch, Input, MAX_COMMITTEES_PER_SLOT, MAX_VALIDATORS_PER_COMMITTEE, PublicKey, Root,
-    ShuffleData, StateReader, Version, fast_aggregate_verify_pre_aggregated,
+    Attestation, BEACON_ATTESTER_DOMAIN, CommitteeCache, CommitteeIndex, Ctx, Domain, Epoch, Input,
+    Link, MAX_COMMITTEES_PER_SLOT, MAX_VALIDATORS_PER_COMMITTEE, PublicKey, Root, ShuffleData,
+    StateReader, Version, fast_aggregate_verify_pre_aggregated,
 };
 use alloc::collections::BTreeMap;
 use sha2::Digest;
 use ssz_rs::prelude::*;
 use tracing::{debug, info, warn};
+
 pub fn verify<S: StateReader, C: Ctx>(state_reader: &mut S, input: Input, context: &C) -> bool {
     // 0. pre-conditions
     assert_eq!(
@@ -21,19 +22,17 @@ pub fn verify<S: StateReader, C: Ctx>(state_reader: &mut S, input: Input, contex
     // 1. Attestation processing
     let mut committee_caches: BTreeMap<Epoch, CommitteeCache> = BTreeMap::new();
 
-    let mut links: Vec<(Checkpoint, Checkpoint)> = vec![];
-    let mut balances: BTreeMap<usize, u64> = BTreeMap::new();
+    let mut balances: BTreeMap<Link, u64> = BTreeMap::new();
     input
         .attestations
-        .iter()
+        .into_iter()
         .filter(|a| context.compute_epoch_at_slot(a.data.slot) >= input.trusted_checkpoint.epoch)
         .for_each(|attestation| {
             debug!(
                 "Checking attestation for slot: {} committee: {}",
                 attestation.data.slot, attestation.data.index
             );
-            let source = attestation.data.source.clone();
-            let target = attestation.data.target.clone();
+
             let attestation_epoch = context.compute_epoch_at_slot(attestation.data.slot);
             debug!("Attestation epoch: {}", attestation_epoch);
 
@@ -50,11 +49,11 @@ pub fn verify<S: StateReader, C: Ctx>(state_reader: &mut S, input: Input, contex
                 .flat_map(|(i, bit)| bit.then_some(i))
                 .collect();
 
+            // compute the set of attesting (validator) indices
             let mut attesting_indices = BTreeSet::new();
-
-            for (committee_offset, index) in committee_indices.clone().into_iter().enumerate() {
+            for (committee_offset, index) in committee_indices.iter().enumerate() {
                 let committee = committee_cache
-                    .get_beacon_committee(attestation.data.slot, index, context)
+                    .get_beacon_committee(attestation.data.slot, *index, context)
                     .unwrap();
                 for (i, validator_index) in committee.iter().enumerate() {
                     if attestation.aggregation_bits[committee_offset + i] {
@@ -65,11 +64,9 @@ pub fn verify<S: StateReader, C: Ctx>(state_reader: &mut S, input: Input, contex
 
             debug!("Attestation has {} participants", attesting_indices.len());
 
-            // TODO(ec2): We definitely can get around having to copy the indices
-            let attesting_indices: Vec<usize> = attesting_indices.into_iter().collect();
-
+            // check if attestation has a valid aggregate signature
             let (pubkeys, attesting_balance) = state_reader
-                .aggregate_validator_keys_and_balance(&attesting_indices)
+                .aggregate_validator_keys_and_balance(attesting_indices)
                 .unwrap();
 
             let domain = beacon_attester_signing_domain(state_reader);
@@ -84,31 +81,18 @@ pub fn verify<S: StateReader, C: Ctx>(state_reader: &mut S, input: Input, contex
                 // TODO(ec2): Dont actually need to panic here i dont think... we can just continue
                 panic!("Signature verification failed");
             }
-            if let Some(idx) = links.iter().position(|x| x.0 == source && x.1 == target) {
-                balances
-                    .get_mut(&idx)
-                    .map(|c| *c += attesting_balance)
-                    .expect("should already exist");
-            } else {
-                balances.insert(links.len(), attesting_balance);
-            }
-            if !links.contains(&(source.clone(), target.clone())) {
-                links.push((source.clone(), target.clone()));
-            }
+
+            let attestation_link = Link(attestation.data.source, attestation.data.target);
+            balances
+                .entry(attestation_link)
+                .and_modify(|balance| *balance += attesting_balance)
+                .or_insert(attesting_balance);
         });
-    let balances = balances.values().copied().collect::<Vec<_>>();
-    debug!(
-        "Links and balances: {:#?}",
-        balances.iter().zip(links.iter()).collect::<Vec<_>>()
-    );
+    debug!("Links and balances: {:#?}", balances);
+
     /////////// 2. Finality calculation  //////////////
     info!("2. Finality calculation start");
-    let sm_links = get_supermajority_links(
-        state_reader,
-        input.trusted_checkpoint.epoch,
-        &links,
-        &balances,
-    );
+    let sm_links = get_supermajority_links(state_reader, input.trusted_checkpoint.epoch, balances);
     debug!("Supermajority links: {:#?}", sm_links);
 
     // Because by definition the trusted CP is finalized we know that:
@@ -118,15 +102,15 @@ pub fn verify<S: StateReader, C: Ctx>(state_reader: &mut S, input: Input, contex
     // we will ignore the delayed finality case for now
 
     // by definition the trusted and candidate checkpoints are justified
-    let mut hightest_justified_epoch = input.candidate_checkpoint.epoch;
-    info!("Highest justified epoch: {}", hightest_justified_epoch);
+    let mut highest_justified_epoch = input.candidate_checkpoint.epoch;
+    info!("Highest justified epoch: {}", highest_justified_epoch);
     for epoch in input.candidate_checkpoint.epoch + 1.. {
         // if we can justify the checkpoint at that epoch then do it or else abort
         if sm_links
             .iter()
-            .any(|link| link.0.epoch <= hightest_justified_epoch && link.1.epoch == epoch)
+            .any(|link| link.0.epoch <= highest_justified_epoch && link.1.epoch == epoch)
         {
-            hightest_justified_epoch = epoch;
+            highest_justified_epoch = epoch;
             info!("Successfully justified epoch: {}", epoch);
         } else {
             // no way to finalize if we have a gap in the sequence of justified checkpoints
@@ -137,7 +121,7 @@ pub fn verify<S: StateReader, C: Ctx>(state_reader: &mut S, input: Input, contex
         }
         // see if we can now finalize the candidate by linking to the end of a sequence of justified checkpoints
         if sm_links.iter().any(|link| {
-            link.0 == input.candidate_checkpoint && link.1.epoch <= hightest_justified_epoch
+            link.0 == input.candidate_checkpoint && link.1.epoch <= highest_justified_epoch
         }) {
             info!("Successfully finalized candidate");
             return true;
@@ -148,11 +132,13 @@ pub fn verify<S: StateReader, C: Ctx>(state_reader: &mut S, input: Input, contex
 
 fn get_seed<S: StateReader>(state_reader: &S, epoch: u64, domain_type: [u8; 4]) -> [u8; 32] {
     let mix = state_reader.get_randao(epoch).unwrap().unwrap();
-    let mut input = [0u8; 44];
-    input[..4].copy_from_slice(&domain_type);
-    input[4..12].copy_from_slice(&epoch.to_le_bytes());
-    input[12..].copy_from_slice(mix.as_ref());
-    sha2::Sha256::digest(input).as_slice().try_into().unwrap()
+
+    let mut h = sha2::Sha256::new();
+    Digest::update(&mut h, domain_type);
+    Digest::update(&mut h, epoch.to_le_bytes());
+    Digest::update(&mut h, mix);
+
+    h.finalize().into()
 }
 
 // this can compute validators for up to
@@ -205,17 +191,15 @@ pub fn get_attesting_indices(
 fn get_supermajority_links<S: StateReader>(
     state_reader: &S,
     epoch: u64,
-    links: &[(Checkpoint, Checkpoint)],
-    balances: &[u64],
-) -> Vec<(Checkpoint, Checkpoint)> {
+    balances: BTreeMap<Link, u64>,
+) -> Vec<Link> {
     let total_active_balance = state_reader.get_total_active_balance(epoch).unwrap();
-    let sm_links = links
-        .iter()
-        .zip(balances.iter())
-        .filter(|(_, attesting_balance)| **attesting_balance * 3 >= &total_active_balance * 2) // check enough participation
-        .map(|(link, _)| link.clone())
-        .collect();
-    sm_links
+
+    balances
+        .into_iter()
+        .filter(|(_, attesting_balance)| *attesting_balance * 3 >= &total_active_balance * 2) // check enough participation
+        .map(|(link, _)| link)
+        .collect()
 }
 
 fn beacon_attester_signing_domain<S: StateReader>(state_reader: &S) -> [u8; 32] {

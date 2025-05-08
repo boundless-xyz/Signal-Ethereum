@@ -65,7 +65,6 @@ impl PublicKey {
 
 #[derive(Clone, Debug, Copy, PartialEq, Eq)]
 #[repr(transparent)]
-
 pub struct Signature(bls::Signature);
 
 impl Signature {

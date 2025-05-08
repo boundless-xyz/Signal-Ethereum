@@ -85,11 +85,7 @@ pub fn shuffle_list(
 ) -> Option<Vec<usize>> {
     let list_size: u64 = input.len().try_into().unwrap();
 
-    if input.is_empty()
-        || list_size > u64::max_value() / 2
-        || list_size > 2_u64.pow(24)
-        || rounds == 0
-    {
+    if input.is_empty() || list_size > u64::MAX / 2 || list_size > 2_u64.pow(24) || rounds == 0 {
         return None;
     }
 

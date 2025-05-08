@@ -60,6 +60,8 @@ impl TrackingStateReader {
 
         let state_multiproof = match state {
             BeaconState::Electra(state) => state_builder
+                .with_path::<ElectraBeaconState>(&["genesis_validators_root".into()])
+                .with_path::<ElectraBeaconState>(&["fork".into(), "current_version".into()])
                 .with_path::<ElectraBeaconState>(&["validators".into()])
                 .with_gindex(randao_mixes_gindex)
                 .build(state)
@@ -99,7 +101,7 @@ impl TrackingStateReader {
         let g_indices = active_validators
             .into_iter()
             .chain(patched_val_indices)
-            .map(|idx| {
+            .flat_map(|idx| {
                 let public_key_path: &[Path] = &[
                     &[idx.into(), "public_key".into(), 0.into()],
                     &[idx.into(), "public_key".into(), 47.into()], // public key is a Vector<u8, 48>, so it takes up 2 leafs
@@ -111,9 +113,9 @@ impl TrackingStateReader {
                     &[idx.into(), "exit_epoch".into()],
                 ];
 
-                let g_indices = balance_epoch_path
+                let g_indices = public_key_path
                     .iter()
-                    .chain(public_key_path)
+                    .chain(balance_epoch_path)
                     .map(|path| {
                         <List<Validator, VALIDATOR_REGISTRY_LIMIT>>::generalized_index(path)
                             .unwrap()
@@ -121,8 +123,7 @@ impl TrackingStateReader {
                     .collect::<Vec<_>>();
 
                 g_indices
-            })
-            .flatten();
+            });
         let v_count_gindex =
             <List<Validator, VALIDATOR_REGISTRY_LIMIT>>::generalized_index(&[PathElement::Length])
                 .unwrap();
@@ -170,7 +171,7 @@ impl StateReader for TrackingStateReader {
 
     fn aggregate_validator_keys_and_balance(
         &self,
-        indices: &[usize],
+        indices: impl IntoIterator<Item = usize>,
     ) -> Result<(Vec<PublicKey>, u64), Self::Error> {
         Ok(self.reader.aggregate_validator_keys_and_balance(indices)?)
     }
@@ -195,5 +196,13 @@ impl StateReader for TrackingStateReader {
 
     fn get_active_validator_indices(&self, epoch: Epoch) -> Result<Vec<usize>, Self::Error> {
         Ok(self.reader.get_active_validator_indices(epoch)?)
+    }
+
+    fn genesis_validators_root(&self) -> alloy_primitives::B256 {
+        self.reader.genesis_validators_root()
+    }
+
+    fn fork_version(&self, epoch: Epoch) -> [u8; 4] {
+        self.reader.fork_version(epoch)
     }
 }

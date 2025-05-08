@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 
 use crate::{Epoch, PublicKey, VALIDATOR_LIST_TREE_DEPTH, VALIDATOR_TREE_DEPTH};
 use crate::{StatePatch, ValidatorInfo};
+use alloy_primitives::B256;
 use serde::{Deserialize, Serialize};
 use ssz_multiproofs::Multiproof;
 use tracing::info;
@@ -15,6 +16,8 @@ pub struct ComputedCache {
     pub validators: BTreeMap<u64, ValidatorInfo>,
     pub randao: [u8; 32],
     pub validator_count: u64,
+    pub genesis_validators_root: B256,
+    pub fork_version: [u8; 4],
 }
 
 #[derive(Deserialize, Serialize)]
@@ -42,6 +45,8 @@ impl SszStateReader<'_> {
         // TODO(ec2): verify patches are valid
         info!("Patches: {:?}", self.patches);
         let mut beacon_state = self.beacon_state.values();
+        let (_, genesis_validators_root) = beacon_state.next().unwrap();
+        let (_, fork_current_version) = beacon_state.next().unwrap();
 
         let (_, validators_root) = beacon_state.next().unwrap();
         let (_, randao) = beacon_state.next().unwrap();
@@ -122,6 +127,13 @@ impl SszStateReader<'_> {
         self.cache.validators = validator_cache;
         self.cache.validator_count = read_vcount as u64;
         self.cache.randao = *randao;
+        self.cache.genesis_validators_root = genesis_validators_root.into();
+        self.cache.fork_version = fork_current_version[0..4].try_into().unwrap();
+        info!(
+            "Genesis validators root: {}",
+            self.cache.genesis_validators_root
+        );
+        info!("Fork version: {:?}", self.cache.fork_version);
     }
 }
 
@@ -146,23 +158,23 @@ impl StateReader for SszStateReader<'_> {
 
     fn aggregate_validator_keys_and_balance(
         &self,
-        indices: &[usize],
+        indices: impl IntoIterator<Item = usize>,
     ) -> Result<(Vec<PublicKey>, u64), Self::Error> {
-        let mut pk_acc: Vec<PublicKey> = Vec::with_capacity(indices.len());
         let mut bal_acc = 0;
-        for idx in indices.iter() {
-            let ValidatorInfo {
-                pubkey: pk,
-                effective_balance: bal,
-                ..
-            } = &self
-                .cache
-                .validators
-                .get(&(*idx as u64))
-                .expect("Validator not found. Cache is incorrectly constructed");
-            pk_acc.push(pk.clone());
-            bal_acc += bal;
-        }
+        let pk_acc = indices
+            .into_iter()
+            .map(|idx| {
+                let ValidatorInfo {
+                    pubkey,
+                    effective_balance,
+                    ..
+                } = &self.cache.validators[&(idx as u64)];
+                bal_acc += effective_balance;
+
+                pubkey.clone()
+            })
+            .collect();
+
         Ok((pk_acc, bal_acc))
     }
 
@@ -171,46 +183,39 @@ impl StateReader for SszStateReader<'_> {
         epoch: crate::Epoch,
         validator_index: usize,
     ) -> Result<(u64, u64), Self::Error> {
-        if let Some(&ValidatorInfo {
-            mut activation_epoch,
-            mut exit_epoch,
-            ..
-        }) = self.cache.validators.get(&(validator_index as u64))
-        {
-            // replace any activations/exists with their most recent patch updates if any
-            for (epoch, patch) in self.patches.iter().filter(|(e, _)| *e <= &epoch) {
-                if patch
-                    .activations
-                    .iter()
-                    .filter(|vi| **vi == validator_index as u32)
-                    .next_back()
-                    .is_some()
-                {
-                    info!(
-                        "validator {} Patched! activation: {} exit: {}",
-                        validator_index, activation_epoch, exit_epoch
-                    );
-                    activation_epoch = *epoch;
-                }
-                if patch
-                    .exits
-                    .iter()
-                    .filter(|vi| **vi == validator_index as u32)
-                    .next_back()
-                    .is_some()
-                {
-                    info!(
-                        "validator {} Patched! activation: {} exit: {}",
-                        validator_index, activation_epoch, exit_epoch
-                    );
-                    exit_epoch = *epoch;
-                }
+        let mut activation = self.cache.validators[&(validator_index as u64)].activation_epoch;
+        let mut exit = self.cache.validators[&(validator_index as u64)].exit_epoch;
+        // replace any activations/exists with their most recent patch updates if any
+        for (epoch, patch) in self.patches.iter().filter(|(e, _)| *e <= &epoch) {
+            if patch
+                .activations
+                .iter()
+                .filter(|vi| **vi == validator_index as u32)
+                .next_back()
+                .is_some()
+            {
+                info!(
+                    "validator {} Patched! activation: {} exit: {}",
+                    validator_index, activation, exit
+                );
+                activation = *epoch;
             }
-
-            Ok((activation_epoch, exit_epoch))
-        } else {
-            return Err(());
+            if patch
+                .exits
+                .iter()
+                .filter(|vi| **vi == validator_index as u32)
+                .next_back()
+                .is_some()
+            {
+                info!(
+                    "validator {} Patched! activation: {} exit: {}",
+                    validator_index, activation, exit
+                );
+                exit = *epoch;
+            }
         }
+
+        Ok((activation, exit))
     }
 
     fn get_validator_count(&self, epoch: crate::Epoch) -> Result<Option<usize>, Self::Error> {
@@ -223,7 +228,7 @@ impl StateReader for SszStateReader<'_> {
     }
 
     fn get_total_active_balance(&self, epoch: crate::Epoch) -> Result<u64, Self::Error> {
-        self.aggregate_validator_keys_and_balance(&self.get_active_validator_indices(epoch)?)
+        self.aggregate_validator_keys_and_balance(self.get_active_validator_indices(epoch)?)
             .map(|x| x.1)
     }
 
@@ -239,6 +244,15 @@ impl StateReader for SszStateReader<'_> {
                 }
             })
             .collect())
+    }
+
+    fn genesis_validators_root(&self) -> B256 {
+        self.cache.genesis_validators_root
+    }
+
+    // TODO(ec2): This needs to be handled for hardforks
+    fn fork_version(&self, _epoch: Epoch) -> [u8; 4] {
+        self.cache.fork_version
     }
 }
 

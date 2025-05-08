@@ -28,5 +28,3 @@ futures = { version = "0.3" }
 beacon-api-client = { git = "https://github.com/gattaca-com/ethereum-consensus.git", rev = "072fb2c5abdc8585db5ea6136db561b733a56234" }
 bincode = { workspace = true }
 const_format = "0.2"
-[features]
-sepolia = ["z-core/sepolia"]

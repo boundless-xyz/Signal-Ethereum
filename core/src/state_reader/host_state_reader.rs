@@ -1,16 +1,12 @@
 use ethereum_consensus::{electra::compute_epoch_at_slot, state_transition::Context};
 use ssz_rs::prelude::*;
 use thiserror::Error;
-use tracing::info;
+use tracing::{info, trace};
 
 use crate::{
     Epoch, PublicKey, Root, StateReader, ValidatorInfo, beacon_state::mainnet::BeaconState,
 };
-use std::{
-    collections::BTreeMap,
-    io::Write,
-    path::{Path, PathBuf},
-};
+use std::{collections::BTreeMap, io::Write, path::PathBuf};
 
 use super::{StateReaderError, TrackingStateReader};
 
@@ -186,7 +182,7 @@ impl HostStateReader {
 
     #[tracing::instrument(skip(self), fields(epoch = %epoch))]
     pub fn get_beacon_state_by_epoch(&self, epoch: Epoch) -> Option<&BeaconState> {
-        info!("Get beacon state by epoch: {}", epoch);
+        trace!("Get beacon state by epoch: {}", epoch);
         let root = self.state_root.get(&epoch)?;
         self.cache.get(root)
     }

@@ -221,21 +221,24 @@ fn calculate_compact_multi_merkle_root<const CHUNK_SIZE: usize>(
     let mut stack = Vec::with_capacity(stack_depth_hint);
     let mut node_index = 0;
     let mut hasher = Sha256::new();
+    let mut l = 0;
     for bit in descriptor.iter() {
         if *bit {
             stack.push(TreeNode::Leaf(
                 &data[node_index * CHUNK_SIZE..(node_index + 1) * CHUNK_SIZE],
             ));
+            l += 1;
             node_index += 1;
 
             // reduce any leaf pairs on the stack until we can progress no further
-            while stack.len() > 2
-                && stack[stack.len() - 1].has_value()
-                && stack[stack.len() - 2].has_value()
-                && stack[stack.len() - 3].is_internal()
+            while l >= 3
+                && stack[l - 1].has_value()
+                && stack[l - 2].has_value()
+                && stack[l - 3].is_internal()
             {
                 let right = stack.pop().unwrap();
                 let left = stack.pop().unwrap();
+                stack.pop(); // pop the internal node and replace with the hashed children
 
                 match left {
                     TreeNode::Leaf(node) => hasher.update(node),
@@ -248,12 +251,13 @@ fn calculate_compact_multi_merkle_root<const CHUNK_SIZE: usize>(
                     _ => panic!("Expected leaf"),
                 }
 
-                stack.pop(); // pop the internal node and replace with the hashed children
                 stack.push(TreeNode::<CHUNK_SIZE>::Computed(
                     hasher.finalize_reset().as_slice().try_into().unwrap(),
                 ));
+                l -= 2; // we popped two nodes and pushed one
             }
         } else {
+            l += 1;
             stack.push(TreeNode::Internal);
         }
     }

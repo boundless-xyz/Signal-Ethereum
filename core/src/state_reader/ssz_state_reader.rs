@@ -229,8 +229,7 @@ impl StateReader for SszStateReader<'_> {
     }
 
     fn get_validator_count(&self, epoch: crate::Epoch) -> Result<Option<usize>, Self::Error> {
-        let c = self.validators.get(3).unwrap();
-        let mut c = u64_from_b256(c, 0);
+        let mut c = self.cache.validator_count;
         for (_, patch) in self.patches.iter().filter(|(e, _)| *e <= &epoch) {
             c += patch.n_deposits_processed as u64;
         }

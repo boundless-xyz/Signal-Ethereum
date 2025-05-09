@@ -38,7 +38,10 @@ pub trait StateReader {
     // TODO(ec2): This should probably be a u64...
     fn get_validator_count(&self, epoch: Epoch) -> Result<Option<usize>, Self::Error>;
     fn get_total_active_balance(&self, epoch: Epoch) -> Result<u64, Self::Error>;
-    fn get_active_validator_indices(&self, epoch: Epoch) -> Result<Vec<usize>, Self::Error>;
+    fn get_active_validator_indices(
+        &self,
+        epoch: Epoch,
+    ) -> Result<impl Iterator<Item = usize>, Self::Error>;
 
     fn genesis_validators_root(&self) -> B256;
     // TODO(ec2): This should be handled in such a way that things won't break in the event of hardfork.

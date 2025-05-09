@@ -78,7 +78,8 @@ impl TrackingStateReader {
         info!("Total Number of validators: {}", state.validators().len());
         let active_validators = self
             .get_active_validator_indices(self.trusted_epoch)
-            .unwrap();
+            .unwrap()
+            .collect::<Vec<_>>();
         let active_validator_count = active_validators.len();
         info!("Number of active validators: {active_validator_count}");
         let patches: BTreeMap<u64, StatePatch> = self.patches.replace(BTreeMap::new());
@@ -194,7 +195,10 @@ impl StateReader for TrackingStateReader {
         Ok(self.reader.get_total_active_balance(epoch)?)
     }
 
-    fn get_active_validator_indices(&self, epoch: Epoch) -> Result<Vec<usize>, Self::Error> {
+    fn get_active_validator_indices(
+        &self,
+        epoch: Epoch,
+    ) -> Result<impl Iterator<Item = usize>, Self::Error> {
         Ok(self.reader.get_active_validator_indices(epoch)?)
     }
 

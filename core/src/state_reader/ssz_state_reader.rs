@@ -61,22 +61,20 @@ impl SszStateReader<'_> {
             .verify(validators_root)
             .expect("Validators root mismatch");
         info!("Validators root verified");
-        let validator_count = self.validators.get(3).unwrap();
-        let validator_count = u64_from_b256(validator_count, 0);
 
         let mut validator_cache = BTreeMap::new();
         let mut buf: [u8; 48] = [0; 48];
         let mut values = self.validators.values();
 
-        let mut read_vcount = 0;
+        let mut validator_count = 0;
 
-        for _i in 0..validator_count {
+        for _i in 0.. {
             let pk0_maybe = values.next();
             let pk1_maybe = values.next();
             if pk1_maybe.is_none() {
                 // we are at the end of the multiproof, the last read value is the total validator count (not just the actives ones)
                 let (_, v_count) = pk0_maybe.unwrap();
-                read_vcount = u64_from_b256(v_count, 0);
+                validator_count = u64_from_b256(v_count, 0);
                 break;
             }
             let (_, pk0) = pk0_maybe.unwrap();
@@ -117,7 +115,6 @@ impl SszStateReader<'_> {
         }
 
         info!("Validator Cache Construction complete");
-        assert_eq!(read_vcount, validator_count);
 
         assert!(
             values.next().is_none(),
@@ -125,7 +122,7 @@ impl SszStateReader<'_> {
         );
 
         self.cache.validators = validator_cache;
-        self.cache.validator_count = read_vcount as u64;
+        self.cache.validator_count = validator_count as u64;
         self.cache.randao = *randao;
         self.cache.genesis_validators_root = genesis_validators_root.into();
         self.cache.fork_version = fork_current_version[0..4].try_into().unwrap();
@@ -241,18 +238,27 @@ impl StateReader for SszStateReader<'_> {
             .map(|x| x.1)
     }
 
-    fn get_active_validator_indices(&self, epoch: crate::Epoch) -> Result<Vec<usize>, Self::Error> {
-        Ok((0_usize..self.get_validator_count(epoch)?.unwrap())
-            .filter(|validator_index| {
+    fn get_active_validator_indices(
+        &self,
+        epoch: crate::Epoch,
+    ) -> Result<impl Iterator<Item = usize>, Self::Error> {
+        Ok(self
+            .cache
+            .validators
+            .keys()
+            .filter_map(move |validator_index| {
                 if let Ok((activation, exit)) =
-                    self.get_validator_activation_and_exit_epochs(epoch, *validator_index)
+                    self.get_validator_activation_and_exit_epochs(epoch, *validator_index as usize)
                 {
-                    activation <= epoch && epoch < exit
+                    if activation <= epoch && epoch < exit {
+                        Some(*validator_index as usize)
+                    } else {
+                        None
+                    }
                 } else {
-                    false
+                    None
                 }
-            })
-            .collect())
+            }))
     }
 
     fn genesis_validators_root(&self) -> B256 {

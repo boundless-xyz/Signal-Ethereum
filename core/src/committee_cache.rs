@@ -138,6 +138,23 @@ impl CommitteeCache {
             .ok_or(Error::UnableToShuffle)
     }
 
+    /// Get all the Beacon committees at a given `slot`.
+    ///
+    /// Committees are sorted by ascending index order 0..committees_per_slot
+    pub fn get_beacon_committees_at_slot<C: Ctx>(
+        &self,
+        slot: Slot,
+        context: &C,
+    ) -> Result<Vec<&[usize]>, Error> {
+        if self.initialized_epoch.is_none() {
+            return Err(Error::NotInitialized);
+        }
+
+        (0..self.committees_per_slot())
+            .map(|index| self.get_beacon_committee(slot, index, context))
+            .collect()
+    }
+
     /// Returns the number of active validators in the initialized epoch.
     ///
     /// Always returns `usize::default()` for a non-initialized epoch.

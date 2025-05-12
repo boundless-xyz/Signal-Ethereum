@@ -1,4 +1,3 @@
-use core::panic;
 use std::collections::BTreeSet;
 
 use crate::{
@@ -9,8 +8,7 @@ use crate::{
 use alloc::collections::BTreeMap;
 use sha2::Digest;
 use ssz_rs::prelude::*;
-use tracing::{debug, info, warn};
-
+use tracing::{debug, error, info, trace, warn};
 pub fn verify<S: StateReader, C: Ctx>(state_reader: &mut S, input: Input, context: &C) -> bool {
     // 0. pre-conditions
     assert_eq!(
@@ -48,20 +46,48 @@ pub fn verify<S: StateReader, C: Ctx>(state_reader: &mut S, input: Input, contex
                 .enumerate()
                 .flat_map(|(i, bit)| bit.then_some(i))
                 .collect();
+            trace!("Committee indices: {:?}", committee_indices);
 
-            // compute the set of attesting (validator) indices
-            let mut attesting_indices = BTreeSet::new();
-            for (committee_offset, index) in committee_indices.iter().enumerate() {
-                let committee = committee_cache
-                    .get_beacon_committee(attestation.data.slot, *index, context)
-                    .unwrap();
-                for (i, validator_index) in committee.iter().enumerate() {
-                    if attestation.aggregation_bits[committee_offset + i] {
-                        attesting_indices.insert(*validator_index);
-                    }
+            let mut attesting_indices = vec![];
+            let committees = committee_cache
+                .get_beacon_committees_at_slot(attestation.data.slot, context)
+                .unwrap();
+            let mut committee_offset = 0;
+
+            let committee_count_per_slot = committees.len();
+            for committee_index in committee_indices {
+                let beacon_committee = committees
+                    .get(committee_index as usize)
+                    .expect("No committee found");
+
+                if committee_index >= committee_count_per_slot {
+                    error!("Invalid committee index: {}", committee_index);
                 }
-            }
 
+                let committee_attesters = beacon_committee
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(i, &index)| {
+                        if attestation
+                            .aggregation_bits
+                            .get(committee_offset + i)
+                            .unwrap_or(false)
+                        {
+                            Some(index)
+                        } else {
+                            None
+                        }
+                    })
+                    .collect::<BTreeSet<usize>>();
+
+                if committee_attesters.is_empty() {
+                    error!("Empty Committee");
+                }
+
+                attesting_indices.extend(committee_attesters);
+                committee_offset += beacon_committee.len();
+            }
+            attesting_indices.sort_unstable();
             debug!("Attestation has {} participants", attesting_indices.len());
 
             // check if attestation has a valid aggregate signature
@@ -69,24 +95,23 @@ pub fn verify<S: StateReader, C: Ctx>(state_reader: &mut S, input: Input, contex
                 .aggregate_validator_keys_and_balance(attesting_indices)
                 .unwrap();
 
-            let domain = beacon_attester_signing_domain(state_reader);
+            let domain = beacon_attester_signing_domain(state_reader, attestation_epoch);
             let signing_root = compute_signing_root(&attestation.data, domain);
             let agg_pk = PublicKey::aggregate(&pubkeys).unwrap();
 
-            if let Err(_e) = fast_aggregate_verify_pre_aggregated(
+            if let Err(e) = fast_aggregate_verify_pre_aggregated(
                 &agg_pk,
                 signing_root.as_ref(),
                 &attestation.signature,
             ) {
-                // TODO(ec2): Dont actually need to panic here i dont think... we can just continue
-                panic!("Signature verification failed");
+                warn!("Signature verification failed: {:?}", e);
+            } else {
+                let attestation_link = Link(attestation.data.source, attestation.data.target);
+                balances
+                    .entry(attestation_link)
+                    .and_modify(|balance| *balance += attesting_balance)
+                    .or_insert(attesting_balance);
             }
-
-            let attestation_link = Link(attestation.data.source, attestation.data.target);
-            balances
-                .entry(attestation_link)
-                .and_modify(|balance| *balance += attesting_balance)
-                .or_insert(attesting_balance);
         });
     debug!("Links and balances: {:#?}", balances);
 
@@ -202,10 +227,11 @@ fn get_supermajority_links<S: StateReader>(
         .collect()
 }
 
-fn beacon_attester_signing_domain<S: StateReader>(state_reader: &S) -> [u8; 32] {
+fn beacon_attester_signing_domain<S: StateReader>(state_reader: &S, epoch: Epoch) -> [u8; 32] {
     // let domain_type = Self::DomainBeaconAttester::to_u32().to_le_bytes();
     let domain_type = BEACON_ATTESTER_DOMAIN;
-    let fork_data_root = fork_data_root(state_reader, state_reader.genesis_validators_root());
+    let fork_data_root =
+        fork_data_root(state_reader, state_reader.genesis_validators_root(), epoch);
     let mut domain = [0_u8; 32];
     domain[..4].copy_from_slice(&domain_type);
     domain[4..].copy_from_slice(&fork_data_root.as_slice()[..28]);
@@ -231,6 +257,7 @@ pub fn compute_signing_root<T: SimpleSerialize>(ssz_object: &T, domain: Domain) 
 fn fork_data_root<S: StateReader>(
     state_reader: &S,
     genesis_validators_root: ssz_rs::Node,
+    epoch: Epoch,
 ) -> ssz_rs::Node {
     #[derive(SimpleSerialize)]
     struct ForkData {
@@ -238,7 +265,7 @@ fn fork_data_root<S: StateReader>(
         pub genesis_validators_root: Root,
     }
     ForkData {
-        current_version: state_reader.fork_version(),
+        current_version: state_reader.fork_version(epoch),
         genesis_validators_root,
     }
     .hash_tree_root()

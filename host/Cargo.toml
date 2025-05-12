@@ -23,7 +23,8 @@ url = { version = "2.5" }
 tracing =  {workspace =  true }
 tokio = { version = "1.35", features = ["full"] }
 mediatype = "0.19.13"
-z-core = { path = "../core", features = ["host"] }
+z-core = { path = "../core", default-features = false,  features = ["host"] }
 futures = { version = "0.3" }
 beacon-api-client = { git = "https://github.com/gattaca-com/ethereum-consensus.git", rev = "072fb2c5abdc8585db5ea6136db561b733a56234" }
 bincode = { workspace = true }
+const_format = "0.2"

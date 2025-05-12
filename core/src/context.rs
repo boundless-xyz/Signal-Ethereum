@@ -24,7 +24,7 @@ pub trait Ctx {
 #[derive(Serialize, Deserialize)]
 pub struct GuestContext;
 
-// TODO(ec2): Hardcoded for sepolia
+// TODO(ec2): Hardcoded for sepolia/mainnet. They are both the same. Consider a smarter method if we wanna run the spec-tests
 impl Ctx for GuestContext {
     type Error = ();
 

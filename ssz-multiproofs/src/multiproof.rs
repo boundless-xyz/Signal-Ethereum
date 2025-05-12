@@ -51,6 +51,7 @@ use crate::Descriptor;
 #[derive(Debug, PartialEq, Default, serde::Deserialize, serde::Serialize)]
 pub struct Multiproof<'a> {
     /// The merkle tree nodes corresponding to both leaves and internal proof nodes
+    #[serde(borrow)]
     pub(crate) data: Cow<'a, [u8]>,
 
     /// mask indicating which nodes are values (1) or proof supporting nodes (0)

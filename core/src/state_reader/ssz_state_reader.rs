@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 
 use crate::{Epoch, PublicKey};
 use crate::{StatePatch, ValidatorInfo};
+use alloy_primitives::B256;
 use serde::{Deserialize, Serialize};
 use ssz_multiproofs::Multiproof;
 use tracing::info;
@@ -11,26 +12,36 @@ type Node = [u8; 32];
 
 #[derive(Default)]
 pub struct ComputedCache {
+    // TODO(ec2): We should really only need the active ones. Can store in a map.
     pub validators: Vec<ValidatorInfo>,
     pub randao: [u8; 32],
     pub validator_count: u64,
+    pub genesis_validators_root: B256,
+    pub fork_version: [u8; 4],
 }
 
 #[derive(Deserialize, Serialize)]
 pub struct SszStateReader<'a> {
     pub trusted_epoch: u64,
+    #[serde(borrow)]
     pub beacon_state: Multiproof<'a>,
+    #[serde(borrow)]
     pub validators: Multiproof<'a>,
     pub patches: BTreeMap<Epoch, StatePatch>,
+
+    // TODO(ec2): We can give hints from tthe host for the active validator count so we can proactively allocate memory
     #[serde(skip)]
     pub cache: ComputedCache,
 }
 
 impl SszStateReader<'_> {
+    #[tracing::instrument(skip(self, trusted_state_root))]
     pub fn verify_and_cache(&mut self, trusted_state_root: [u8; 32]) {
         // TODO(ec2): verify patches are valid
         info!("Patches: {:?}", self.patches);
         let mut beacon_state = self.beacon_state.values();
+        let (_, genesis_validators_root) = beacon_state.next().unwrap();
+        let (_, fork_current_version) = beacon_state.next().unwrap();
 
         let (_, validators_root) = beacon_state.next().unwrap();
         let (_, randao) = beacon_state.next().unwrap();
@@ -39,11 +50,12 @@ impl SszStateReader<'_> {
         self.beacon_state
             .verify(&trusted_state_root)
             .expect("Beacon state root mismatch");
+        info!("Beacon state root verified");
         // merkle verify validators root
         self.validators
             .verify(validators_root)
             .expect("Validators root mismatch");
-
+        info!("Validators root verified");
         let validator_count = self.validators.get(3).unwrap();
         let validator_count = u64_from_b256(validator_count, 0);
 
@@ -67,6 +79,10 @@ impl SszStateReader<'_> {
             let exit_epoch = u64_from_b256(exit_epoch, 0);
 
             let pubkey = PublicKey::from_bytes(buf.as_slice()).unwrap();
+            #[cfg(not(feature = "host"))]
+            if _i % 50000 == 0 {
+                info!("Validator Cache Construction {}/{}", _i, validator_count);
+            }
             validator_cache.push(ValidatorInfo {
                 pubkey,
                 effective_balance,
@@ -74,6 +90,7 @@ impl SszStateReader<'_> {
                 exit_epoch,
             });
         }
+        info!("Validator Cache Construction complete");
 
         let (_, v_count) = values.next().unwrap();
         let v_count = u64_from_b256(v_count, 0);
@@ -82,6 +99,13 @@ impl SszStateReader<'_> {
         self.cache.validators = validator_cache;
         self.cache.validator_count = v_count;
         self.cache.randao = *randao;
+        self.cache.genesis_validators_root = genesis_validators_root.into();
+        self.cache.fork_version = fork_current_version[0..4].try_into().unwrap();
+        info!(
+            "Genesis validators root: {}",
+            self.cache.genesis_validators_root
+        );
+        info!("Fork version: {:?}", self.cache.fork_version);
     }
 }
 
@@ -183,13 +207,24 @@ impl StateReader for SszStateReader<'_> {
     fn get_active_validator_indices(&self, epoch: crate::Epoch) -> Result<Vec<usize>, Self::Error> {
         Ok((0_usize..self.get_validator_count(epoch)?.unwrap())
             .filter(|validator_index| {
-                // TODO: Remove this unwrap
-                let (activation, exit) = self
-                    .get_validator_activation_and_exit_epochs(epoch, *validator_index)
-                    .unwrap();
-                activation <= epoch && epoch < exit
+                if let Ok((activation, exit)) =
+                    self.get_validator_activation_and_exit_epochs(epoch, *validator_index)
+                {
+                    activation <= epoch && epoch < exit
+                } else {
+                    false
+                }
             })
             .collect())
+    }
+
+    fn genesis_validators_root(&self) -> B256 {
+        self.cache.genesis_validators_root
+    }
+
+    // TODO(ec2): This needs to be handled for hardforks
+    fn fork_version(&self, _epoch: Epoch) -> [u8; 4] {
+        self.cache.fork_version
     }
 }
 

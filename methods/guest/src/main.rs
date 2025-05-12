@@ -11,6 +11,7 @@ fn main() {
     let ssz_reader_bytes = env::read_frame();
     let input_bytes = env::read_frame();
     let _context = env::read_frame();
+    env::log("Finished reading frames. Start deserialization...");
     let mut state_reader: SszStateReader = bincode::deserialize(&ssz_reader_bytes).unwrap();
     env::log(&format!(
         "StateReader deserialized: {} bytes",

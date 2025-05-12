@@ -16,9 +16,6 @@ use ssz_rs::prelude::*;
 use tracing::{debug, error, info, warn};
 use url::Url;
 
-const DATA_PATH: &str = "./data/sepolia/states/";
-const HTTP_CACHE: &str = "./data/http/";
-
 /// CLI for generating and submitting ZKasper proofs
 #[derive(Parser, Debug)]
 #[clap(author, version, about, long_about = None)]
@@ -27,8 +24,17 @@ struct Args {
     #[clap(long)]
     trusted_epoch: Option<Epoch>,
 
+    /// Beacon API URL
     #[clap(long, required = true)]
     beacon_api: String,
+
+    /// Network name: sepolia or mainnet
+    #[clap(long, short, default_value = "sepolia")]
+    network: String,
+
+    /// Directory to store data
+    #[clap(long, short, default_value = "./data")]
+    data_dir: String,
 
     #[clap(subcommand)]
     command: Command,
@@ -53,18 +59,32 @@ async fn main() {
     tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::filter::EnvFilter::from_default_env())
         .init();
-    let context = Context::for_sepolia();
-
-    let mut reader = HostStateReader::load_all_from_file(DATA_PATH, context.clone()).unwrap();
 
     let args = Args::parse();
 
+    if !(args.network == "sepolia" || args.network == "mainnet") {
+        panic!("Invalid network. Use 'sepolia' or 'mainnet'.");
+    }
+
+    let mut data_dir = PathBuf::new();
+    data_dir.push(&args.data_dir);
+
+    // Note: The part of the context we use for mainnet and sepolia is the same.
+    let context = Context::for_mainnet();
+
     let url = args.beacon_api;
-    let beacon_client =
-        beacon_client::BeaconClient::new_with_cache(Url::parse(&url).unwrap(), HTTP_CACHE).unwrap();
+    let beacon_client = beacon_client::BeaconClient::new_with_cache(
+        Url::parse(&url).unwrap(),
+        &format!("{}/http", &args.data_dir),
+    )
+    .unwrap();
+
+    data_dir.push(args.network);
 
     match args.command {
         Command::Exec => {
+            let mut reader = HostStateReader::new_with_dir(&data_dir, context.clone()).unwrap();
+
             let trusted_epoch = args.trusted_epoch.expect("trusted_epoch is required");
             let trusted_checkpoint = Checkpoint {
                 epoch: trusted_epoch,
@@ -105,6 +125,8 @@ async fn main() {
             info!("Journal: {:?}", journal);
         }
         Command::NativeExec => {
+            let mut reader = HostStateReader::new_with_dir(&data_dir, context.clone()).unwrap();
+
             let trusted_epoch = args.trusted_epoch.expect("trusted_epoch is required");
             let trusted_checkpoint = Checkpoint {
                 epoch: trusted_epoch,
@@ -142,7 +164,7 @@ async fn main() {
             }
         }
         Command::Daemon => {
-            daemon(&beacon_client).await;
+            daemon(&data_dir, &beacon_client).await;
         }
     }
 }
@@ -153,10 +175,20 @@ fn execute_guest_program(
     context: GuestContext,
 ) -> Vec<u8> {
     info!("Executing guest program");
+    let ssz_reader = bincode::serialize(&ssz_reader).unwrap();
+    info!("Serialized SszStateReader: {} bytes", ssz_reader.len());
+    let input = bincode::serialize(&input).unwrap();
+    info!("Serialized Input: {} bytes", input.len());
+    let context = bincode::serialize(&context).unwrap();
+    info!("Serialized Context: {} bytes", context.len());
+    info!(
+        "Total Input: {} bytes",
+        ssz_reader.len() + input.len() + context.len()
+    );
     let env = ExecutorEnv::builder()
-        .write_frame(&bincode::serialize(&ssz_reader).unwrap())
-        .write_frame(&bincode::serialize(&input).unwrap())
-        .write_frame(&bincode::serialize(&context).unwrap())
+        .write_frame(&ssz_reader)
+        .write_frame(&input)
+        .write_frame(&context)
         .build()
         .unwrap();
     let executor = default_executor();
@@ -224,7 +256,7 @@ async fn compute_next_candidate(
         .collect::<Vec<_>>();
 
     info!("Got {} attestations", attestations.len());
-    reader.save_to_files(DATA_PATH).unwrap();
+    reader.save_to_files().unwrap();
 
     Input {
         trusted_checkpoint: trusted_checkpoint.into(),
@@ -234,7 +266,10 @@ async fn compute_next_candidate(
     }
 }
 
-async fn daemon(beacon_client: &beacon_client::BeaconClient) {
+async fn daemon(data_dir: impl Into<PathBuf>, beacon_client: &beacon_client::BeaconClient) {
+    let mut data_dir: PathBuf = data_dir.into();
+    data_dir.push("states/");
+
     let head = beacon_client.get_block(BlockId::Head).await.unwrap();
     info!("Current Chain Head Block: {:?}", head.slot());
 
@@ -242,35 +277,12 @@ async fn daemon(beacon_client: &beacon_client::BeaconClient) {
         .get_finality_checkpoints(StateId::Head)
         .await
         .unwrap();
-    info!("Previous Justified Checkpoint: {:?}", cp.previous_justified);
-    info!("Current Justified Checkpoint: {:?}", cp.current_justified);
-    info!("Current Finalize Checkpoint: {:?}", cp.finalized);
-
-    info!("Fetch Current Finalized Checkpoint Beacon State");
-
-    let state_bytes = if let Ok(mut file) = open_beacon_state_file(cp.finalized.epoch) {
-        let mut state_bytes = Vec::new();
-        std::io::Read::read_to_end(&mut file, &mut state_bytes).unwrap();
-        state_bytes
-    } else {
-        info!("Fetching Finalized Beacon from API");
-        let block = beacon_client
-            .get_block_header(BlockId::Root(cp.finalized.root))
-            .await
-            .unwrap();
-        let s = beacon_client
-            .get_beacon_state(StateId::Root(block.message.state_root))
-            .await
-            .unwrap();
-
-        let state_bytes = ssz_rs::serialize(&s).unwrap();
-        save_beacon_state_to_file(cp.finalized.epoch, &state_bytes).unwrap();
-        state_bytes
-    };
-
-    let b: z_core::mainnet::BeaconState = ssz_rs::deserialize(&state_bytes).unwrap();
-
-    info!("Beacon State Fork Version: {:?}", b.fork());
+    info!(
+        r#"Previous Justified Checkpoint: {:?}
+   Current Justified Checkpoint: {:?}
+   Current Finalize Checkpoint: {:?}"#,
+        cp.previous_justified, cp.current_justified, cp.finalized
+    );
 
     let mut event_stream = beacon_client
         .get_events(&[EventTopic::Head, EventTopic::FinalizedCheckpoint])
@@ -292,10 +304,11 @@ async fn daemon(beacon_client: &beacon_client::BeaconClient) {
                     cp.epoch, cp.block, cp.state
                 );
                 let s = beacon_client
-                    .get_beacon_state(StateId::Root(cp.state))
+                    .get_beacon_state_ssz(StateId::Root(cp.state))
                     .await
                     .unwrap();
-                save_beacon_state_to_file(cp.epoch, &ssz_rs::serialize(&s).unwrap()).unwrap();
+                save_beacon_state_to_file(&data_dir, cp.epoch, &ssz_rs::serialize(&s).unwrap())
+                    .unwrap();
             }
             Err(e) => {
                 warn!("Error: {:?}", e);
@@ -306,20 +319,19 @@ async fn daemon(beacon_client: &beacon_client::BeaconClient) {
         }
     }
 }
-#[tracing::instrument(fields(epoch = %epoch))]
-fn open_beacon_state_file(epoch: u64) -> std::io::Result<std::fs::File> {
-    debug!("loading beacon state from disk");
-    let file_path = format!("{DATA_PATH}{}_beacon_state.ssz", epoch);
-    std::fs::File::open(file_path)
-}
 
-#[tracing::instrument(skip(state_bytes), fields(epoch = %epoch))]
-fn save_beacon_state_to_file(epoch: u64, state_bytes: &[u8]) -> std::io::Result<()> {
+#[tracing::instrument(skip(state_bytes, data_dir), fields(epoch = %epoch))]
+fn save_beacon_state_to_file(
+    data_dir: impl Into<PathBuf>,
+    epoch: u64,
+    state_bytes: &[u8],
+) -> std::io::Result<()> {
     debug!("saving beacon state to disk");
-    let path = PathBuf::from(DATA_PATH);
-    std::fs::create_dir_all(&path)?;
-    let file_path = format!("{DATA_PATH}{}_beacon_state.ssz", epoch);
-    let mut file = std::fs::File::create_new(file_path)?;
+    let mut data_dir = data_dir.into();
+    std::fs::create_dir_all(&data_dir)?;
+    let file_name = format!("{}_beacon_state.ssz", epoch);
+    data_dir.push(file_name);
+    let mut file = std::fs::File::create_new(data_dir)?;
     file.write_all(state_bytes)?;
     Ok(())
 }

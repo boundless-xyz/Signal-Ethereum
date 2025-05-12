@@ -1,5 +1,5 @@
 use crate::PublicKey;
-use alloy_primitives::{B256, b256};
+use alloy_primitives::B256;
 use ssz_rs::prelude::*;
 
 use crate::Epoch;
@@ -40,13 +40,7 @@ pub trait StateReader {
     fn get_total_active_balance(&self, epoch: Epoch) -> Result<u64, Self::Error>;
     fn get_active_validator_indices(&self, epoch: Epoch) -> Result<Vec<usize>, Self::Error>;
 
-    // TODO(ec2): This is hardcoded for sepola. We can get this from the state.
-    fn genesis_validators_root(&self) -> B256 {
-        b256!("d8ea171f3c94aea21ebc42a1ed61052acf3f9209c00e4efbaaddac09ed9b8078")
-    }
-
-    // TODO(ec2): This is hardcoded for sepolia electra. We can get this from the state.
-    fn fork_version(&self) -> [u8; 4] {
-        [144, 0, 0, 116]
-    }
+    fn genesis_validators_root(&self) -> B256;
+    // TODO(ec2): This should be handled in such a way that things won't break in the event of hardfork.
+    fn fork_version(&self, epoch: Epoch) -> [u8; 4];
 }

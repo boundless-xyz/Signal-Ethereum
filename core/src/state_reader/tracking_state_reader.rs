@@ -8,7 +8,11 @@ use crate::{
     Epoch, HostContext, PublicKey, StatePatch, StateReader, beacon_state::mainnet::BeaconState,
     mainnet::ElectraBeaconState,
 };
-use std::{borrow::Cow, cell::RefCell, collections::BTreeMap};
+use std::{
+    borrow::Cow,
+    cell::RefCell,
+    collections::{BTreeMap, BTreeSet},
+};
 
 use super::{HostStateReader, SszStateReader, host_state_reader::HostReaderError};
 
@@ -99,12 +103,13 @@ impl TrackingStateReader {
             "Number of patched validators: {}",
             patched_val_indices.len()
         );
-        let mut sorted_indices = patched_val_indices
+        info!("Patched validator indices: {:?}", patched_val_indices);
+        let sorted_indices = patched_val_indices
             .iter()
             .chain(active_validators.iter())
             .copied()
-            .collect::<Vec<_>>();
-        sorted_indices.sort_unstable();
+            .collect::<BTreeSet<_>>();
+        // sorted_indices.sort_unstable();
 
         let public_keys = sorted_indices
             .into_iter()
@@ -117,12 +122,6 @@ impl TrackingStateReader {
                 .to_vec()
             })
             .collect::<Vec<_>>();
-        assert!(
-            public_keys.len() == (active_validator_count + patched_val_indices.len()) * 96,
-            "Public keys length mismatch: expected {} but got {}",
-            (active_validator_count + patched_val_indices.len()) * 96,
-            public_keys.len()
-        );
 
         let g_indices = active_validators
             .into_iter()

@@ -124,18 +124,13 @@ impl SszStateReader<'_> {
             uncompressed_key_bytes[0] &= 0b0001_1111;
             pubkey_g1_compressed[0] &= 0b0001_1111;
 
-            if pubkey_g1_compressed[0..48] != uncompressed_key_bytes[0..48] {
-                warn!(
-                    "Compressed x from merkle state does not match the one we just pass in: {}",
-                    i
-                );
-            }
-            // assert_eq!(
-            //     pubkey_g1_compressed[0..48],
-            //     uncompressed_key_bytes[0..48],
-            //     "Compressed x from merkle state does not match the one we just pass in: {}",
-            //     i
-            // );
+            assert_eq!(
+                pubkey_g1_compressed[0..48],
+                uncompressed_key_bytes[0..48],
+                "Compressed x from merkle state does not match the one we just pass in: i: {}, validator_index: {}",
+                i,
+                validator_index,
+            );
 
             let fp_x_cubed_plus_4 = unsafe {
                 let mut x = MaybeUninit::<blst_fp>::uninit();

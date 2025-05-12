@@ -1,11 +1,14 @@
+use std::borrow::Cow;
 use std::collections::BTreeMap;
+use std::mem::MaybeUninit;
 
 use crate::{Epoch, PublicKey, VALIDATOR_LIST_TREE_DEPTH, VALIDATOR_TREE_DEPTH};
 use crate::{StatePatch, ValidatorInfo};
 use alloy_primitives::B256;
+use blst::blst_fp;
 use serde::{Deserialize, Serialize};
 use ssz_multiproofs::Multiproof;
-use tracing::info;
+use tracing::{info, warn};
 
 use super::StateReader;
 type Node = [u8; 32];
@@ -34,10 +37,25 @@ pub struct SszStateReader<'a> {
     pub validators: Multiproof<'a>,
     pub patches: BTreeMap<Epoch, StatePatch>,
 
+    // chunked in 96
+    #[serde(borrow)]
+    pub public_keys: Cow<'a, [u8]>,
+
     // TODO(ec2): We can give hints from tthe host for the active validator count so we can proactively allocate memory
     #[serde(skip)]
     pub cache: ComputedCache,
 }
+
+const FOUR: blst_fp = blst_fp {
+    l: [
+        0xaa270000000cfff3,
+        0x53cc0032fc34000a,
+        0x478fe97a6b0a807f,
+        0xb1d37ebee6ba24d7,
+        0x8ec9733bbf78ab2f,
+        0x09d645513d83de7e,
+    ],
+};
 
 impl SszStateReader<'_> {
     #[tracing::instrument(skip(self, trusted_state_root))]
@@ -63,12 +81,12 @@ impl SszStateReader<'_> {
         info!("Validators root verified");
 
         let mut validator_cache = BTreeMap::new();
-        let mut buf: [u8; 48] = [0; 48];
+        let mut pubkey_g1_compressed: [u8; 48] = [0; 48];
         let mut values = self.validators.values();
 
         let mut validator_count = 0;
 
-        for _i in 0.. {
+        for i in 0.. {
             let pk0_maybe = values.next();
             let pk1_maybe = values.next();
             if pk1_maybe.is_none() {
@@ -94,13 +112,63 @@ impl SszStateReader<'_> {
             let validator_index =
                 (exit_epoch_gindex >> VALIDATOR_TREE_DEPTH) - (1 << VALIDATOR_LIST_TREE_DEPTH);
 
-            buf[0..32].copy_from_slice(&pk0[0..32]);
-            buf[32..48].copy_from_slice(&pk1[0..16]);
+            pubkey_g1_compressed[0..32].copy_from_slice(&pk0[0..32]);
+            pubkey_g1_compressed[32..48].copy_from_slice(&pk1[0..16]);
 
-            let pubkey = PublicKey::from_bytes(buf.as_slice()).unwrap();
+            let mut uncompressed_key_bytes = self.public_keys[i * 96..(i + 1) * 96].to_vec();
+            // TODO(ec2): Do we need to verify the sign of the Y-coordinate?
+            let _y_sign = (pubkey_g1_compressed[0] >> 5) & 1;
+
+            // check that the compressed x from merkle state is the same as the one we just pass in
+            // Removes the first 3 bits (the flags)
+            uncompressed_key_bytes[0] &= 0b0001_1111;
+            pubkey_g1_compressed[0] &= 0b0001_1111;
+
+            if pubkey_g1_compressed[0..48] != uncompressed_key_bytes[0..48] {
+                warn!(
+                    "Compressed x from merkle state does not match the one we just pass in: {}",
+                    i
+                );
+            }
+            // assert_eq!(
+            //     pubkey_g1_compressed[0..48],
+            //     uncompressed_key_bytes[0..48],
+            //     "Compressed x from merkle state does not match the one we just pass in: {}",
+            //     i
+            // );
+
+            let fp_x_cubed_plus_4 = unsafe {
+                let mut x = MaybeUninit::<blst_fp>::uninit();
+                blst::blst_fp_from_bendian(x.as_mut_ptr(), uncompressed_key_bytes[0..48].as_ptr());
+
+                // Calculate x³ + 4
+                let mut x_cubed = MaybeUninit::<blst_fp>::uninit();
+                blst::blst_fp_sqr(x_cubed.as_mut_ptr(), &x.assume_init());
+                blst::blst_fp_mul(
+                    x_cubed.as_mut_ptr(),
+                    &x_cubed.assume_init(),
+                    &x.assume_init(),
+                );
+                blst::blst_fp_add(x_cubed.as_mut_ptr(), &x_cubed.assume_init(), &FOUR);
+                x_cubed.assume_init()
+            };
+
+            let y_squared = unsafe {
+                let mut fp_y = MaybeUninit::<blst_fp>::uninit();
+                blst::blst_fp_from_bendian(
+                    fp_y.as_mut_ptr(),
+                    uncompressed_key_bytes[48..96].as_ptr(),
+                );
+                blst::blst_fp_sqr(fp_y.as_mut_ptr(), &fp_y.assume_init());
+                fp_y.assume_init()
+            };
+            assert_eq!(y_squared, fp_x_cubed_plus_4);
+
+            let pubkey = PublicKey::from_bytes(&uncompressed_key_bytes).unwrap();
+
             #[cfg(not(feature = "host"))]
-            if _i % 50000 == 0 {
-                info!("Validator Cache Construction at {} validators", _i);
+            if i % 50000 == 0 {
+                info!("Validator Cache Construction at {} validators", i);
             }
 
             validator_cache.insert(

@@ -176,6 +176,7 @@ impl SszStateReader<'_> {
                 },
             );
         }
+        info!("Validator Cache Construction complete");
 
         info!("Validator Cache Construction complete");
 

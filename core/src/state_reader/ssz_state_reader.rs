@@ -1,11 +1,9 @@
 use std::borrow::Cow;
 use std::collections::BTreeMap;
-use std::mem::MaybeUninit;
 
 use crate::{Epoch, PublicKey, VALIDATOR_LIST_TREE_DEPTH, VALIDATOR_TREE_DEPTH};
 use crate::{StatePatch, ValidatorInfo};
 use alloy_primitives::B256;
-use blst::blst_fp;
 use serde::{Deserialize, Serialize};
 use ssz_multiproofs::Multiproof;
 use tracing::{info, warn};

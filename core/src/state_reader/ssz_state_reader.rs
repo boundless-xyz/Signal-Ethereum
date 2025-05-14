@@ -46,17 +46,6 @@ pub struct SszStateReader<'a> {
     pub cache: ComputedCache,
 }
 
-const FOUR: blst_fp = blst_fp {
-    l: [
-        0xaa270000000cfff3,
-        0x53cc0032fc34000a,
-        0x478fe97a6b0a807f,
-        0xb1d37ebee6ba24d7,
-        0x8ec9733bbf78ab2f,
-        0x09d645513d83de7e,
-    ],
-};
-
 impl SszStateReader<'_> {
     #[tracing::instrument(skip(self, trusted_state_root))]
     pub fn verify_and_cache(&mut self, trusted_state_root: [u8; 32]) {
@@ -81,7 +70,6 @@ impl SszStateReader<'_> {
         info!("Validators root verified");
 
         let mut validator_cache = BTreeMap::new();
-        let mut pubkey_g1_compressed: [u8; 48] = [0; 48];
         let mut values = self.validators.values();
 
         let mut validator_count = 0;
@@ -112,54 +100,22 @@ impl SszStateReader<'_> {
             let validator_index =
                 (exit_epoch_gindex >> VALIDATOR_TREE_DEPTH) - (1 << VALIDATOR_LIST_TREE_DEPTH);
 
-            pubkey_g1_compressed[0..32].copy_from_slice(&pk0[0..32]);
-            pubkey_g1_compressed[32..48].copy_from_slice(&pk1[0..16]);
+            let uncompressed_key_bytes = &self.public_keys[i * 96..(i + 1) * 96];
+            let pubkey = PublicKey::from_bytes(uncompressed_key_bytes).unwrap();
 
-            let mut uncompressed_key_bytes = self.public_keys[i * 96..(i + 1) * 96].to_vec();
-            // TODO(ec2): Do we need to verify the sign of the Y-coordinate?
-            let _y_sign = (pubkey_g1_compressed[0] >> 5) & 1;
+            let computed_compressed = pubkey.to_bytes();
 
-            // check that the compressed x from merkle state is the same as the one we just pass in
-            // Removes the first 3 bits (the flags)
-            uncompressed_key_bytes[0] &= 0b0001_1111;
-            pubkey_g1_compressed[0] &= 0b0001_1111;
-
+            // asserts that the ssz serialized key corresponds to the decompressed key
             assert_eq!(
-                pubkey_g1_compressed[0..48],
-                uncompressed_key_bytes[0..48],
-                "Compressed x from merkle state does not match the one we just pass in: i: {}, validator_index: {}",
-                i,
-                validator_index,
+                pk0[0..32],
+                computed_compressed[0..32],
+                "Compressed key mismatch"
             );
-
-            let fp_x_cubed_plus_4 = unsafe {
-                let mut x = MaybeUninit::<blst_fp>::uninit();
-                blst::blst_fp_from_bendian(x.as_mut_ptr(), uncompressed_key_bytes[0..48].as_ptr());
-
-                // Calculate x³ + 4
-                let mut x_cubed = MaybeUninit::<blst_fp>::uninit();
-                blst::blst_fp_sqr(x_cubed.as_mut_ptr(), &x.assume_init());
-                blst::blst_fp_mul(
-                    x_cubed.as_mut_ptr(),
-                    &x_cubed.assume_init(),
-                    &x.assume_init(),
-                );
-                blst::blst_fp_add(x_cubed.as_mut_ptr(), &x_cubed.assume_init(), &FOUR);
-                x_cubed.assume_init()
-            };
-
-            let y_squared = unsafe {
-                let mut fp_y = MaybeUninit::<blst_fp>::uninit();
-                blst::blst_fp_from_bendian(
-                    fp_y.as_mut_ptr(),
-                    uncompressed_key_bytes[48..96].as_ptr(),
-                );
-                blst::blst_fp_sqr(fp_y.as_mut_ptr(), &fp_y.assume_init());
-                fp_y.assume_init()
-            };
-            assert_eq!(y_squared, fp_x_cubed_plus_4);
-
-            let pubkey = PublicKey::from_bytes(&uncompressed_key_bytes).unwrap();
+            assert_eq!(
+                pk1[0..16],
+                computed_compressed[32..48],
+                "Compressed key mismatch"
+            );
 
             #[cfg(not(feature = "host"))]
             if i % 50000 == 0 {

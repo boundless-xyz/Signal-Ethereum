@@ -109,7 +109,6 @@ impl TrackingStateReader {
             .chain(active_validators.iter())
             .copied()
             .collect::<BTreeSet<_>>();
-        // sorted_indices.sort_unstable();
 
         let public_keys = sorted_indices
             .into_iter()

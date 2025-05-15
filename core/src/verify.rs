@@ -118,7 +118,7 @@ pub fn verify<S: StateReader, C: Ctx>(state_reader: &mut S, input: Input, contex
     /////////// 2. Finality calculation  //////////////
     info!("2. Finality calculation start");
     let sm_links = get_supermajority_links(state_reader, input.trusted_checkpoint.epoch, balances);
-    debug!("Supermajority links: {:#?}", sm_links);
+    info!("Supermajority links: {:#?}", sm_links);
 
     // Because by definition the trusted CP is finalized we know that:
     // - All checkpoints prior to trusted_cp are finalized

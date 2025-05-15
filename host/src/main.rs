@@ -1,4 +1,4 @@
-use std::{io::Write, path::PathBuf};
+use std::path::PathBuf;
 use z_core::{verify, GuestContext, HostContext, HostStateReader, Input, SszStateReader};
 
 use beacon_api_client::{BlockId, StateId};
@@ -13,7 +13,7 @@ mod beacon_client;
 
 use futures::StreamExt;
 use ssz_rs::prelude::*;
-use tracing::{debug, error, info, warn};
+use tracing::{error, info, warn};
 use url::Url;
 
 /// CLI for generating and submitting ZKasper proofs
@@ -81,10 +81,11 @@ async fn main() {
 
     data_dir.push(args.network);
 
+    let mut reader: HostStateReader =
+        HostStateReader::new_with_dir(&data_dir, context.clone()).unwrap();
+
     match args.command {
         Command::Exec => {
-            let mut reader = HostStateReader::new_with_dir(&data_dir, context.clone()).unwrap();
-
             let trusted_epoch = args.trusted_epoch.expect("trusted_epoch is required");
             let trusted_checkpoint = Checkpoint {
                 epoch: trusted_epoch,
@@ -119,8 +120,6 @@ async fn main() {
             info!("Journal: {:?}", journal);
         }
         Command::NativeExec => {
-            let mut reader = HostStateReader::new_with_dir(&data_dir, context.clone()).unwrap();
-
             let trusted_epoch = args.trusted_epoch.expect("trusted_epoch is required");
             let trusted_checkpoint = Checkpoint {
                 epoch: trusted_epoch,
@@ -152,7 +151,7 @@ async fn main() {
             }
         }
         Command::Daemon => {
-            daemon(&data_dir, &beacon_client).await;
+            daemon(reader, &beacon_client).await;
         }
     }
 }
@@ -244,7 +243,6 @@ async fn compute_next_candidate(
         .collect::<Vec<_>>();
 
     info!("Got {} attestations", attestations.len());
-    reader.save_to_files().unwrap();
 
     Input {
         trusted_checkpoint: trusted_checkpoint.into(),
@@ -254,10 +252,7 @@ async fn compute_next_candidate(
     }
 }
 
-async fn daemon(data_dir: impl Into<PathBuf>, beacon_client: &beacon_client::BeaconClient) {
-    let mut data_dir: PathBuf = data_dir.into();
-    data_dir.push("states/");
-
+async fn daemon(mut reader: HostStateReader, beacon_client: &beacon_client::BeaconClient) {
     let head = beacon_client.get_block(BlockId::Head).await.unwrap();
     info!("Current Chain Head Block: {:?}", head.slot());
 
@@ -295,8 +290,8 @@ async fn daemon(data_dir: impl Into<PathBuf>, beacon_client: &beacon_client::Bea
                     .get_beacon_state_ssz(StateId::Root(cp.state))
                     .await
                     .unwrap();
-                save_beacon_state_to_file(&data_dir, cp.epoch, &ssz_rs::serialize(&s).unwrap())
-                    .unwrap();
+                reader.add_beacon_state(s, cp.epoch).unwrap();
+                reader.save_to_files().unwrap();
             }
             Err(e) => {
                 warn!("Error: {:?}", e);
@@ -306,20 +301,4 @@ async fn daemon(data_dir: impl Into<PathBuf>, beacon_client: &beacon_client::Bea
             }
         }
     }
-}
-
-#[tracing::instrument(skip(state_bytes, data_dir), fields(epoch = %epoch))]
-fn save_beacon_state_to_file(
-    data_dir: impl Into<PathBuf>,
-    epoch: u64,
-    state_bytes: &[u8],
-) -> std::io::Result<()> {
-    debug!("saving beacon state to disk");
-    let mut data_dir = data_dir.into();
-    std::fs::create_dir_all(&data_dir)?;
-    let file_name = format!("{}_beacon_state.ssz", epoch);
-    data_dir.push(file_name);
-    let mut file = std::fs::File::create_new(data_dir)?;
-    file.write_all(state_bytes)?;
-    Ok(())
 }

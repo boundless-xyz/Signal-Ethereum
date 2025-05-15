@@ -1,12 +1,13 @@
+use elsa::FrozenMap;
 use ethereum_consensus::{electra::compute_epoch_at_slot, state_transition::Context};
 use ssz_rs::prelude::*;
 use thiserror::Error;
-use tracing::{info, trace};
+use tracing::info;
 
 use crate::{
     Epoch, PublicKey, Root, StateReader, ValidatorInfo, beacon_state::mainnet::BeaconState,
 };
-use std::{collections::BTreeMap, io::Write, path::PathBuf};
+use std::{borrow::Borrow, cell::RefCell, io::Write, path::PathBuf};
 
 use super::{StateReaderError, TrackingStateReader};
 
@@ -22,13 +23,16 @@ pub enum HostReaderError {
 
 pub struct HostStateReader {
     /// Epochs to state roots
-    pub state_root: BTreeMap<Epoch, Root>,
+    pub state_root: FrozenMap<Epoch, Box<Root>>,
     /// Map from state_root to map of gindex and hash or value
-    pub cache: BTreeMap<Root, BeaconState>,
+    pub cache: FrozenMap<Root, Box<BeaconState>>,
 
     pub validator_cache: Vec<ValidatorInfo>,
 
     pub context: Context,
+
+    // populate this when loading the first state which should all have the same genesis
+    genesis_validators_root: RefCell<Option<Root>>,
 
     dir: Option<PathBuf>,
 }
@@ -36,10 +40,11 @@ pub struct HostStateReader {
 impl HostStateReader {
     pub fn new_empty(context: Context) -> Self {
         Self {
-            state_root: BTreeMap::new(),
-            cache: BTreeMap::new(),
+            state_root: FrozenMap::new(),
+            cache: FrozenMap::new(),
             validator_cache: Vec::new(),
             context,
+            genesis_validators_root: RefCell::new(None),
             dir: None,
         }
     }
@@ -50,37 +55,14 @@ impl HostStateReader {
     ) -> Result<Self, HostReaderError> {
         let mut dir = dir.into();
         dir.push("states/");
-        let mut reader = Self {
-            state_root: BTreeMap::new(),
-            cache: BTreeMap::new(),
+        let reader = Self {
+            state_root: FrozenMap::new(),
+            cache: FrozenMap::new(),
             validator_cache: Vec::new(),
             context,
+            genesis_validators_root: RefCell::new(None),
             dir: Some(dir),
         };
-        reader.load_all_from_file()?;
-        Ok(reader)
-    }
-
-    /// For testing
-    pub fn test_with_just_one_dir(
-        dir: impl Into<PathBuf>,
-        epoch: Epoch,
-        context: Context,
-    ) -> Result<Self, HostReaderError> {
-        let mut reader = Self::new_empty(context);
-
-        let mut dir = dir.into();
-        dir.push("states/");
-        reader.dir = Some(dir.into());
-
-        let state = reader
-            .load_state_file_by_epoch(epoch)?
-            .expect("State not found");
-        let c_epoch = compute_epoch_at_slot(state.slot(), &reader.context);
-        let root = state.hash_tree_root()?;
-        assert!(c_epoch == epoch, "Epoch mismatch: {} != {}", c_epoch, epoch);
-        reader.cache.insert(root, state);
-        reader.state_root.insert(epoch, root);
         Ok(reader)
     }
 
@@ -129,16 +111,27 @@ impl HostStateReader {
                 let state: BeaconState = ssz_rs::deserialize(&state_bytes)?;
                 let root = state.hash_tree_root()?;
                 let epoch = compute_epoch_at_slot(state.slot(), &self.context);
-                self.cache.insert(root, state);
-                self.state_root.insert(epoch, root);
+                self.cache.insert(root, Box::new(state));
+                self.state_root.insert(epoch, Box::new(root));
             }
         }
-        info!("Loaded states epochs: {:?}", self.state_root.keys());
-        self.save_to_files()?;
         Ok(())
     }
 
-    pub fn save_to_files(&self) -> Result<(), HostReaderError> {
+    pub fn add_beacon_state(
+        &self,
+        state: BeaconState,
+        epoch: Epoch,
+    ) -> Result<(), HostReaderError> {
+        self.genesis_validators_root
+            .replace(Some(state.genesis_validators_root()));
+        let root = state.hash_tree_root()?;
+        self.cache.insert(root, Box::new(state));
+        self.state_root.insert(epoch, Box::new(root));
+        Ok(())
+    }
+
+    pub fn save_to_files(&mut self) -> Result<(), HostReaderError> {
         let dir = self
             .dir
             .as_ref()
@@ -148,8 +141,8 @@ impl HostStateReader {
             )))?;
         let mut new_write = 0;
         let mut skipped = 0;
-        for (epoch, root) in self.state_root.iter() {
-            if let Some(state) = self.cache.get(root) {
+        for (epoch, root) in self.state_root.as_mut().iter() {
+            if let Some(state) = self.cache.get::<Root>(root.borrow()) {
                 let file_path = format!(
                     "{}/{}_{}_beacon_state.ssz",
                     dir.to_string_lossy(),
@@ -176,15 +169,23 @@ impl HostStateReader {
         Ok(())
     }
 
-    pub fn get_beacon_state(&self, root: Root) -> Option<&BeaconState> {
-        self.cache.get(&root)
-    }
-
     #[tracing::instrument(skip(self), fields(epoch = %epoch))]
     pub fn get_beacon_state_by_epoch(&self, epoch: Epoch) -> Option<&BeaconState> {
-        trace!("Get beacon state by epoch: {}", epoch);
-        let root = self.state_root.get(&epoch)?;
-        self.cache.get(root)
+        match self.state_root.get(&epoch) {
+            Some(root) => self.cache.get(root),
+            None => self.load_state_file_by_epoch(epoch).ok().and_then(|state| {
+                if let Some(state) = state {
+                    self.genesis_validators_root
+                        .replace(Some(state.genesis_validators_root()));
+                    let root = state.hash_tree_root().unwrap();
+                    self.cache.insert(root, Box::new(state));
+                    self.state_root.insert(epoch, Box::new(root));
+                    self.cache.get(&root)
+                } else {
+                    None
+                }
+            }),
+        }
     }
 
     fn load_state_file_by_epoch(
@@ -252,7 +253,6 @@ impl StateReader for HostStateReader {
             + (self.context.epochs_per_historical_vector - self.context.min_seed_lookahead)
             - 1)
             % self.context.epochs_per_historical_vector;
-        info!("Mix epoch: {}", mix_epoch);
         let state = self.get_beacon_state_by_epoch(epoch).unwrap();
 
         Ok(state
@@ -338,8 +338,11 @@ impl StateReader for HostStateReader {
     }
 
     fn genesis_validators_root(&self) -> alloy_primitives::B256 {
-        let (_, state) = self.cache.first_key_value().unwrap();
-        state.genesis_validators_root()
+        self.genesis_validators_root
+            .borrow()
+            .expect("Genesis validators root not set")
+            .clone()
+            .into()
     }
 
     fn fork_version(&self, epoch: Epoch) -> [u8; 4] {

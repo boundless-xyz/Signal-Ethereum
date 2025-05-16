@@ -4,13 +4,13 @@ use ssz_rs::prelude::*;
 use thiserror::Error;
 use tracing::info;
 
-use crate::{
-    Epoch, HostContext, PublicKey, StatePatch, StateReader, beacon_state::mainnet::BeaconState,
-    mainnet::ElectraBeaconState,
-};
-use std::{cell::RefCell, collections::BTreeMap};
-
 use super::{HostStateReader, SszStateReader, host_state_reader::HostReaderError};
+use crate::{
+    Epoch, HostContext, StatePatch, StateReader, ValidatorIndex, ValidatorInfo, Version,
+    beacon_state::mainnet::BeaconState, mainnet::ElectraBeaconState,
+};
+use alloy_primitives::B256;
+use std::{cell::RefCell, collections::BTreeMap};
 
 #[derive(Error, Debug)]
 pub enum TrackingReaderError {
@@ -19,9 +19,10 @@ pub enum TrackingReaderError {
 }
 
 pub struct TrackingStateReader {
-    pub trusted_epoch: Epoch,
-    pub patches: RefCell<BTreeMap<Epoch, StatePatch>>,
-    pub reader: HostStateReader,
+    trusted_epoch: Epoch,
+    patches: RefCell<BTreeMap<Epoch, StatePatch>>,
+    mix_epochs: RefCell<Vec<Epoch>>,
+    reader: HostStateReader,
 }
 
 impl TrackingStateReader {
@@ -30,6 +31,7 @@ impl TrackingStateReader {
             trusted_epoch,
             // validators_accessed: RefCell::new(BTreeSet::new()),
             patches: RefCell::new(BTreeMap::new()),
+            mix_epochs: RefCell::new(Vec::new()),
             reader,
         }
     }
@@ -49,11 +51,9 @@ impl TrackingStateReader {
         let state_builder: MultiproofBuilder = MultiproofBuilder::new();
 
         let randao_mixes_gindex = {
-            let mix_epoch = (self.trusted_epoch
-                + (self.reader.context.epochs_per_historical_vector
-                    - self.reader.context.min_seed_lookahead)
-                - 1)
-                % self.reader.context.epochs_per_historical_vector;
+            let &[mix_epoch] = self.mix_epochs.borrow().as_slice() else {
+                panic!("only one mix epoch is supported");
+            };
             let path = &["randao_mixes".into(), (mix_epoch as usize).into()];
             ElectraBeaconState::generalized_index(path).unwrap()
         };
@@ -151,62 +151,40 @@ impl TrackingStateReader {
 
 impl StateReader for TrackingStateReader {
     type Error = TrackingReaderError;
+    type Context = HostContext;
 
-    fn get_randao(&self, epoch: Epoch) -> Result<Option<[u8; 32]>, Self::Error> {
+    fn context(&self) -> &Self::Context {
+        self.reader.context()
+    }
+
+    fn active_validators(
+        &self,
+        epoch: Epoch,
+    ) -> Result<impl Iterator<Item = (ValidatorIndex, &ValidatorInfo)>, Self::Error> {
+        Ok(self.reader.active_validators(epoch)?)
+    }
+
+    fn get_randao_mix(&self, epoch: Epoch, mix: Epoch) -> Result<B256, Self::Error> {
         if epoch != self.trusted_epoch {
             let state_a = self.reader.get_beacon_state_by_epoch(epoch - 1).unwrap();
             let state_b = self.reader.get_beacon_state_by_epoch(epoch).unwrap();
             info!("Creating patch for epoch {} to {}", epoch - 1, epoch);
-            let patch = StatePatch::patch::<HostContext>(
-                &self.reader.context.clone().into(),
-                state_a,
-                state_b,
-            )
-            .unwrap();
+            let patch =
+                StatePatch::patch::<HostContext>(self.reader.context(), state_a, state_b).unwrap();
             if self.patches.borrow_mut().insert(epoch, patch).is_some() {
                 panic!("Patch for epoch {} already exists", epoch);
             }
+        } else {
+            self.mix_epochs.borrow_mut().push(mix);
         }
-        Ok(self.reader.get_randao(epoch)?)
-    }
-
-    fn aggregate_validator_keys_and_balance(
-        &self,
-        indices: impl IntoIterator<Item = usize>,
-    ) -> Result<(Vec<PublicKey>, u64), Self::Error> {
-        Ok(self.reader.aggregate_validator_keys_and_balance(indices)?)
-    }
-
-    fn get_validator_activation_and_exit_epochs(
-        &self,
-        epoch: Epoch,
-        validator_index: usize,
-    ) -> Result<(u64, u64), Self::Error> {
-        Ok(self
-            .reader
-            .get_validator_activation_and_exit_epochs(epoch, validator_index)?)
-    }
-
-    fn get_validator_count(&self, epoch: Epoch) -> Result<Option<usize>, Self::Error> {
-        Ok(self.reader.get_validator_count(epoch)?)
-    }
-
-    fn get_total_active_balance(&self, epoch: Epoch) -> Result<u64, Self::Error> {
-        Ok(self.reader.get_total_active_balance(epoch)?)
-    }
-
-    fn get_active_validator_indices(
-        &self,
-        epoch: Epoch,
-    ) -> Result<impl Iterator<Item = usize>, Self::Error> {
-        Ok(self.reader.get_active_validator_indices(epoch)?)
+        Ok(self.reader.get_randao_mix(epoch, mix)?)
     }
 
     fn genesis_validators_root(&self) -> alloy_primitives::B256 {
         self.reader.genesis_validators_root()
     }
 
-    fn fork_version(&self, epoch: Epoch) -> [u8; 4] {
-        self.reader.fork_version(epoch)
+    fn fork_version(&self, epoch: Epoch) -> Result<Version, Self::Error> {
+        Ok(self.reader.fork_version(epoch)?)
     }
 }

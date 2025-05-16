@@ -1,6 +1,9 @@
 use std::collections::BTreeMap;
 
-use crate::{Epoch, PublicKey, VALIDATOR_LIST_TREE_DEPTH, VALIDATOR_TREE_DEPTH};
+use crate::{
+    Epoch, GuestContext, PublicKey, VALIDATOR_LIST_TREE_DEPTH, VALIDATOR_TREE_DEPTH,
+    ValidatorIndex, Version,
+};
 use crate::{StatePatch, ValidatorInfo};
 use alloy_primitives::B256;
 use serde::{Deserialize, Serialize};
@@ -8,6 +11,7 @@ use ssz_multiproofs::Multiproof;
 use tracing::info;
 
 use super::StateReader;
+
 type Node = [u8; 32];
 
 #[derive(Default)]
@@ -15,9 +19,8 @@ pub struct ComputedCache {
     // TODO(ec2): We should really only need the active ones. Can store in a map.
     pub validators: BTreeMap<u64, ValidatorInfo>,
     pub randao: [u8; 32],
-    pub validator_count: u64,
     pub genesis_validators_root: B256,
-    pub fork_version: [u8; 4],
+    pub fork_version: Version,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -66,15 +69,12 @@ impl SszStateReader<'_> {
         let mut buf: [u8; 48] = [0; 48];
         let mut values = self.validators.values();
 
-        let mut validator_count = 0;
-
         for _i in 0.. {
             let pk0_maybe = values.next();
             let pk1_maybe = values.next();
             if pk1_maybe.is_none() {
                 // we are at the end of the multiproof, the last read value is the total validator count (not just the actives ones)
                 let (_, v_count) = pk0_maybe.unwrap();
-                validator_count = u64_from_b256(v_count, 0);
                 break;
             }
             let (_, pk0) = pk0_maybe.unwrap();
@@ -123,7 +123,6 @@ impl SszStateReader<'_> {
         );
 
         self.cache.validators = validator_cache;
-        self.cache.validator_count = validator_count as u64;
         self.cache.randao = *randao;
         self.cache.genesis_validators_root = genesis_validators_root.into();
         self.cache.fork_version = fork_current_version[0..4].try_into().unwrap();
@@ -137,129 +136,22 @@ impl SszStateReader<'_> {
 
 impl StateReader for SszStateReader<'_> {
     type Error = ();
+    type Context = GuestContext;
 
-    fn get_randao(&self, epoch: crate::Epoch) -> Result<Option<[u8; 32]>, Self::Error> {
-        Ok(self
-            .patches
-            .get(&(epoch))
-            .map(|patch| {
-                info!(
-                    "Using patch {} for randao for epoch {}, randao: {:?}",
-                    epoch - 1,
-                    epoch,
-                    patch.randao_next
-                );
-                patch.randao_next
-            })
-            .or(Some(self.cache.randao)))
+    fn context(&self) -> &Self::Context {
+        todo!()
     }
 
-    fn aggregate_validator_keys_and_balance(
+    fn active_validators(
         &self,
-        indices: impl IntoIterator<Item = usize>,
-    ) -> Result<(Vec<PublicKey>, u64), Self::Error> {
-        let mut bal_acc = 0;
-        let pk_acc = indices
-            .into_iter()
-            .map(|idx| {
-                let ValidatorInfo {
-                    pubkey,
-                    effective_balance,
-                    ..
-                } = &self.cache.validators[&(idx as u64)];
-                bal_acc += effective_balance;
-
-                pubkey.clone()
-            })
-            .collect();
-
-        Ok((pk_acc, bal_acc))
+        epoch: Epoch,
+    ) -> Result<impl Iterator<Item = (ValidatorIndex, &ValidatorInfo)>, Self::Error> {
+        todo!();
+        Ok(std::iter::empty())
     }
 
-    fn get_validator_activation_and_exit_epochs(
-        &self,
-        epoch: crate::Epoch,
-        validator_index: usize,
-    ) -> Result<(u64, u64), Self::Error> {
-        let mut activation = self
-            .cache
-            .validators
-            .get(&(validator_index as u64))
-            .ok_or(())?
-            .activation_epoch;
-        let mut exit = self
-            .cache
-            .validators
-            .get(&(validator_index as u64))
-            .ok_or(())?
-            .exit_epoch;
-        // replace any activations/exists with their most recent patch updates if any
-        for (epoch, patch) in self.patches.iter().filter(|(e, _)| *e <= &epoch) {
-            if patch
-                .activations
-                .iter()
-                .filter(|vi| **vi == validator_index as u32)
-                .next_back()
-                .is_some()
-            {
-                info!(
-                    "validator {} Patched! activation: {} exit: {}",
-                    validator_index, activation, exit
-                );
-                activation = *epoch;
-            }
-            if patch
-                .exits
-                .iter()
-                .filter(|vi| **vi == validator_index as u32)
-                .next_back()
-                .is_some()
-            {
-                info!(
-                    "validator {} Patched! activation: {} exit: {}",
-                    validator_index, activation, exit
-                );
-                exit = *epoch;
-            }
-        }
-
-        Ok((activation, exit))
-    }
-
-    fn get_validator_count(&self, epoch: crate::Epoch) -> Result<Option<usize>, Self::Error> {
-        let mut c = self.cache.validator_count;
-        for (_, patch) in self.patches.iter().filter(|(e, _)| *e <= &epoch) {
-            c += patch.n_deposits_processed as u64;
-        }
-        Ok(Some(c as usize))
-    }
-
-    fn get_total_active_balance(&self, epoch: crate::Epoch) -> Result<u64, Self::Error> {
-        self.aggregate_validator_keys_and_balance(self.get_active_validator_indices(epoch)?)
-            .map(|x| x.1)
-    }
-
-    fn get_active_validator_indices(
-        &self,
-        epoch: crate::Epoch,
-    ) -> Result<impl Iterator<Item = usize>, Self::Error> {
-        Ok(self
-            .cache
-            .validators
-            .keys()
-            .filter_map(move |validator_index| {
-                if let Ok((activation, exit)) =
-                    self.get_validator_activation_and_exit_epochs(epoch, *validator_index as usize)
-                {
-                    if activation <= epoch && epoch < exit {
-                        Some(*validator_index as usize)
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                }
-            }))
+    fn get_randao_mix(&self, epoch: Epoch, mix_epoch: Epoch) -> Result<B256, Self::Error> {
+        todo!()
     }
 
     fn genesis_validators_root(&self) -> B256 {
@@ -267,8 +159,8 @@ impl StateReader for SszStateReader<'_> {
     }
 
     // TODO(ec2): This needs to be handled for hardforks
-    fn fork_version(&self, _epoch: Epoch) -> [u8; 4] {
-        self.cache.fork_version
+    fn fork_version(&self, _epoch: Epoch) -> Result<Version, Self::Error> {
+        Ok(self.cache.fork_version)
     }
 }
 

@@ -3,12 +3,12 @@ use std::collections::BTreeSet;
 use crate::{
     Attestation, BEACON_ATTESTER_DOMAIN, CommitteeCache, CommitteeIndex, Ctx, Domain, Epoch, Input,
     Link, MAX_COMMITTEES_PER_SLOT, MAX_VALIDATORS_PER_COMMITTEE, PublicKey, Root, ShuffleData,
-    StateReader, Version, fast_aggregate_verify_pre_aggregated,
+    StateReader, ValidatorIndex, ValidatorInfo, Version, fast_aggregate_verify_pre_aggregated,
 };
 use alloc::collections::BTreeMap;
-use sha2::Digest;
 use ssz_rs::prelude::*;
 use tracing::{debug, error, info, trace, warn};
+
 pub fn verify<S: StateReader, C: Ctx>(state_reader: &mut S, input: Input, context: &C) -> bool {
     // 0. pre-conditions
     assert_eq!(
@@ -91,9 +91,9 @@ pub fn verify<S: StateReader, C: Ctx>(state_reader: &mut S, input: Input, contex
             debug!("Attestation has {} participants", attesting_indices.len());
 
             // check if attestation has a valid aggregate signature
-            let (pubkeys, attesting_balance) = state_reader
-                .aggregate_validator_keys_and_balance(attesting_indices)
-                .unwrap();
+            let validators = state_reader.active_validators(attestation_epoch).unwrap();
+            let (pubkeys, attesting_balance) =
+                aggregate_validator_keys_and_balance(attesting_indices, validators);
 
             let domain = beacon_attester_signing_domain(state_reader, attestation_epoch);
             let signing_root = compute_signing_root(&attestation.data, domain);
@@ -155,41 +155,48 @@ pub fn verify<S: StateReader, C: Ctx>(state_reader: &mut S, input: Input, contex
     true
 }
 
-fn get_seed<S: StateReader>(state_reader: &S, epoch: u64, domain_type: [u8; 4]) -> [u8; 32] {
-    let mix = state_reader.get_randao(epoch).unwrap().unwrap();
+fn aggregate_validator_keys_and_balance<'a>(
+    indices: impl IntoIterator<Item = usize>,
+    validators: impl IntoIterator<Item = (ValidatorIndex, &'a ValidatorInfo)>,
+) -> (Vec<PublicKey>, u64) {
+    let validators = BTreeMap::from_iter(validators);
 
-    let mut h = sha2::Sha256::new();
-    Digest::update(&mut h, domain_type);
-    Digest::update(&mut h, epoch.to_le_bytes());
-    Digest::update(&mut h, mix);
+    let mut bal_acc = 0;
+    let pk_acc = indices
+        .into_iter()
+        .map(|idx| {
+            let validator = validators.get(&idx).unwrap();
+            bal_acc += validator.effective_balance;
+            validator.pubkey.clone()
+        })
+        .collect();
 
-    h.finalize().into()
+    (pk_acc, bal_acc)
 }
 
 // this can compute validators for up to
 // 1 epoch ahead of the epoch the state_reader can read from
 pub fn get_shufflings_for_epoch<S: StateReader, C: Ctx>(
     state_reader: &S,
-    epoch: u64,
+    epoch: Epoch,
     context: &C,
 ) -> CommitteeCache {
     info!("Getting shufflings for epoch: {}", epoch);
-    // first up lets compute and cache the committee shufflings for this epoch
-    let len_total_validators: usize = state_reader.get_validator_count(epoch).unwrap().unwrap();
-    info!("Valdator count: {}", len_total_validators);
 
     let active_validator_indices = state_reader
         .get_active_validator_indices(epoch)
         .unwrap()
         .collect();
 
-    let seed = get_seed(state_reader, epoch, BEACON_ATTESTER_DOMAIN);
+    let seed = state_reader
+        .get_seed(epoch, BEACON_ATTESTER_DOMAIN.into())
+        .unwrap();
 
     CommitteeCache::initialized(
         ShuffleData {
             seed: seed.into(),
-            active_validator_indices,
-            len_total_validators,
+            indices: active_validator_indices,
+            committees_per_slot: state_reader.get_committee_count_per_slot(epoch).unwrap(),
         },
         epoch,
         context,
@@ -268,7 +275,7 @@ fn fork_data_root<S: StateReader>(
         pub genesis_validators_root: Root,
     }
     ForkData {
-        current_version: state_reader.fork_version(epoch),
+        current_version: state_reader.fork_version(epoch).unwrap(),
         genesis_validators_root,
     }
     .hash_tree_root()

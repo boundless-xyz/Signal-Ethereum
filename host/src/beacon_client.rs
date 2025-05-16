@@ -30,13 +30,14 @@ use reqwest::{
     IntoUrl,
 };
 use reqwest_eventsource::{Event, EventSource};
-use reqwest_middleware::{ClientBuilder, ClientWithMiddleware};
+use reqwest_middleware::{ClientBuilder, ClientWithMiddleware, Next};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fmt::{self, Display};
+use std::path::PathBuf;
+
 use tracing::{info, warn};
 use url::Url;
-
 use z_core::mainnet::BeaconState;
 
 /// Errors returned by the [BeaconClient].
@@ -160,6 +161,47 @@ pub struct SseBlock {
     pub execution_optimistic: bool,
 }
 
+mod middleware {
+    use governor::{
+        clock::DefaultClock, state::InMemoryState, state::NotKeyed, Quota, RateLimiter,
+    };
+    use http::Extensions;
+    use reqwest::{Request, Response};
+    use reqwest_middleware::{Middleware, Next, Result};
+    use std::num::NonZeroU32;
+    use std::sync::Arc;
+
+    pub struct RateLimitMiddleware {
+        limiter: Arc<RateLimiter<NotKeyed, InMemoryState, DefaultClock>>,
+    }
+
+    impl RateLimitMiddleware {
+        /// Creates a new rate limiter middleware.
+        pub fn new(requests_per_second: u32) -> Self {
+            let rps = NonZeroU32::new(requests_per_second)
+                .expect("requests_per_second should be non-zero");
+            Self {
+                limiter: Arc::new(RateLimiter::direct(Quota::per_second(rps))),
+            }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl Middleware for RateLimitMiddleware {
+        async fn handle(
+            &self,
+            req: Request,
+            extensions: &mut Extensions,
+            next: Next<'_>,
+        ) -> Result<Response> {
+            // This will asynchronously wait until the request is allowed based on the quota.
+            self.limiter.until_ready().await;
+            // Proceed with the request
+            next.run(req, extensions).await
+        }
+    }
+}
+
 impl BeaconClient {
     /// Creates a new beacon endpoint API client.
     pub fn new<U: IntoUrl>(endpoint: U) -> Result<Self, Error> {
@@ -171,20 +213,30 @@ impl BeaconClient {
     }
 
     /// Creates a new beacon endpoint API client with caching.
-    pub fn new_with_cache<U: IntoUrl>(endpoint: U, cache_dir: &str) -> Result<Self, Error> {
+    pub fn new_with_cache<U: IntoUrl>(
+        endpoint: U,
+        cache_dir: impl Into<PathBuf>,
+    ) -> Result<Self, Error> {
         let client = reqwest::Client::new();
+
         let manager = CACacheManager {
             path: cache_dir.into(),
         };
-        let cache = Cache(HttpCache {
+        let cache_mw = Cache(HttpCache {
             mode: CacheMode::ForceCache,
             manager,
             options: HttpCacheOptions::default(),
         });
-        let client_with_middleware = ClientBuilder::new(client).with(cache).build();
+
+        let rate_limit_mw = middleware::RateLimitMiddleware::new(15);
+
+        let http = ClientBuilder::new(client)
+            .with(cache_mw)
+            .with(rate_limit_mw)
+            .build();
 
         Ok(Self {
-            http: client_with_middleware,
+            http,
             endpoint: endpoint.into_url()?,
         })
     }

@@ -20,12 +20,11 @@ fn main() {
     let input: Input = bincode::deserialize(&input_bytes).unwrap();
     env::log(&format!("Input deserialized: {} bytes", input_bytes.len()));
     let candidate_epoch = input.candidate_checkpoint.epoch;
-    let context = GuestContext;
     env::log("Verify and Cache SszStateReader");
-    state_reader.verify_and_cache(*input.trusted_checkpoint_state_root);
+    state_reader.verify_and_cache(*input.trusted_checkpoint_state_root, &GuestContext);
 
     env::log("Running FFG Verification");
-    let t = verify(&mut state_reader, input, &context);
+    let t = verify(&mut state_reader, input);
 
     if t {
         env::log("FFG Verification passed");

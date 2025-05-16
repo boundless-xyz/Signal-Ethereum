@@ -2,7 +2,7 @@ use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use blst::BLST_ERROR;
 use blst::min_pk as bls;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 // domain string, must match what is used in signing. This one should be good for beacon chain
 const DST: &[u8] = b"BLS_SIG_BLS12381G2_XMD:SHA-256_SSWU_RO_POP_";
@@ -35,9 +35,10 @@ impl core::fmt::Display for BlsError {
         }
     }
 }
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[repr(transparent)]
-pub struct PublicKey(bls::PublicKey);
+#[serde(transparent)]
+pub struct PublicKey(pub bls::PublicKey);
 
 impl PublicKey {
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, BlsError> {

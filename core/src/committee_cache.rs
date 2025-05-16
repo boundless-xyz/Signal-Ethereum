@@ -1,8 +1,11 @@
 use crate::shuffle_list::shuffle_list;
-use crate::{CommitteeIndex, Ctx, Epoch, Root, Slot, ValidatorIndex};
+use crate::{CommitteeIndex, Ctx, Epoch, Slot, ValidatorIndex};
 use alloc::{vec, vec::Vec};
+use alloy_primitives::B256;
 use core::num::NonZeroUsize;
 use core::ops::Range;
+use std::usize;
+use tracing::debug;
 
 /// Computes and stores the shuffling for an epoch. Provides various getters to allow callers to
 /// read the committees for the given epoch.
@@ -28,9 +31,9 @@ pub enum Error {
 
 // Everything needed to compute the shuffle
 pub struct ShuffleData {
-    pub seed: Root,
-    pub active_validator_indices: Vec<ValidatorIndex>,
-    pub len_total_validators: usize,
+    pub(crate) seed: B256,
+    pub(crate) indices: Vec<ValidatorIndex>,
+    pub(crate) committees_per_slot: u64,
 }
 
 impl CommitteeCache {
@@ -38,8 +41,8 @@ impl CommitteeCache {
     pub fn initialized<C: Ctx>(
         ShuffleData {
             seed,
-            active_validator_indices,
-            len_total_validators,
+            indices: active_validator_indices,
+            committees_per_slot,
         }: ShuffleData,
         epoch: Epoch,
         context: &C,
@@ -49,20 +52,16 @@ impl CommitteeCache {
             return Err(Error::ZeroSlotsPerEpoch);
         }
 
-        if active_validator_indices.is_empty() {
-            return Err(Error::InsufficientValidators);
-        }
+        let max_validator_index = *active_validator_indices
+            .iter()
+            .max()
+            .ok_or(Error::InsufficientValidators)?;
 
-        let committees_per_slot = u64::max(
-            1,
-            u64::min(
-                context.max_committees_per_slot() as u64,
-                active_validator_indices.len() as u64
-                    / context.slots_per_epoch()
-                    / context.target_committee_size(),
-            ),
-        ) as usize;
-
+        debug!(
+            "Shuffling {} active validators for seed: {}",
+            active_validator_indices.len(),
+            seed
+        );
         let shuffling = shuffle_list(
             active_validator_indices,
             context.shuffle_round_count() as u8,
@@ -72,11 +71,11 @@ impl CommitteeCache {
         .ok_or(Error::UnableToShuffle)?;
 
         // The use of `NonZeroUsize` reduces the maximum number of possible validators by one.
-        if len_total_validators == usize::MAX {
+        if max_validator_index == usize::MAX {
             return Err(Error::TooManyValidators);
         }
 
-        let mut shuffling_positions = vec![<_>::default(); len_total_validators];
+        let mut shuffling_positions = vec![<_>::default(); max_validator_index + 1];
         for (i, &v) in shuffling.iter().enumerate() {
             *shuffling_positions
                 .get_mut(v)
@@ -87,8 +86,8 @@ impl CommitteeCache {
             initialized_epoch: Some(epoch),
             shuffling,
             shuffling_positions,
-            committees_per_slot,
-            slots_per_epoch: context.slots_per_epoch() as usize,
+            committees_per_slot: committees_per_slot.try_into().unwrap(),
+            slots_per_epoch: context.slots_per_epoch().try_into().unwrap(),
         })
     }
 
@@ -130,8 +129,8 @@ impl CommitteeCache {
 
         let committee_index = compute_committee_index_in_epoch(
             slot,
-            self.slots_per_epoch,
-            self.committees_per_slot,
+            self.slots_per_epoch.try_into().unwrap(),
+            self.committees_per_slot.try_into().unwrap(),
             index,
         );
         self.compute_committee(committee_index)
@@ -171,11 +170,11 @@ impl CommitteeCache {
 
     /// Returns the number of committees per slot for this cache's epoch.
     pub fn committees_per_slot(&self) -> usize {
-        self.committees_per_slot
+        self.committees_per_slot.try_into().unwrap()
     }
 
     /// Returns a slice of `self.shuffling` that represents the `index`'th committee in the epoch.
-    fn compute_committee(&self, index: usize) -> Option<&[usize]> {
+    fn compute_committee(&self, index: CommitteeIndex) -> Option<&[usize]> {
         self.shuffling.get(self.compute_committee_range(index)?)
     }
 
@@ -184,7 +183,7 @@ impl CommitteeCache {
     /// To avoid a divide-by-zero, returns `None` if `self.committee_count` is zero.
     ///
     /// Will also return `None` if the index is out of bounds.
-    fn compute_committee_range(&self, index: usize) -> Option<Range<usize>> {
+    fn compute_committee_range(&self, index: CommitteeIndex) -> Option<Range<usize>> {
         compute_committee_range_in_epoch(self.epoch_committee_count(), index, self.shuffling.len())
     }
 

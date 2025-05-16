@@ -15,6 +15,7 @@
 // TODO(ec2): Maybe we just redefine this so we can remove the beacon_api_client dependency altogether
 use beacon_api_client::FinalityCheckpoints;
 
+use crate::beacon_client::middleware::RateLimitMiddleware;
 use ethereum_consensus::{
     deneb::{Epoch, Slot},
     phase0::SignedBeaconBlockHeader,
@@ -25,18 +26,15 @@ use ethereum_consensus::{
 };
 use futures::{Stream, StreamExt};
 use http_cache_reqwest::{CACacheManager, Cache, CacheMode, HttpCache, HttpCacheOptions};
-use reqwest::{
-    header::{HeaderMap, HeaderValue},
-    IntoUrl,
-};
+use reqwest::header::{HeaderMap, HeaderValue};
 use reqwest_eventsource::{Event, EventSource};
 use reqwest_middleware::{ClientBuilder, ClientWithMiddleware};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fmt::{self, Display};
+use std::path::PathBuf;
 use tracing::{info, warn};
 use url::Url;
-
 use z_core::mainnet::BeaconState;
 
 /// Errors returned by the [BeaconClient].
@@ -160,19 +158,66 @@ pub struct SseBlock {
     pub execution_optimistic: bool,
 }
 
-impl BeaconClient {
-    /// Creates a new beacon endpoint API client.
-    pub fn new<U: IntoUrl>(endpoint: U) -> Result<Self, Error> {
-        let client = reqwest::Client::new();
-        Ok(Self {
-            http: client.into(),
-            endpoint: endpoint.into_url()?,
-        })
+mod middleware {
+    use governor::{
+        clock::DefaultClock, state::InMemoryState, state::NotKeyed, Quota, RateLimiter,
+    };
+    use http::Extensions;
+    use reqwest::{Request, Response};
+    use reqwest_middleware::{Middleware, Next, Result};
+    use std::num::NonZeroU32;
+    use std::sync::Arc;
+
+    pub struct RateLimitMiddleware {
+        limiter: Arc<RateLimiter<NotKeyed, InMemoryState, DefaultClock>>,
     }
 
-    /// Creates a new beacon endpoint API client with caching.
-    pub fn new_with_cache<U: IntoUrl>(endpoint: U, cache_dir: &str) -> Result<Self, Error> {
+    impl RateLimitMiddleware {
+        /// Creates a new rate limiter middleware.
+        pub fn new(requests_per_second: u32) -> Self {
+            let rps = NonZeroU32::new(requests_per_second)
+                .expect("requests_per_second should be non-zero");
+            Self {
+                limiter: Arc::new(RateLimiter::direct(Quota::per_second(rps))),
+            }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl Middleware for RateLimitMiddleware {
+        async fn handle(
+            &self,
+            req: Request,
+            extensions: &mut Extensions,
+            next: Next<'_>,
+        ) -> Result<Response> {
+            // This will asynchronously wait until the request is allowed based on the quota.
+            self.limiter.until_ready().await;
+            // Proceed with the request
+            next.run(req, extensions).await
+        }
+    }
+}
+
+pub struct BeaconClientBuilder {
+    endpoint: Url,
+    inner: ClientBuilder,
+    cache_mw: Option<Cache<CACacheManager>>,
+    rate_limit_mw: Option<RateLimitMiddleware>,
+}
+
+impl BeaconClientBuilder {
+    pub fn new(endpoint: Url) -> Self {
         let client = reqwest::Client::new();
+        Self {
+            endpoint,
+            inner: ClientBuilder::new(client),
+            cache_mw: None,
+            rate_limit_mw: None,
+        }
+    }
+
+    pub fn with_cache(mut self, cache_dir: impl Into<PathBuf>) -> Self {
         let manager = CACacheManager {
             path: cache_dir.into(),
         };
@@ -181,12 +226,40 @@ impl BeaconClient {
             manager,
             options: HttpCacheOptions::default(),
         });
-        let client_with_middleware = ClientBuilder::new(client).with(cache).build();
 
-        Ok(Self {
-            http: client_with_middleware,
-            endpoint: endpoint.into_url()?,
-        })
+        self.cache_mw = Some(cache);
+        self
+    }
+
+    pub fn with_rate_limit(mut self, requests_per_second: u32) -> Self {
+        if requests_per_second == 0 {
+            self.rate_limit_mw = None;
+            return self;
+        }
+        let rate_limit = RateLimitMiddleware::new(requests_per_second);
+
+        self.rate_limit_mw = Some(rate_limit);
+        self
+    }
+
+    pub fn build(mut self) -> BeaconClient {
+        if let Some(cache_mw) = self.cache_mw {
+            self.inner = self.inner.with(cache_mw);
+        }
+        if let Some(rate_limit_mw) = self.rate_limit_mw {
+            self.inner = self.inner.with(rate_limit_mw);
+        }
+
+        BeaconClient {
+            http: self.inner.build(),
+            endpoint: self.endpoint,
+        }
+    }
+}
+
+impl BeaconClient {
+    pub fn builder(endpoint: Url) -> BeaconClientBuilder {
+        BeaconClientBuilder::new(endpoint)
     }
 
     async fn http_get<T: serde::de::DeserializeOwned>(&self, path: &str) -> Result<T, Error> {

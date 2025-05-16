@@ -1,7 +1,6 @@
 extern crate alloc;
 
 use alloy_primitives::B256;
-
 use ssz_rs::prelude::*;
 #[cfg(feature = "host")]
 mod beacon_state;
@@ -57,12 +56,24 @@ pub struct Input {
     pub trusted_checkpoint_state_root: Root, // The state root at trusted_checkpoint
 }
 
-#[derive(Eq, PartialEq, Clone, Debug)]
+#[derive(Eq, PartialEq, Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct ValidatorInfo {
     pub pubkey: PublicKey,
     pub effective_balance: u64,
     pub activation_epoch: u64,
     pub exit_epoch: u64,
+}
+
+#[cfg(feature = "host")]
+impl From<&ethereum_consensus::phase0::Validator> for ValidatorInfo {
+    fn from(v: &ethereum_consensus::phase0::Validator) -> Self {
+        Self {
+            pubkey: v.public_key.clone().into(),
+            effective_balance: v.effective_balance,
+            activation_epoch: v.activation_epoch,
+            exit_epoch: v.exit_epoch,
+        }
+    }
 }
 
 #[derive(Clone, Debug, SimpleSerialize, PartialEq, Eq, serde::Serialize, serde::Deserialize)]

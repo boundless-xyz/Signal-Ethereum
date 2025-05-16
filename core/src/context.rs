@@ -62,6 +62,7 @@ impl Ctx for GuestContext {
 }
 
 #[cfg(feature = "host")]
+#[derive(Clone)]
 #[repr(transparent)]
 pub struct HostContext(ethereum_consensus::state_transition::Context);
 

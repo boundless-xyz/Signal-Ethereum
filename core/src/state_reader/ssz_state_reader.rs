@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::collections::BTreeMap;
 
 use crate::{Epoch, PublicKey, VALIDATOR_LIST_TREE_DEPTH, VALIDATOR_TREE_DEPTH};
@@ -5,7 +6,7 @@ use crate::{StatePatch, ValidatorInfo};
 use alloy_primitives::B256;
 use serde::{Deserialize, Serialize};
 use ssz_multiproofs::Multiproof;
-use tracing::info;
+use tracing::{info, warn};
 
 use super::StateReader;
 type Node = [u8; 32];
@@ -33,6 +34,10 @@ pub struct SszStateReader<'a> {
     // We may fail to finalize a checkpoint, but we cannot finalize an invalid checkpoint since this is still merkle proved.
     pub validators: Multiproof<'a>,
     pub patches: BTreeMap<Epoch, StatePatch>,
+
+    // chunked in 96
+    #[serde(borrow)]
+    pub public_keys: Cow<'a, [u8]>,
 
     // TODO(ec2): We can give hints from tthe host for the active validator count so we can proactively allocate memory
     #[serde(skip)]
@@ -63,12 +68,11 @@ impl SszStateReader<'_> {
         info!("Validators root verified");
 
         let mut validator_cache = BTreeMap::new();
-        let mut buf: [u8; 48] = [0; 48];
         let mut values = self.validators.values();
 
         let mut validator_count = 0;
 
-        for _i in 0.. {
+        for i in 0.. {
             let pk0_maybe = values.next();
             let pk1_maybe = values.next();
             if pk1_maybe.is_none() {
@@ -94,13 +98,26 @@ impl SszStateReader<'_> {
             let validator_index =
                 (exit_epoch_gindex >> VALIDATOR_TREE_DEPTH) - (1 << VALIDATOR_LIST_TREE_DEPTH);
 
-            buf[0..32].copy_from_slice(&pk0[0..32]);
-            buf[32..48].copy_from_slice(&pk1[0..16]);
+            let uncompressed_key_bytes = &self.public_keys[i * 96..(i + 1) * 96];
+            let pubkey = PublicKey::from_bytes(uncompressed_key_bytes).unwrap();
 
-            let pubkey = PublicKey::from_bytes(buf.as_slice()).unwrap();
+            let computed_compressed = pubkey.to_bytes();
+
+            // asserts that the ssz serialized key corresponds to the decompressed key
+            assert_eq!(
+                pk0[0..32],
+                computed_compressed[0..32],
+                "Compressed key mismatch"
+            );
+            assert_eq!(
+                pk1[0..16],
+                computed_compressed[32..48],
+                "Compressed key mismatch"
+            );
+
             #[cfg(not(feature = "host"))]
-            if _i % 50000 == 0 {
-                info!("Validator Cache Construction at {} validators", _i);
+            if i % 50000 == 0 {
+                info!("Validator Cache Construction at {} validators", i);
             }
 
             validator_cache.insert(

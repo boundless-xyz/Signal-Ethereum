@@ -39,24 +39,36 @@ pub trait StateReader {
         epoch: Epoch,
     ) -> Result<impl Iterator<Item = (ValidatorIndex, &ValidatorInfo)>, Self::Error>;
 
-    /// Return the RANDAO mix at `epoch` for a recent `mix_epoch`.
-    fn get_randao_mix(&self, epoch: Epoch, mix_epoch: Epoch) -> Result<B256, Self::Error>;
+    /// Return the RANDAO mix at `index`
+    fn randao_mix(&self, state: Epoch, index: usize) -> Result<Option<B256>, Self::Error>;
 
-    /// Return the seed at the current `epoch`.
-    fn get_seed(&self, epoch: Epoch, domain_type: B32) -> Result<B256, Self::Error> {
+    /// Return the RANDAO mix for a recent `mix_epoch`.
+    fn get_randao_mix(&self, state: Epoch, mix_epoch: Epoch) -> Result<B256, Self::Error> {
+        let idx: usize = (mix_epoch % self.context().epochs_per_historical_vector())
+            .try_into()
+            .unwrap();
+
+        Ok(self
+            .randao_mix(state, idx)?
+            .expect("randao_mix should be present"))
+    }
+
+    /// Return the seed at the current epoch.
+    fn get_seed(&self, state: Epoch, domain_type: B32) -> Result<B256, Self::Error> {
         let ctx = self.context();
 
         // the seed for epoch is based on the RANDAO from the epoch MIN_SEED_LOOKAHEAD + 1 ago
+        let current_epoch = state;
         let mix = self.get_randao_mix(
-            epoch,
-            epoch
+            state,
+            current_epoch
                 .checked_add(ctx.epochs_per_historical_vector() - ctx.min_seed_lookahead() - 1)
                 .unwrap(),
         )?;
 
         let mut h = sha2::Sha256::new();
         Digest::update(&mut h, domain_type);
-        Digest::update(&mut h, epoch.to_le_bytes());
+        Digest::update(&mut h, state.to_le_bytes());
         Digest::update(&mut h, mix);
 
         Ok(<[u8; 32]>::from(h.finalize()).into())

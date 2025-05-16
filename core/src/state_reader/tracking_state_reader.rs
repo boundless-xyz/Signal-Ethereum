@@ -6,7 +6,7 @@ use tracing::info;
 
 use super::{HostStateReader, SszStateReader, host_state_reader::HostReaderError};
 use crate::{
-    Epoch, HostContext, StatePatch, StateReader, ValidatorIndex, ValidatorInfo, Version,
+    Ctx, Epoch, HostContext, StatePatch, StateReader, ValidatorIndex, ValidatorInfo, Version,
     beacon_state::mainnet::BeaconState, mainnet::ElectraBeaconState,
 };
 use alloy_primitives::B256;
@@ -145,6 +145,7 @@ impl TrackingStateReader {
             validators: validator_multiproof,
             patches,
             cache: Default::default(),
+            context: None,
         }
     }
 }
@@ -164,18 +165,23 @@ impl StateReader for TrackingStateReader {
         Ok(self.reader.active_validators(epoch)?)
     }
 
+    fn randao_mix(&self, _: Epoch, _: usize) -> Result<Option<B256>, Self::Error> {
+        unimplemented!()
+    }
+
     fn get_randao_mix(&self, epoch: Epoch, mix: Epoch) -> Result<B256, Self::Error> {
         if epoch != self.trusted_epoch {
-            let state_a = self.reader.get_beacon_state_by_epoch(epoch - 1).unwrap();
-            let state_b = self.reader.get_beacon_state_by_epoch(epoch).unwrap();
+            let state_a = self.reader.get_beacon_state_by_epoch(epoch - 1)?;
+            let state_b = self.reader.get_beacon_state_by_epoch(epoch)?;
             info!("Creating patch for epoch {} to {}", epoch - 1, epoch);
-            let patch =
-                StatePatch::patch::<HostContext>(self.reader.context(), state_a, state_b).unwrap();
+            let patch = StatePatch::patch(self.reader.context(), state_a, state_b).unwrap();
             if self.patches.borrow_mut().insert(epoch, patch).is_some() {
                 panic!("Patch for epoch {} already exists", epoch);
             }
         } else {
-            self.mix_epochs.borrow_mut().push(mix);
+            self.mix_epochs
+                .borrow_mut()
+                .push(mix % self.reader.context().epochs_per_historical_vector());
         }
         Ok(self.reader.get_randao_mix(epoch, mix)?)
     }

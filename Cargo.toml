@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = [ "core","host", "methods", "ssz-multiproofs" ]
+members = ["core", "host", "methods", "ssz-multiproofs"]
 
 # Always optimize; building and running the guest takes much longer without optimization.
 [profile.dev]
@@ -18,7 +18,7 @@ overflow-checks = false # Skip overflow checks for better performance
 [workspace.dependencies]
 methods = { path = "./methods" }
 
-alloy-primitives = { version = "0.8" , default-features = false}
+alloy-primitives = { version = "0.8", default-features = false }
 bincode = { version = "1.3" }
 hex = { version = "0.4" }
 bytemuck = { version = "1.14" }
@@ -38,11 +38,11 @@ thiserror = "2.0"
 
 [patch."https://github.com/ralexstokes/ssz-rs"]
 # Get the merkle tree empty node virtualization so non-trivial merkle trees actually fit in memory
-ssz_rs = { git = "https://github.com/ec2/ssz-rs", rev = "86be2a71c2bd4d5b454a8e86b83af1effd1e14d8"}
+ssz_rs = { git = "https://github.com/ec2/ssz-rs", rev = "86be2a71c2bd4d5b454a8e86b83af1effd1e14d8" }
 # ssz_rs = { path = "../ssz-rs/ssz-rs" }
 
 [patch."https://github.com/willemolding/ssz-rs"]
-ssz_rs = { git = "https://github.com/ec2/ssz-rs", rev = "86be2a71c2bd4d5b454a8e86b83af1effd1e14d8"}
+ssz_rs = { git = "https://github.com/ec2/ssz-rs", rev = "86be2a71c2bd4d5b454a8e86b83af1effd1e14d8" }
 
 # [patch."https://github.com/gattaca-com/ethereum-consensus"]
 # ethereum-consensus = { path = "../ethereum-consensus/ethereum-consensus" }

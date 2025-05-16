@@ -2,7 +2,7 @@ use super::TrackingStateReader;
 use crate::HostReaderError::StateMissing;
 use crate::state_reader::state_provider::{BoxedStateProvider, FileProvider};
 use crate::{
-    Ctx, Epoch, HostContext, Root, StateReader, ValidatorIndex, ValidatorInfo, Version,
+    Epoch, HostContext, Root, StateReader, ValidatorIndex, ValidatorInfo, Version,
     beacon_state::mainnet::BeaconState,
 };
 use alloy_primitives::B256;
@@ -14,7 +14,7 @@ use std::mem::MaybeUninit;
 use std::ops::DerefMut;
 use std::{path::PathBuf, slice};
 use thiserror::Error;
-use tracing::{debug, info};
+use tracing::debug;
 
 #[derive(Error, Debug)]
 pub enum HostReaderError {
@@ -167,16 +167,15 @@ impl StateReader for HostStateReader {
     ) -> Result<impl Iterator<Item = (ValidatorIndex, &ValidatorInfo)>, Self::Error> {
         // check whether we need to append new validators to the cache
         let state = self.state_cache.get(epoch)?;
-        let validator_count = self.validator_cache.len();
-        if state.validators().len() > validator_count {
-            debug!(
-                "Extending validator cache: {}",
-                state.validators().len() - validator_count
-            );
+        let validator_count = state.validators().len();
+
+        let cache_len = self.validator_cache.len();
+        if validator_count > cache_len {
+            debug!("Caching new validators: {}", validator_count - cache_len);
             self.validator_cache.extend(
                 state
                     .validators()
-                    .get(validator_count + 1..)
+                    .get(cache_len..)
                     .unwrap()
                     .iter()
                     .map(ValidatorInfo::from),
@@ -191,18 +190,13 @@ impl StateReader for HostStateReader {
             .filter(move |(_, validator)| is_active_validator(validator, epoch)))
     }
 
-    fn get_randao_mix(&self, epoch: Epoch, mix: Epoch) -> Result<B256, Self::Error> {
+    fn randao_mix(&self, epoch: Epoch, idx: usize) -> Result<Option<B256>, Self::Error> {
         let state = self.state_cache.get(epoch)?;
 
-        let idx: usize = (mix % self.context().epochs_per_historical_vector())
-            .try_into()
-            .unwrap();
-        let mix = state
+        Ok(state
             .randao_mixes()
             .get(idx)
-            .expect("randao mix index invalid");
-
-        Ok(B256::from_slice(mix.as_ref()))
+            .map(|randao| B256::from_slice(randao.as_slice())))
     }
 
     fn genesis_validators_root(&self) -> B256 {

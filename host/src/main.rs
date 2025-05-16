@@ -15,7 +15,7 @@ use z_core::{
 
 mod beacon_client;
 
-use crate::beacon_client::{EventKind, EventTopic};
+use crate::beacon_client::{BeaconClient, EventKind, EventTopic};
 
 /// CLI for generating and submitting ZKasper proofs
 #[derive(Parser, Debug)]
@@ -26,8 +26,12 @@ struct Args {
     trusted_epoch: Option<Epoch>,
 
     /// Beacon API URL
-    #[clap(long, required = true)]
+    #[clap(long)]
     beacon_api: Url,
+
+    /// Max Beacon API requests per second (0 to disable rate limit)
+    #[clap(long, short, default_value_t = 0)]
+    rps: u32,
 
     /// Network name
     #[clap(long, short, default_value_t = Network::Sepolia)]
@@ -82,8 +86,10 @@ async fn main() -> anyhow::Result<()> {
     // Note: The part of the context we use for mainnet and sepolia is the same.
     let context = Context::for_mainnet();
 
-    let beacon_client =
-        beacon_client::BeaconClient::new_with_cache(args.beacon_api, args.data_dir.join("http"))?;
+    let beacon_client = BeaconClient::builder(args.beacon_api)
+        .with_cache(args.data_dir.join("http"))
+        .with_rate_limit(args.rps)
+        .build();
 
     let state_dir = args.data_dir.join(args.network.to_string()).join("states");
 
@@ -108,7 +114,7 @@ async fn main() -> anyhow::Result<()> {
             }
             let mut ssz_reader = reader.build();
 
-            ssz_reader.verify_and_cache(*input.trusted_checkpoint_state_root);
+            ssz_reader.verify_and_cache(*input.trusted_checkpoint_state_root, &GuestContext);
 
             if verify(&mut ssz_reader, input.clone(), &context) {
                 info!("FFG Verification passed with SszStateReader");
@@ -141,7 +147,7 @@ async fn main() -> anyhow::Result<()> {
 
             let mut ssz_reader = reader.build();
 
-            ssz_reader.verify_and_cache(*input.trusted_checkpoint_state_root);
+            ssz_reader.verify_and_cache(*input.trusted_checkpoint_state_root, &GuestContext);
 
             if verify(&mut ssz_reader, input.clone(), &context) {
                 info!("FFG Verification passed with SszStateReader");

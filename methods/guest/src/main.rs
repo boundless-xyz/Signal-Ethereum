@@ -22,7 +22,7 @@ fn main() {
     let candidate_epoch = input.candidate_checkpoint.epoch;
     let context = GuestContext;
     env::log("Verify and Cache SszStateReader");
-    state_reader.verify_and_cache(*input.trusted_checkpoint_state_root);
+    state_reader.verify_and_cache(*input.trusted_checkpoint_state_root, &context);
 
     env::log("Running FFG Verification");
     let t = verify(&mut state_reader, input, &context);

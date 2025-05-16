@@ -5,18 +5,18 @@ edition = "2024"
 
 [dependencies]
 alloy-primitives = { workspace = true, default-features = false }
-ssz_rs = { workspace = true, default-features = true, features = ["serde"] }
+anyhow = { workspace = true }
+blst = { version = "0.3.14", default-features = false, features = ["serde"] }
+elsa = { version = "1.11" }
 ethereum-consensus = { workspace = true, default-features = false, optional = true }
 serde = { workspace = true }
-tracing = "0.1.41"
+serde_arrays = { version = "0.2.0" }
 serde_json = "1.0.133"
 sha2 = { workspace = true, default-features = false }
-anyhow = { workspace = true }
 ssz-multiproofs = { path = "../ssz-multiproofs" }
+ssz_rs = { workspace = true, default-features = true, features = ["serde"] }
 thiserror = { workspace = true }
-blst = { version = "0.3.14", default-features = false  }
-serde_arrays = { version = "0.2.0" }
-elsa = { version = "1.11" }
+tracing = "0.1.41"
 
 [features]
 default = ["host"]

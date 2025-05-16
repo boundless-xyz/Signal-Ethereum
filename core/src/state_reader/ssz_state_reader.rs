@@ -17,7 +17,7 @@ type Node = [u8; 32];
 #[derive(Default)]
 pub struct ComputedCache {
     // TODO(ec2): We should really only need the active ones. Can store in a map.
-    pub validators: BTreeMap<u64, ValidatorInfo>,
+    pub validators: BTreeMap<ValidatorIndex, ValidatorInfo>,
     pub randao: [u8; 32],
     pub genesis_validators_root: B256,
     pub fork_version: Version,
@@ -37,14 +37,19 @@ pub struct SszStateReader<'a> {
     pub validators: Multiproof<'a>,
     pub patches: BTreeMap<Epoch, StatePatch>,
 
+    // chunked in 96
+    #[serde(borrow)]
+    pub public_keys: Cow<'a, [u8]>,
+
+    #[serde(skip)]
+    pub context: Option<&'a GuestContext>,
     // TODO(ec2): We can give hints from tthe host for the active validator count so we can proactively allocate memory
     #[serde(skip)]
     pub cache: ComputedCache,
 }
 
-impl SszStateReader<'_> {
-    #[tracing::instrument(skip(self, trusted_state_root))]
-    pub fn verify_and_cache(&mut self, trusted_state_root: [u8; 32]) {
+impl<'a> SszStateReader<'a> {
+    pub fn verify_and_cache(&mut self, trusted_state_root: [u8; 32], context: &'a GuestContext) {
         // TODO(ec2): verify patches are valid
         info!("Patches: {:?}", self.patches);
         let mut beacon_state = self.beacon_state.values();
@@ -93,6 +98,7 @@ impl SszStateReader<'_> {
             // We are calulating the validator index from the gindex.
             let validator_index =
                 (exit_epoch_gindex >> VALIDATOR_TREE_DEPTH) - (1 << VALIDATOR_LIST_TREE_DEPTH);
+            let validator_index = usize::try_from(validator_index).unwrap();
 
             buf[0..32].copy_from_slice(&pk0[0..32]);
             buf[32..48].copy_from_slice(&pk1[0..16]);
@@ -131,6 +137,8 @@ impl SszStateReader<'_> {
             self.cache.genesis_validators_root
         );
         info!("Fork version: {:?}", self.cache.fork_version);
+
+        self.context = Some(context);
     }
 }
 
@@ -139,19 +147,36 @@ impl StateReader for SszStateReader<'_> {
     type Context = GuestContext;
 
     fn context(&self) -> &Self::Context {
-        todo!()
+        self.context.unwrap()
     }
 
     fn active_validators(
         &self,
         epoch: Epoch,
     ) -> Result<impl Iterator<Item = (ValidatorIndex, &ValidatorInfo)>, Self::Error> {
-        todo!();
-        Ok(std::iter::empty())
+        Ok(self
+            .cache
+            .validators
+            .iter()
+            .map(|(index, validator)| (*index, validator)))
     }
 
-    fn get_randao_mix(&self, epoch: Epoch, mix_epoch: Epoch) -> Result<B256, Self::Error> {
-        todo!()
+    fn randao_mix(&self, epoch: Epoch, index: usize) -> Result<Option<B256>, Self::Error> {
+        let randao = if self.trusted_epoch == epoch {
+            Some(self.cache.randao)
+        } else {
+            self.patches.get(&epoch).map(|patch| {
+                info!(
+                    "Using patch {} for randao for epoch {}, randao: {:?}",
+                    epoch - 1,
+                    epoch,
+                    patch.randao_next
+                );
+                patch.randao_next
+            })
+        };
+
+        Ok(randao.map(|randao| B256::from_slice(&randao)))
     }
 
     fn genesis_validators_root(&self) -> B256 {

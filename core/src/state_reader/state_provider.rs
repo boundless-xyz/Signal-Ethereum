@@ -4,7 +4,6 @@ use ethereum_consensus::{electra::compute_epoch_at_slot, state_transition::Conte
 use std::fs;
 use std::path::PathBuf;
 use tracing::debug;
-use tracing::field::debug;
 
 pub trait StateProvider {
     /// Returns the beacon state at `epoch`.

@@ -8,7 +8,11 @@ use crate::{
     Epoch, HostContext, PublicKey, StatePatch, StateReader, beacon_state::mainnet::BeaconState,
     mainnet::ElectraBeaconState,
 };
-use std::{cell::RefCell, collections::BTreeMap};
+use std::{
+    borrow::Cow,
+    cell::RefCell,
+    collections::{BTreeMap, BTreeSet},
+};
 
 use super::{HostStateReader, SszStateReader, host_state_reader::HostReaderError};
 
@@ -99,9 +103,28 @@ impl TrackingStateReader {
             "Number of patched validators: {}",
             patched_val_indices.len()
         );
+        info!("Patched validator indices: {:?}", patched_val_indices);
+        let sorted_indices = patched_val_indices
+            .iter()
+            .chain(active_validators.iter())
+            .copied()
+            .collect::<BTreeSet<_>>();
+
+        let public_keys = sorted_indices
+            .into_iter()
+            .flat_map(|val_idx| {
+                blst::min_pk::PublicKey::from_bytes(
+                    &state.validators().get(val_idx).unwrap().public_key,
+                )
+                .expect("Bls decompression failed")
+                .serialize()
+                .to_vec()
+            })
+            .collect::<Vec<_>>();
+
         let g_indices = active_validators
             .into_iter()
-            .chain(patched_val_indices)
+            .chain(patched_val_indices.into_iter())
             .flat_map(|idx| {
                 let public_key_path: &[Path] = &[
                     &[idx.into(), "public_key".into(), 0.into()],
@@ -125,6 +148,7 @@ impl TrackingStateReader {
 
                 g_indices
             });
+
         let v_count_gindex =
             <List<Validator, VALIDATOR_REGISTRY_LIMIT>>::generalized_index(&[PathElement::Length])
                 .unwrap();
@@ -144,6 +168,7 @@ impl TrackingStateReader {
             beacon_state: state_multiproof,
             validators: validator_multiproof,
             patches,
+            public_keys: Cow::from(public_keys),
             cache: Default::default(),
         }
     }

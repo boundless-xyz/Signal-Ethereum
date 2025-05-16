@@ -316,16 +316,25 @@ impl StateReader for HostStateReader {
 
     // can override if there is already a cached copy of this available
     #[tracing::instrument(skip(self), fields(epoch = %epoch))]
-    fn get_active_validator_indices(&self, epoch: u64) -> Result<Vec<usize>, Self::Error> {
-        Ok((0_usize..self.get_validator_count(epoch)?.unwrap())
-            .filter(|validator_index| {
-                // TODO: Remove this unwrap
-                let (activation, exit) = self
-                    .get_validator_activation_and_exit_epochs(epoch, *validator_index)
-                    .unwrap();
-                activation <= epoch && epoch < exit
-            })
-            .collect())
+    fn get_active_validator_indices(
+        &self,
+        epoch: u64,
+    ) -> Result<impl Iterator<Item = usize>, Self::Error> {
+        Ok(
+            (0_usize..self.get_validator_count(epoch)?.unwrap()).filter_map(
+                move |validator_index| {
+                    // TODO: Remove this unwrap
+                    let (activation, exit) = self
+                        .get_validator_activation_and_exit_epochs(epoch, validator_index)
+                        .unwrap();
+                    if activation <= epoch && epoch < exit {
+                        Some(validator_index)
+                    } else {
+                        None
+                    }
+                },
+            ),
+        )
     }
 
     fn genesis_validators_root(&self) -> alloy_primitives::B256 {

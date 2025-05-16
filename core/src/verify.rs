@@ -178,7 +178,10 @@ pub fn get_shufflings_for_epoch<S: StateReader, C: Ctx>(
     let len_total_validators: usize = state_reader.get_validator_count(epoch).unwrap().unwrap();
     info!("Valdator count: {}", len_total_validators);
 
-    let active_validator_indices = state_reader.get_active_validator_indices(epoch).unwrap();
+    let active_validator_indices = state_reader
+        .get_active_validator_indices(epoch)
+        .unwrap()
+        .collect();
 
     let seed = get_seed(state_reader, epoch, BEACON_ATTESTER_DOMAIN);
 

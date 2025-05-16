@@ -75,29 +75,56 @@ impl TrackingStateReader {
 
         let validators_root = state.validators().hash_tree_root().unwrap();
 
-        info!("Number of validators: {}", state.validators().len());
-        let g_indices = (0..state.validators().len()).flat_map(|idx| {
-            let public_key_path: &[Path] = &[
-                &[idx.into(), "public_key".into(), 0.into()],
-                &[idx.into(), "public_key".into(), 47.into()], // public key is a Vector<u8, 48>, so it takes up 2 leafs
-            ];
+        info!("Total Number of validators: {}", state.validators().len());
+        let active_validators = self
+            .get_active_validator_indices(self.trusted_epoch)
+            .unwrap()
+            .collect::<Vec<_>>();
+        let active_validator_count = active_validators.len();
+        info!("Number of active validators: {active_validator_count}");
+        let patches: BTreeMap<u64, StatePatch> = self.patches.replace(BTreeMap::new());
 
-            let balance_epoch_path: &[Path] = &[
-                &[idx.into(), "effective_balance".into()],
-                &[idx.into(), "activation_epoch".into()],
-                &[idx.into(), "exit_epoch".into()],
-            ];
+        // Get all the validator indices in patches (activations and exits)
+        let patched_val_indices = patches
+            .values()
+            .flat_map(|patch| {
+                patch
+                    .activations
+                    .iter()
+                    .chain(patch.exits.iter())
+                    .map(|idx| *idx as usize)
+            })
+            .collect::<Vec<_>>();
+        info!(
+            "Number of patched validators: {}",
+            patched_val_indices.len()
+        );
+        let g_indices = active_validators
+            .into_iter()
+            .chain(patched_val_indices)
+            .flat_map(|idx| {
+                let public_key_path: &[Path] = &[
+                    &[idx.into(), "public_key".into(), 0.into()],
+                    &[idx.into(), "public_key".into(), 47.into()], // public key is a Vector<u8, 48>, so it takes up 2 leafs
+                ];
 
-            let g_indices = public_key_path
-                .iter()
-                .chain(balance_epoch_path)
-                .map(|path| {
-                    <List<Validator, VALIDATOR_REGISTRY_LIMIT>>::generalized_index(path).unwrap()
-                })
-                .collect::<Vec<_>>();
+                let balance_epoch_path: &[Path] = &[
+                    &[idx.into(), "effective_balance".into()],
+                    &[idx.into(), "activation_epoch".into()],
+                    &[idx.into(), "exit_epoch".into()],
+                ];
 
-            g_indices
-        });
+                let g_indices = public_key_path
+                    .iter()
+                    .chain(balance_epoch_path)
+                    .map(|path| {
+                        <List<Validator, VALIDATOR_REGISTRY_LIMIT>>::generalized_index(path)
+                            .unwrap()
+                    })
+                    .collect::<Vec<_>>();
+
+                g_indices
+            });
         let v_count_gindex =
             <List<Validator, VALIDATOR_REGISTRY_LIMIT>>::generalized_index(&[PathElement::Length])
                 .unwrap();
@@ -112,7 +139,6 @@ impl TrackingStateReader {
 
         validator_multiproof.verify(&validators_root).unwrap();
 
-        let patches = self.patches.replace(BTreeMap::new());
         SszStateReader {
             trusted_epoch: self.trusted_epoch,
             beacon_state: state_multiproof,
@@ -169,7 +195,10 @@ impl StateReader for TrackingStateReader {
         Ok(self.reader.get_total_active_balance(epoch)?)
     }
 
-    fn get_active_validator_indices(&self, epoch: Epoch) -> Result<Vec<usize>, Self::Error> {
+    fn get_active_validator_indices(
+        &self,
+        epoch: Epoch,
+    ) -> Result<impl Iterator<Item = usize>, Self::Error> {
         Ok(self.reader.get_active_validator_indices(epoch)?)
     }
 

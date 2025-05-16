@@ -146,6 +146,7 @@ impl TrackingStateReader {
             patches,
             cache: Default::default(),
             context: None,
+            public_keys: Default::default(),
         }
     }
 }

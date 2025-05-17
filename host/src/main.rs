@@ -92,6 +92,7 @@ async fn main() -> anyhow::Result<()> {
         .build();
 
     let state_dir = args.data_dir.join(args.network.to_string()).join("states");
+    fs::create_dir_all(&state_dir)?;
 
     match args.command {
         Command::Exec => {

@@ -17,20 +17,35 @@ impl<'a, S: StateReader, R: StateReader> AssertStateReader<'a, S, R> {
     }
 }
 
-impl<'a, S: StateReader, R: StateReader> StateReader for AssertStateReader<'a, S, R> {
+impl<S: StateReader, R: StateReader> StateReader for AssertStateReader<'_, S, R> {
     type Error = S::Error;
     type Context = S::Context;
 
     fn context(&self) -> &S::Context {
-        &self.reader_a.context()
+        self.reader_a.context()
+    }
+
+    fn genesis_validators_root(&self) -> B256 {
+        let a = self.reader_a.genesis_validators_root();
+        let b = self.reader_b.genesis_validators_root();
+        assert_eq!(a, b);
+        a
+    }
+
+    fn fork_current_version(&self, state: Epoch) -> Result<Version, Self::Error> {
+        let a = self.reader_a.fork_current_version(state)?;
+        let b = self.reader_b.fork_current_version(state).unwrap();
+        assert_eq!(a, b);
+        Ok(a)
     }
 
     fn active_validators(
         &self,
+        state: Epoch,
         epoch: Epoch,
     ) -> Result<impl Iterator<Item = (ValidatorIndex, &ValidatorInfo)>, Self::Error> {
-        let mut iter_a = self.reader_a.active_validators(epoch)?;
-        let mut iter_b = self.reader_b.active_validators(epoch).unwrap();
+        let mut iter_a = self.reader_a.active_validators(state, epoch)?;
+        let mut iter_b = self.reader_b.active_validators(state, epoch).unwrap();
         Ok(iter::from_fn(move || {
             match (iter_a.next(), iter_b.next()) {
                 (None, None) => None,
@@ -46,20 +61,6 @@ impl<'a, S: StateReader, R: StateReader> StateReader for AssertStateReader<'a, S
     fn randao_mix(&self, state: Epoch, index: usize) -> Result<Option<B256>, Self::Error> {
         let a = self.reader_a.randao_mix(state, index)?;
         let b = self.reader_b.randao_mix(state, index).unwrap();
-        assert_eq!(a, b);
-        Ok(a)
-    }
-
-    fn genesis_validators_root(&self) -> B256 {
-        let a = self.reader_a.genesis_validators_root();
-        let b = self.reader_b.genesis_validators_root();
-        assert_eq!(a, b);
-        a
-    }
-
-    fn fork_version(&self, epoch: Epoch) -> Result<Version, Self::Error> {
-        let a = self.reader_a.fork_version(epoch)?;
-        let b = self.reader_b.fork_version(epoch).unwrap();
         assert_eq!(a, b);
         Ok(a)
     }

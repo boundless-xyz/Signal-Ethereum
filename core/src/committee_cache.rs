@@ -4,7 +4,6 @@ use alloc::{vec, vec::Vec};
 use alloy_primitives::B256;
 use core::num::NonZeroUsize;
 use core::ops::Range;
-use std::usize;
 use tracing::debug;
 
 /// Computes and stores the shuffling for an epoch. Provides various getters to allow callers to
@@ -129,8 +128,8 @@ impl CommitteeCache {
 
         let committee_index = compute_committee_index_in_epoch(
             slot,
-            self.slots_per_epoch.try_into().unwrap(),
-            self.committees_per_slot.try_into().unwrap(),
+            self.slots_per_epoch,
+            self.committees_per_slot,
             index,
         );
         self.compute_committee(committee_index)
@@ -170,7 +169,7 @@ impl CommitteeCache {
 
     /// Returns the number of committees per slot for this cache's epoch.
     pub fn committees_per_slot(&self) -> usize {
-        self.committees_per_slot.try_into().unwrap()
+        self.committees_per_slot
     }
 
     /// Returns a slice of `self.shuffling` that represents the `index`'th committee in the epoch.

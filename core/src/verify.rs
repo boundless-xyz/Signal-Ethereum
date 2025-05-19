@@ -39,7 +39,8 @@ pub fn verify<S: StateReader>(state_reader: &S, input: Input) -> bool {
             let committee_cache = committee_caches
                 .entry(attestation_epoch)
                 .or_insert_with(|| {
-                    get_shufflings_for_epoch(state_reader, attestation_epoch, context)
+                    // TODO: The state epoch does not necessarily match the attestation epoch
+                    get_shufflings_for_epoch(state_reader, attestation_epoch, attestation_epoch)
                 });
 
             let committee_indices: Vec<CommitteeIndex> = attestation
@@ -58,9 +59,7 @@ pub fn verify<S: StateReader>(state_reader: &S, input: Input) -> bool {
 
             let committee_count_per_slot = committees.len();
             for committee_index in committee_indices {
-                let beacon_committee = committees
-                    .get(committee_index as usize)
-                    .expect("No committee found");
+                let beacon_committee = committees.get(committee_index).expect("No committee found");
 
                 if committee_index >= committee_count_per_slot {
                     error!("Invalid committee index: {}", committee_index);
@@ -93,7 +92,9 @@ pub fn verify<S: StateReader>(state_reader: &S, input: Input) -> bool {
             debug!("Attestation has {} participants", attesting_indices.len());
 
             // check if attestation has a valid aggregate signature
-            let validators = state_reader.active_validators(attestation_epoch).unwrap();
+            let validators = state_reader
+                .active_validators(attestation_epoch, attestation_epoch)
+                .unwrap();
             let (pubkeys, attesting_balance) =
                 aggregate_validator_keys_and_balance(attesting_indices, validators);
 
@@ -178,30 +179,32 @@ fn aggregate_validator_keys_and_balance<'a>(
 
 // this can compute validators for up to
 // 1 epoch ahead of the epoch the state_reader can read from
-pub fn get_shufflings_for_epoch<S: StateReader, C: Ctx>(
+pub fn get_shufflings_for_epoch<S: StateReader>(
     state_reader: &S,
+    state: Epoch,
     epoch: Epoch,
-    context: &C,
 ) -> CommitteeCache {
-    info!("Getting shufflings for epoch: {}", epoch);
+    info!("Getting shufflings for epoch: {}", state);
 
-    let active_validator_indices = state_reader
-        .get_active_validator_indices(epoch)
+    let indices = state_reader
+        .get_active_validator_indices(state, epoch)
         .unwrap()
         .collect();
-
     let seed = state_reader
-        .get_seed(epoch, BEACON_ATTESTER_DOMAIN.into())
+        .get_seed(state, epoch, BEACON_ATTESTER_DOMAIN.into())
+        .unwrap();
+    let committees_per_slot = state_reader
+        .get_committee_count_per_slot(state, epoch)
         .unwrap();
 
     CommitteeCache::initialized(
         ShuffleData {
-            seed: seed.into(),
-            indices: active_validator_indices,
-            committees_per_slot: state_reader.get_committee_count_per_slot(epoch).unwrap(),
+            seed,
+            indices,
+            committees_per_slot,
         },
-        epoch,
-        context,
+        state,
+        state_reader.context(),
     )
     .unwrap()
 }
@@ -277,7 +280,7 @@ fn fork_data_root<S: StateReader>(
         pub genesis_validators_root: Root,
     }
     ForkData {
-        current_version: state_reader.fork_version(epoch).unwrap(),
+        current_version: state_reader.fork_current_version(epoch).unwrap(),
         genesis_validators_root,
     }
     .hash_tree_root()

@@ -1,149 +1,131 @@
-use std::borrow::Cow;
-use std::collections::BTreeMap;
-
+use super::StateReader;
 use crate::{
-    Epoch, GuestContext, PublicKey, VALIDATOR_LIST_TREE_DEPTH, VALIDATOR_TREE_DEPTH,
-    ValidatorIndex, Version,
+    BEACON_STATE_TREE_DEPTH, Ctx, Epoch, GuestContext, PublicKey, StatePatch,
+    VALIDATOR_LIST_TREE_DEPTH, VALIDATOR_TREE_DEPTH, ValidatorIndex, ValidatorInfo, Version,
 };
-use crate::{StatePatch, ValidatorInfo};
 use alloy_primitives::B256;
 use serde::{Deserialize, Serialize};
 use ssz_multiproofs::Multiproof;
+use std::collections::BTreeMap;
 use tracing::info;
 
-use super::StateReader;
-
-type Node = [u8; 32];
-
-#[derive(Default)]
-pub struct ComputedCache {
-    // TODO(ec2): We should really only need the active ones. Can store in a map.
-    pub validators: BTreeMap<ValidatorIndex, ValidatorInfo>,
-    pub randao: [u8; 32],
-    pub genesis_validators_root: B256,
-    pub fork_version: Version,
-}
-
-#[derive(Deserialize, Serialize)]
-pub struct SszStateReader<'a> {
-    pub trusted_epoch: u64,
+#[derive(Clone, Deserialize, Serialize)]
+pub struct StateInput<'a> {
+    /// Used fields of the BeaconState plus their inclusion proof against the state root.
     #[serde(borrow)]
     pub beacon_state: Multiproof<'a>,
+    /// Used fields of the active validators plus their inclusion proof against the validator root.
     #[serde(borrow)]
-    // Ideally this is only validators that are accessed in the verification of all attestations given to us.
-    // The second best thing is to have all the active validators.
-    // The worst thing is to have all the validators. This is what we do now.
-    // It should be a security issue to underpopulate this list, because Attestation verification will just fail.
-    // We may fail to finalize a checkpoint, but we cannot finalize an invalid checkpoint since this is still merkle proved.
-    pub validators: Multiproof<'a>,
+    pub active_validators: Multiproof<'a>,
+    /// Public keys of all active validators.
+    pub public_keys: Vec<PublicKey>,
+
     pub patches: BTreeMap<Epoch, StatePatch>,
-
-    // chunked in 96
-    #[serde(borrow)]
-    pub public_keys: Cow<'a, [u8]>,
-
-    #[serde(skip)]
-    pub context: Option<&'a GuestContext>,
-    // TODO(ec2): We can give hints from tthe host for the active validator count so we can proactively allocate memory
-    #[serde(skip)]
-    pub cache: ComputedCache,
 }
 
-impl<'a> SszStateReader<'a> {
-    pub fn verify_and_cache(&mut self, trusted_state_root: [u8; 32], context: &'a GuestContext) {
-        // TODO(ec2): verify patches are valid
+pub struct SszStateReader<'a> {
+    context: &'a GuestContext,
+    genesis_validators_root: B256,
+    fork_current_version: Version,
+    epoch: Epoch,
+    validators: BTreeMap<ValidatorIndex, ValidatorInfo>,
+    randao: BTreeMap<usize, B256>,
+
+    patches: BTreeMap<Epoch, StatePatch>,
+}
+
+impl StateInput<'_> {
+    pub fn into_state_reader(self, root: B256, context: &GuestContext) -> SszStateReader {
         let mut beacon_state = self.beacon_state.values();
+
+        // TODO: verify generalized indices
         let (_, genesis_validators_root) = beacon_state.next().unwrap();
+        let (_, slot) = beacon_state.next().unwrap();
         let (_, fork_current_version) = beacon_state.next().unwrap();
-
         let (_, validators_root) = beacon_state.next().unwrap();
-        let (_, randao) = beacon_state.next().unwrap();
 
-        // merkle verify beacon state root against trusted state root from input
+        // the remaining values of the beacon state correspond to RANDAO
+        let randao_gindex_base: u64 = ((1 << BEACON_STATE_TREE_DEPTH) + 13)
+            * context.epochs_per_historical_vector().next_power_of_two();
+        let randao = beacon_state
+            .map(|(gindex, randao)| {
+                // 0 <= index <= EPOCHS_PER_HISTORICAL_VECTOR
+                assert!(gindex >= randao_gindex_base);
+                assert!(gindex <= randao_gindex_base + context.epochs_per_historical_vector());
+
+                let index = (gindex - randao_gindex_base).try_into().unwrap();
+                (index, B256::from(randao))
+            })
+            .collect();
+
         self.beacon_state
-            .verify(&trusted_state_root)
+            .verify(&root)
             .expect("Beacon state root mismatch");
         info!("Beacon state root verified");
-        // merkle verify validators root
-        self.validators
+
+        let state_epoch = context.compute_epoch_at_slot(u64_from_chunk(slot));
+
+        self.active_validators
             .verify(validators_root)
             .expect("Validators root mismatch");
         info!("Validators root verified");
 
-        let mut validator_cache = BTreeMap::new();
-        let mut values = self.validators.values();
+        let mut values = self.active_validators.values();
+        let validator_cache = self
+            .public_keys
+            .into_iter()
+            .map(|pubkey| {
+                // TODO: verify generalized indices
+                let pk_compressed = {
+                    let (_, part_1) = values.next().unwrap();
+                    let (_, part_2) = values.next().unwrap();
+                    (part_1, part_2)
+                };
+                assert!(pubkey.has_compressed_chunks(pk_compressed.0, pk_compressed.1));
 
-        for i in 0.. {
-            let (_, pk0) = match values.next() {
-                Some(value) => value,
-                None => break,
-            };
-            let (_, pk1) = values.next().unwrap();
+                let (_, effective_balance) = values.next().unwrap();
+                let effective_balance = u64_from_chunk(effective_balance);
 
-            let (_, effective_balance) = values.next().unwrap();
-            let effective_balance = u64_from_b256(effective_balance, 0);
+                let (_, activation_epoch) = values.next().unwrap();
+                let activation_epoch = u64_from_chunk(activation_epoch);
 
-            let (_, activation_epoch) = values.next().unwrap();
-            let activation_epoch = u64_from_b256(activation_epoch, 0);
+                let (exit_epoch_gindex, exit_epoch) = values.next().unwrap();
+                let exit_epoch = u64_from_chunk(exit_epoch);
 
-            let (exit_epoch_gindex, exit_epoch) = values.next().unwrap();
-            let exit_epoch = u64_from_b256(exit_epoch, 0);
+                // We are calculating the validator index from the gindex.
+                let validator_index =
+                    (exit_epoch_gindex >> VALIDATOR_TREE_DEPTH) - (1 << VALIDATOR_LIST_TREE_DEPTH);
+                let validator_index = usize::try_from(validator_index).unwrap();
 
-            // We are calulating the validator index from the gindex.
-            let validator_index =
-                (exit_epoch_gindex >> VALIDATOR_TREE_DEPTH) - (1 << VALIDATOR_LIST_TREE_DEPTH);
-            let validator_index = usize::try_from(validator_index).unwrap();
+                (
+                    validator_index,
+                    ValidatorInfo {
+                        pubkey,
+                        effective_balance,
+                        activation_epoch,
+                        exit_epoch,
+                    },
+                )
+            })
+            .collect();
+        assert!(values.next().is_none());
+        info!("Active validators verified");
 
-            let uncompressed_key_bytes = &self.public_keys[i * 96..(i + 1) * 96];
-            let pubkey = PublicKey::from_bytes(uncompressed_key_bytes).unwrap();
-
-            let computed_compressed = pubkey.to_bytes();
-
-            // asserts that the ssz serialized key corresponds to the decompressed key
-            assert_eq!(
-                pk0[0..32],
-                computed_compressed[0..32],
-                "Compressed key mismatch"
-            );
-            assert_eq!(
-                pk1[0..16],
-                computed_compressed[32..48],
-                "Compressed key mismatch"
-            );
-
-            #[cfg(not(feature = "host"))]
-            if i % 50000 == 0 {
-                info!("Validator Cache Construction at {} validators", i);
-            }
-
-            validator_cache.insert(
-                validator_index,
-                ValidatorInfo {
-                    pubkey: pubkey.into(),
-                    effective_balance,
-                    activation_epoch,
-                    exit_epoch,
-                },
-            );
+        // TODO: verify state patches
+        for (epoch, _patch) in &self.patches {
+            assert!(*epoch > state_epoch);
         }
-        info!("Validator Cache Construction complete");
+        info!("State patches verified");
 
-        assert!(
-            values.next().is_none(),
-            "Validator multiproof has more than expected values"
-        );
-
-        self.cache.validators = validator_cache;
-        self.cache.randao = *randao;
-        self.cache.genesis_validators_root = genesis_validators_root.into();
-        self.cache.fork_version = fork_current_version[0..4].try_into().unwrap();
-        info!(
-            "Genesis validators root: {}",
-            self.cache.genesis_validators_root
-        );
-        info!("Fork version: {:?}", self.cache.fork_version);
-
-        self.context = Some(context);
+        SszStateReader {
+            context,
+            genesis_validators_root: genesis_validators_root.into(),
+            fork_current_version: fork_current_version[0..4].try_into().unwrap(),
+            epoch: state_epoch,
+            validators: validator_cache,
+            randao,
+            patches: self.patches,
+        }
     }
 }
 
@@ -152,20 +134,35 @@ impl StateReader for SszStateReader<'_> {
     type Context = GuestContext;
 
     fn context(&self) -> &Self::Context {
-        self.context.unwrap()
+        self.context
+    }
+
+    fn genesis_validators_root(&self) -> B256 {
+        self.genesis_validators_root
+    }
+
+    fn fork_current_version(&self, _epoch: Epoch) -> Result<Version, Self::Error> {
+        Ok(self.fork_current_version)
     }
 
     fn active_validators(
         &self,
+        state_epoch: Epoch,
         epoch: Epoch,
     ) -> Result<impl Iterator<Item = (ValidatorIndex, &ValidatorInfo)>, Self::Error> {
-        let patch = self.patches.get(&epoch);
+        assert!(state_epoch >= epoch, "Only historical epochs supported");
+
+        let patch = self.patches.get(&state_epoch);
+        assert!(
+            state_epoch == self.epoch || patch.is_some(),
+            "Missing state patch"
+        );
+
         let iter = self
-            .cache
             .validators
             .iter()
             .map(move |(idx, validator)| match patch {
-                Some(patch) => (*idx, patch.validators.get(&idx).unwrap_or(validator)),
+                Some(patch) => (*idx, patch.validators.get(idx).unwrap_or(validator)),
                 None => (*idx, validator),
             });
 
@@ -173,31 +170,24 @@ impl StateReader for SszStateReader<'_> {
     }
 
     fn randao_mix(&self, epoch: Epoch, index: usize) -> Result<Option<B256>, Self::Error> {
-        let randao = if self.trusted_epoch == epoch {
-            Some(B256::from_slice(&self.cache.randao))
+        let randao = if self.epoch == epoch {
+            self.randao.get(&index)
         } else {
             self.patches
                 .get(&epoch)
-                .map(|patch| patch.randao_mixes.get(&index).cloned().unwrap())
+                .expect("Missing state patch")
+                .randao_mixes
+                .get(&index)
         };
 
-        Ok(randao)
-    }
-
-    fn genesis_validators_root(&self) -> B256 {
-        self.cache.genesis_validators_root
-    }
-
-    // TODO(ec2): This needs to be handled for hardforks
-    fn fork_version(&self, _epoch: Epoch) -> Result<Version, Self::Error> {
-        Ok(self.cache.fork_version)
+        Ok(randao.cloned())
     }
 }
 
-/// Slice an 8 byte u64 out of a 32 byte chunk
-/// pos gives the position (e.g. first 8 bytes, second 8 bytes, etc.)
-fn u64_from_b256(node: &Node, pos: usize) -> u64 {
-    u64::from_le_bytes(node[pos * 8..(pos + 1) * 8].try_into().unwrap())
+/// Extracts an u64 from a 32-byte SSZ chunk.
+fn u64_from_chunk(node: &[u8; 32]) -> u64 {
+    assert!(node[8..].iter().all(|&b| b == 0));
+    u64::from_le_bytes(node[..8].try_into().unwrap())
 }
 
 /// Check if `validator` is active.

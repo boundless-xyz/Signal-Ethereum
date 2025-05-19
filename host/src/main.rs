@@ -10,7 +10,7 @@ use tracing::{debug, error, info, warn};
 use url::Url;
 use z_core::{
     mainnet::BeaconState, verify, AssertStateReader, Ctx, GuestContext, HostStateReader, Input,
-    SszStateReader, StateReader,
+    StateInput, StateReader,
 };
 
 mod beacon_client;
@@ -106,25 +106,25 @@ async fn main() -> anyhow::Result<()> {
 
             let input = compute_next_candidate(&beacon_client, trusted_checkpoint, &reader).await;
 
-            let mut reader = reader.track(input.trusted_checkpoint.epoch);
-            if verify(&mut reader, input.clone()) {
+            let reader = reader.track(input.trusted_checkpoint.epoch);
+            if verify(&reader, input.clone()) {
                 info!("FFG Verification passed with HostStateReader");
             } else {
                 error!("FFG Verification failed with HostStateReader");
             }
-            let mut ssz_reader = reader.build();
+            let state_input = reader.to_input();
+            let ssz_reader = state_input
+                .clone()
+                .into_state_reader(input.trusted_checkpoint_state_root, &GuestContext);
 
-            ssz_reader.verify_and_cache(*input.trusted_checkpoint_state_root, &GuestContext);
-            let assert_reader = AssertStateReader::new(&ssz_reader, &reader);
-
-            if verify(&assert_reader, input.clone()) {
+            if verify(&AssertStateReader::new(&ssz_reader, &reader), input.clone()) {
                 info!("FFG Verification passed with SszStateReader");
             } else {
                 error!("FFG Verification failed with SszStateReader");
             }
 
             info!("Running FFG Verification in R0VM");
-            let journal = execute_guest_program(ssz_reader, input, GuestContext);
+            let journal = execute_guest_program(state_input, input, GuestContext);
             info!("Journal: {:?}", journal);
         }
         Command::NativeExec => {
@@ -138,19 +138,18 @@ async fn main() -> anyhow::Result<()> {
 
             let input = compute_next_candidate(&beacon_client, trusted_checkpoint, &reader).await;
 
-            let mut reader = reader.track(input.trusted_checkpoint.epoch);
-            if verify(&mut reader, input.clone()) {
+            let reader = reader.track(input.trusted_checkpoint.epoch);
+            if verify(&reader, input.clone()) {
                 info!("FFG Verification passed with HostStateReader");
             } else {
                 error!("FFG Verification failed with HostStateReader");
             }
 
-            let mut ssz_reader = reader.build();
+            let state_input = reader.to_input();
+            let ssz_reader =
+                state_input.into_state_reader(input.trusted_checkpoint_state_root, &GuestContext);
 
-            ssz_reader.verify_and_cache(*input.trusted_checkpoint_state_root, &GuestContext);
-            let assert_reader = AssertStateReader::new(&ssz_reader, &reader);
-
-            if verify(&assert_reader, input.clone()) {
+            if verify(&AssertStateReader::new(&ssz_reader, &reader), input.clone()) {
                 info!("FFG Verification passed with SszStateReader");
             } else {
                 error!("FFG Verification failed with SszStateReader");
@@ -164,13 +163,9 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn execute_guest_program(
-    ssz_reader: SszStateReader,
-    input: Input,
-    context: GuestContext,
-) -> Vec<u8> {
+fn execute_guest_program(state_input: StateInput, input: Input, context: GuestContext) -> Vec<u8> {
     info!("Executing guest program");
-    let ssz_reader = bincode::serialize(&ssz_reader).unwrap();
+    let ssz_reader = bincode::serialize(&state_input).unwrap();
     info!("Serialized SszStateReader: {} bytes", ssz_reader.len());
     let input = bincode::serialize(&input).unwrap();
     info!("Serialized Input: {} bytes", input.len());

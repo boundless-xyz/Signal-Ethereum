@@ -113,18 +113,30 @@ impl StateReader for HostStateReader {
         &self.context
     }
 
+    fn genesis_validators_root(&self) -> B256 {
+        let root = self.state_cache.genesis_validators_root().unwrap();
+        B256::from(root.0)
+    }
+
+    fn fork_current_version(&self, epoch: Epoch) -> Result<Version, HostReaderError> {
+        let state = self.state_cache.get(epoch)?;
+        Ok(state.fork().current_version)
+    }
+
     fn active_validators(
         &self,
+        state_epoch: Epoch,
         epoch: Epoch,
     ) -> Result<impl Iterator<Item = (ValidatorIndex, &ValidatorInfo)>, Self::Error> {
-        trace!("HostStateReader::active_validators({epoch})");
+        trace!("HostStateReader::active_validators({state_epoch},{epoch})");
+        assert!(state_epoch >= epoch, "Only historical epochs supported");
 
-        let iter = match self.validator_cache.get(&epoch) {
+        let iter = match self.validator_cache.get(&state_epoch) {
             Some(validators) => validators.iter(),
             None => {
-                let state = self.state_cache.get(epoch)?;
+                let state = self.state_cache.get(state_epoch)?;
 
-                debug!("Caching validators for epoch {}...", epoch);
+                debug!("Caching validators for epoch {}...", state_epoch);
                 let validators: Vec<_> = state
                     .validators()
                     .iter()
@@ -134,7 +146,7 @@ impl StateReader for HostStateReader {
                     .collect();
                 debug!("Active validators: {}", validators.len());
 
-                self.validator_cache.insert(epoch, validators).iter()
+                self.validator_cache.insert(state_epoch, validators).iter()
             }
         };
 
@@ -149,16 +161,6 @@ impl StateReader for HostStateReader {
             .randao_mixes()
             .get(idx)
             .map(|randao| B256::from_slice(randao.as_slice())))
-    }
-
-    fn genesis_validators_root(&self) -> B256 {
-        let root = self.state_cache.genesis_validators_root().unwrap();
-        B256::from(root.0)
-    }
-
-    fn fork_version(&self, epoch: Epoch) -> Result<Version, HostReaderError> {
-        let state = self.state_cache.get(epoch)?;
-        Ok(state.fork().current_version)
     }
 }
 

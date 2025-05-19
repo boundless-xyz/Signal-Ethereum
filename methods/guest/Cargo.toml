@@ -10,7 +10,7 @@ codegen-units = 1
 lto = "fat"
 
 [dependencies]
-risc0-zkvm = { version = "^2.0.2", features = ["std", "unstable"] }
+risc0-zkvm = { version = "^2.0.2", features = ["std", "unstable", "heap-embedded-alloc"] }
 risc0-zkvm-platform = { version = "^2.0.2", features = ["sys-getenv"] }
 # risc0-zkvm = { path = "../../../risc0/risc0/zkvm", features = ["std", "unstable" ] }
 # risc0-zkvm-platform = { path = "../../../risc0/risc0/zkvm/platform", features = ["sys-getenv"] }

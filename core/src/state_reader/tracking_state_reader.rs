@@ -1,10 +1,9 @@
-use alloc::borrow::Cow;
 use ethereum_consensus::electra::{Validator, mainnet::VALIDATOR_REGISTRY_LIMIT};
 use ssz_multiproofs::MultiproofBuilder;
 use ssz_rs::prelude::*;
 use thiserror::Error;
 
-use super::{HostStateReader, SszStateReader, host_state_reader::HostReaderError};
+use super::{HostStateReader, StateInput, host_state_reader::HostReaderError};
 use crate::{
     Epoch, HostContext, StatePatchBuilder, StateReader, ValidatorIndex, ValidatorInfo, Version,
     beacon_state::mainnet::BeaconState, mainnet::ElectraBeaconState,
@@ -45,7 +44,7 @@ impl TrackingStateReader {
         &self.inner
     }
 
-    pub fn build(&self) -> SszStateReader {
+    pub fn to_input(&self) -> StateInput {
         let state = self
             .inner
             .get_beacon_state_by_epoch(self.trusted_epoch)
@@ -75,6 +74,7 @@ impl TrackingStateReader {
         let state_multiproof = match state {
             BeaconState::Electra(state) => proof_builder
                 .with_path::<ElectraBeaconState>(&["genesis_validators_root".into()])
+                .with_path::<ElectraBeaconState>(&["slot".into()])
                 .with_path::<ElectraBeaconState>(&["fork".into(), "current_version".into()])
                 .with_path::<ElectraBeaconState>(&["validators".into()])
                 .build(state)
@@ -139,24 +139,21 @@ impl TrackingStateReader {
             }
         }
 
+        let public_keys = validators
+            .into_values()
+            .map(|validator| validator.pubkey)
+            .collect();
+
         let patches = patch_builder
             .into_iter()
             .map(|(k, v)| (k, v.build()))
             .collect();
 
-        let public_keys = validators
-            .into_values()
-            .flat_map(|validator| validator.pubkey.0.serialize().to_vec())
-            .collect::<Vec<_>>();
-
-        SszStateReader {
-            trusted_epoch: self.trusted_epoch,
+        StateInput {
             beacon_state: state_multiproof,
-            validators: validator_multiproof,
+            active_validators: validator_multiproof,
+            public_keys,
             patches,
-            public_keys: Cow::from(public_keys),
-            cache: Default::default(),
-            context: None,
         }
     }
 
@@ -178,11 +175,13 @@ impl StateReader for TrackingStateReader {
 
     fn active_validators(
         &self,
+        state: Epoch,
         epoch: Epoch,
     ) -> Result<impl Iterator<Item = (ValidatorIndex, &ValidatorInfo)>, Self::Error> {
-        assert!(epoch >= self.trusted_epoch);
-        let iter = self.inner.active_validators(epoch)?;
-        self.validator_epochs.borrow_mut().insert(epoch);
+        assert!(state >= self.trusted_epoch);
+
+        let iter = self.inner.active_validators(state, epoch)?;
+        self.validator_epochs.borrow_mut().insert(state);
 
         Ok(iter.inspect(|(idx, _)| {
             self.validator_indices.borrow_mut().insert(*idx);
@@ -207,7 +206,7 @@ impl StateReader for TrackingStateReader {
         self.inner.genesis_validators_root()
     }
 
-    fn fork_version(&self, epoch: Epoch) -> Result<Version, Self::Error> {
-        Ok(self.inner.fork_version(epoch)?)
+    fn fork_current_version(&self, epoch: Epoch) -> Result<Version, Self::Error> {
+        Ok(self.inner.fork_current_version(epoch)?)
     }
 }

@@ -141,7 +141,7 @@ impl TrackingStateReader {
 
         let public_keys = validators
             .into_values()
-            .map(|validator| validator.pubkey)
+            .flat_map(|validator| validator.pubkey.to_bytes())
             .collect();
 
         let patches = patch_builder

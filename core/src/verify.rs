@@ -69,10 +69,15 @@ pub fn verify<S: StateReader>(state_reader: &S, input: Input) -> bool {
                     .iter()
                     .enumerate()
                     .filter_map(|(i, &index)| {
-                        attestation
+                        if attestation
                             .aggregation_bits
                             .get(committee_offset + i)
-                            .map(|_| index)
+                            .unwrap_or(false)
+                        {
+                            Some(index)
+                        } else {
+                            None
+                        }
                     })
                     .collect::<BTreeSet<usize>>();
 
@@ -83,7 +88,6 @@ pub fn verify<S: StateReader>(state_reader: &S, input: Input) -> bool {
                 attesting_indices.extend(committee_attesters);
                 committee_offset += beacon_committee.len();
             }
-            attesting_indices.sort_unstable();
             debug!("Attestation has {} participants", attesting_indices.len());
 
             // check if attestation has a valid aggregate signature

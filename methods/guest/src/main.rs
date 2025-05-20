@@ -1,6 +1,22 @@
 use risc0_zkvm::guest::env;
 use z_core::{verify, GuestContext, Input, StateInput};
 
+fn print_mem() {
+    const STACK_TOP: usize = 0x0020_0400;
+    const TEXT_START: usize = 0x0020_0800;
+    extern "C" {
+        static _end: u8;
+    }
+    let heap_start = unsafe { (&_end) as *const u8 as usize };
+    println!("code size: {}", heap_start - TEXT_START);
+    let x: u32 = 0;
+    let ptr = &x as *const u32 as usize;
+    println!("stack: {ptr:x}, usage: {}", STACK_TOP - ptr);
+    let a = Box::new(1);
+    let heap_pos = Box::into_raw(a) as *mut i32 as usize;
+    println!("heap:  {heap_pos:x}, usage: {}", heap_pos - heap_start,);
+}
+
 fn main() {
     let filter = tracing_subscriber::filter::EnvFilter::from_default_env()
         .add_directive(tracing_subscriber::filter::LevelFilter::INFO.into());
@@ -44,4 +60,6 @@ fn main() {
 
     // write public output to the journal
     env::commit(&candidate_epoch.to_le_bytes());
+
+    print_mem();
 }

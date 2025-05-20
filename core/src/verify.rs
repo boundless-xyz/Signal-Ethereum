@@ -160,20 +160,20 @@ pub fn verify<S: StateReader>(state_reader: &S, input: Input) -> bool {
 fn aggregate_validator_keys_and_balance<'a>(
     indices: impl IntoIterator<Item = usize>,
     validators: impl IntoIterator<Item = (ValidatorIndex, &'a ValidatorInfo)>,
-) -> (Vec<PublicKey>, u64) {
-    let validators = BTreeMap::from_iter(validators);
+) -> (Vec<&'a PublicKey>, u64) {
+    let indices = BTreeSet::from_iter(indices);
 
     let mut bal_acc = 0;
-    let pk_acc = indices
+    let pubkeys = validators
         .into_iter()
-        .map(|idx| {
-            let validator = validators.get(&idx).unwrap();
+        .filter_map(|(index, validator)| indices.contains(&index).then_some(validator))
+        .map(|validator| {
             bal_acc += validator.effective_balance;
-            validator.pubkey.clone()
+            &validator.pubkey
         })
-        .collect();
+        .collect::<Vec<_>>();
 
-    (pk_acc, bal_acc)
+    (pubkeys, bal_acc)
 }
 
 // this can compute validators for up to

@@ -77,7 +77,7 @@ impl PublicKey {
         Self(aggkey.to_public_key())
     }
 
-    pub fn aggregate(public_keys: &[PublicKey]) -> Result<Self, BlsError> {
+    pub fn aggregate(public_keys: &[&PublicKey]) -> Result<Self, BlsError> {
         let public_keys = public_keys.iter().map(|k| &k.0).collect::<Vec<_>>();
 
         let aggkey = bls::AggregatePublicKey::aggregate(&public_keys, false)?;

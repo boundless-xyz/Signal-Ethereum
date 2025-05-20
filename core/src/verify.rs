@@ -69,15 +69,10 @@ pub fn verify<S: StateReader>(state_reader: &S, input: Input) -> bool {
                     .iter()
                     .enumerate()
                     .filter_map(|(i, &index)| {
-                        if attestation
+                        attestation
                             .aggregation_bits
                             .get(committee_offset + i)
-                            .unwrap_or(false)
-                        {
-                            Some(index)
-                        } else {
-                            None
-                        }
+                            .map(|_| index)
                     })
                     .collect::<BTreeSet<usize>>();
 

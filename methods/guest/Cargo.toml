@@ -10,7 +10,7 @@ codegen-units = 1
 lto = "fat"
 
 [dependencies]
-risc0-zkvm = { version = "3.0.0-rc.1", features = ["std", "unstable", "heap-embedded-alloc"] }
+risc0-zkvm = { version = "3.0.0-rc.1", features = ["std", "unstable"] }
 risc0-zkvm-platform = { version = "2.0.3-rc.1", features = ["sys-getenv"] }
 z-core = { path = "../../core", default-features = false }
 bincode = { version = "1.3" }

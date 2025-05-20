@@ -3,7 +3,6 @@ use crate::{
     BEACON_STATE_TREE_DEPTH, Ctx, Epoch, GuestContext, PublicKey, StatePatch,
     VALIDATOR_LIST_TREE_DEPTH, VALIDATOR_TREE_DEPTH, ValidatorIndex, ValidatorInfo, Version,
 };
-use alloc::borrow::Cow;
 use alloy_primitives::B256;
 use serde::{Deserialize, Serialize};
 use ssz_multiproofs::Multiproof;
@@ -19,7 +18,7 @@ pub struct StateInput<'a> {
     #[serde(borrow)]
     pub active_validators: Multiproof<'a>,
     /// Public keys of all active validators.
-    pub public_keys: Cow<'a, [u8]>,
+    pub public_keys: Vec<PublicKey>,
 
     pub patches: BTreeMap<Epoch, StatePatch>,
 }
@@ -74,15 +73,14 @@ impl StateInput<'_> {
         let mut values = self.active_validators.values();
         let validator_cache = self
             .public_keys
-            .chunks_exact(96)
-            .map(|pk_bytes| {
+            .into_iter()
+            .map(|pubkey| {
                 // TODO: verify generalized indices
                 let pk_compressed = {
                     let (_, part_1) = values.next().unwrap();
                     let (_, part_2) = values.next().unwrap();
                     (part_1, part_2)
                 };
-                let pubkey = PublicKey::from_bytes(pk_bytes).unwrap();
                 assert!(pubkey.has_compressed_chunks(pk_compressed.0, pk_compressed.1));
 
                 let (_, effective_balance) = values.next().unwrap();

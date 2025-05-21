@@ -34,32 +34,51 @@ pub fn verify<S: StateReader>(state_reader: &S, input: Input) -> bool {
             let data = attestation.data;
             debug!("Processing attestation: {:?}", data);
 
-            let attestation_epoch = context.compute_epoch_at_slot(data.slot);
+            assert_eq!(data.target.epoch, context.compute_epoch_at_slot(data.slot));
+            assert_eq!(data.index, 0);
+
+            let attestation_epoch = data.target.epoch;
+
             let committee_cache = committee_caches
                 .entry(attestation_epoch)
                 .or_insert_with(|| {
-                    // TODO: The state epoch does not necessarily match the attestation epoch
                     get_shufflings_for_epoch(state_reader, attestation_epoch, attestation_epoch)
                 });
-            assert!(data.index < committee_cache.get_committee_count_per_slot());
-
-            let committee = committee_cache
-                .get_beacon_committee(data.slot, data.index, context)
-                .unwrap();
-            assert_eq!(attestation.aggregation_bits.len(), committee.len());
 
             // get_attesting_indices
-            let attesting_indices: BTreeSet<_> = committee
+            // see: https://github.com/ethereum/consensus-specs/blob/dev/specs/electra/beacon-chain.md#modified-get_attesting_indices
+            let mut attesting_indices: BTreeSet<usize> = BTreeSet::new();
+
+            // get_committee_indices
+            let committee_indices = attestation
+                .committee_bits
                 .iter()
                 .enumerate()
-                .filter_map(|(i, index)| {
-                    if attestation.aggregation_bits[i] {
-                        Some(*index)
-                    } else {
-                        None
-                    }
-                })
-                .collect();
+                .filter_map(|(index, bit)| bit.then_some(index));
+
+            let mut committee_offset = 0;
+            for committee_index in committee_indices {
+                assert!(committee_index < committee_cache.get_committee_count_per_slot());
+
+                let committee = committee_cache
+                    .get_beacon_committee(data.slot, committee_index, context)
+                    .unwrap();
+                let committee_attesters: BTreeSet<_> = committee
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(i, attester_index)| {
+                        attestation.aggregation_bits[committee_offset + i]
+                            .then_some(*attester_index)
+                    })
+                    .collect();
+                assert!(!committee_attesters.is_empty());
+                committee_offset += committee.len();
+
+                attesting_indices.extend(&committee_attesters);
+            }
+
+            // Bitfield length matches total number of participants
+            assert_eq!(attestation.aggregation_bits.len(), committee_offset);
 
             let state_validators = validator_cache.entry(attestation_epoch).or_insert_with(|| {
                 state_reader

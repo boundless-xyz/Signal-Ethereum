@@ -7,6 +7,7 @@ pub trait Ctx {
     type Error: Debug;
 
     fn slots_per_epoch(&self) -> u64;
+    fn effective_balance_increment(&self) -> u64;
     fn max_validators_per_committee(&self) -> usize;
     fn max_committees_per_slot(&self) -> usize;
 
@@ -30,6 +31,10 @@ impl Ctx for GuestContext {
 
     fn slots_per_epoch(&self) -> u64 {
         32
+    }
+
+    fn effective_balance_increment(&self) -> u64 {
+        1_000_000_000
     }
 
     fn max_validators_per_committee(&self) -> usize {
@@ -62,6 +67,7 @@ impl Ctx for GuestContext {
 }
 
 #[cfg(feature = "host")]
+#[derive(Clone)]
 #[repr(transparent)]
 pub struct HostContext(ethereum_consensus::state_transition::Context);
 
@@ -78,6 +84,10 @@ impl Ctx for HostContext {
 
     fn slots_per_epoch(&self) -> u64 {
         self.0.slots_per_epoch
+    }
+
+    fn effective_balance_increment(&self) -> u64 {
+        self.0.effective_balance_increment
     }
 
     fn max_validators_per_committee(&self) -> usize {

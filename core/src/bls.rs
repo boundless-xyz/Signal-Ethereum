@@ -2,7 +2,7 @@ use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use blst::BLST_ERROR;
 use blst::min_pk as bls;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 // domain string, must match what is used in signing. This one should be good for beacon chain
 const DST: &[u8] = b"BLS_SIG_BLS12381G2_XMD:SHA-256_SSWU_RO_POP_";
@@ -35,18 +35,41 @@ impl core::fmt::Display for BlsError {
         }
     }
 }
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[repr(transparent)]
+#[serde(transparent)]
 pub struct PublicKey(bls::PublicKey);
 
 impl PublicKey {
+    #[inline]
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, BlsError> {
-        Ok(PublicKey(bls::PublicKey::from_bytes(bytes).unwrap()))
+        Ok(PublicKey(bls::PublicKey::deserialize(bytes).unwrap()))
     }
 
-    pub fn to_bytes(&self) -> [u8; 48] {
-        self.0.to_bytes()
+    #[inline]
+    pub fn to_bytes(&self) -> [u8; 96] {
+        self.0.serialize()
     }
+
+    #[inline]
+    pub fn uncompress(bytes: &[u8]) -> Result<Self, BlsError> {
+        Ok(PublicKey(bls::PublicKey::uncompress(bytes).unwrap()))
+    }
+
+    #[inline]
+    pub fn compress(&self) -> [u8; 48] {
+        self.0.compress()
+    }
+
+    #[inline]
+    pub fn has_compressed_chunks(&self, chunk1: &[u8; 32], chunk2: &[u8; 32]) -> bool {
+        let public_key_bytes = self.compress();
+
+        &public_key_bytes[0..32] == chunk1
+            && public_key_bytes[32..48] == chunk2[0..16]
+            && chunk2[16..32] == [0u8; 16]
+    }
+
     #[allow(clippy::should_implement_trait)]
     pub fn add(self, other: PublicKey) -> Self {
         let mut aggkey = bls::AggregatePublicKey::from_public_key(&self.0);
@@ -54,7 +77,7 @@ impl PublicKey {
         Self(aggkey.to_public_key())
     }
 
-    pub fn aggregate(public_keys: &[PublicKey]) -> Result<Self, BlsError> {
+    pub fn aggregate(public_keys: &[&PublicKey]) -> Result<Self, BlsError> {
         let public_keys = public_keys.iter().map(|k| &k.0).collect::<Vec<_>>();
 
         let aggkey = bls::AggregatePublicKey::aggregate(&public_keys, false)?;
@@ -63,7 +86,7 @@ impl PublicKey {
     }
 }
 
-#[derive(Clone, Debug, Copy, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 #[repr(transparent)]
 pub struct Signature(bls::Signature);
 
@@ -159,13 +182,6 @@ mod host {
         fn from(signature: ethereum_consensus::crypto::Signature) -> Self {
             let bytes = signature.deref().as_ref();
             Signature(bls::Signature::from_bytes(bytes).unwrap())
-        }
-    }
-
-    impl From<ethereum_consensus::crypto::PublicKey> for PublicKey {
-        fn from(public_key: ethereum_consensus::crypto::PublicKey) -> Self {
-            let bytes = public_key.deref().as_ref();
-            PublicKey(bls::PublicKey::from_bytes(bytes).unwrap())
         }
     }
 }

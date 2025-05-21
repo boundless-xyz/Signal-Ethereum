@@ -1,296 +1,196 @@
-use std::borrow::Cow;
-use std::collections::BTreeMap;
-
-use crate::{Epoch, PublicKey, VALIDATOR_LIST_TREE_DEPTH, VALIDATOR_TREE_DEPTH};
-use crate::{StatePatch, ValidatorInfo};
+use super::StateReader;
+use crate::{
+    BEACON_STATE_TREE_DEPTH, Ctx, Epoch, GuestContext, PublicKey, StatePatch,
+    VALIDATOR_LIST_TREE_DEPTH, VALIDATOR_TREE_DEPTH, ValidatorIndex, ValidatorInfo, Version,
+};
 use alloy_primitives::B256;
 use serde::{Deserialize, Serialize};
 use ssz_multiproofs::Multiproof;
-use tracing::{info, warn};
+use std::collections::BTreeMap;
+use tracing::info;
 
-use super::StateReader;
-type Node = [u8; 32];
-
-#[derive(Default)]
-pub struct ComputedCache {
-    // TODO(ec2): We should really only need the active ones. Can store in a map.
-    pub validators: BTreeMap<u64, ValidatorInfo>,
-    pub randao: [u8; 32],
-    pub validator_count: u64,
-    pub genesis_validators_root: B256,
-    pub fork_version: [u8; 4],
-}
-
-#[derive(Deserialize, Serialize)]
-pub struct SszStateReader<'a> {
-    pub trusted_epoch: u64,
+#[derive(Clone, Deserialize, Serialize)]
+pub struct StateInput<'a> {
+    /// Used fields of the BeaconState plus their inclusion proof against the state root.
     #[serde(borrow)]
     pub beacon_state: Multiproof<'a>,
+    /// Used fields of the active validators plus their inclusion proof against the validator root.
     #[serde(borrow)]
-    // Ideally this is only validators that are accessed in the verification of all attestations given to us.
-    // The second best thing is to have all the active validators.
-    // The worst thing is to have all the validators. This is what we do now.
-    // It should be a security issue to underpopulate this list, because Attestation verification will just fail.
-    // We may fail to finalize a checkpoint, but we cannot finalize an invalid checkpoint since this is still merkle proved.
-    pub validators: Multiproof<'a>,
+    pub active_validators: Multiproof<'a>,
+    /// Public keys of all active validators.
+    pub public_keys: Vec<PublicKey>,
+
     pub patches: BTreeMap<Epoch, StatePatch>,
-
-    // chunked in 96
-    #[serde(borrow)]
-    pub public_keys: Cow<'a, [u8]>,
-
-    // TODO(ec2): We can give hints from tthe host for the active validator count so we can proactively allocate memory
-    #[serde(skip)]
-    pub cache: ComputedCache,
 }
 
-impl SszStateReader<'_> {
-    #[tracing::instrument(skip(self, trusted_state_root))]
-    pub fn verify_and_cache(&mut self, trusted_state_root: [u8; 32]) {
-        // TODO(ec2): verify patches are valid
-        info!("Patches: {:?}", self.patches);
+pub struct SszStateReader<'a> {
+    context: &'a GuestContext,
+    genesis_validators_root: B256,
+    fork_current_version: Version,
+    epoch: Epoch,
+    validators: BTreeMap<ValidatorIndex, ValidatorInfo>,
+    randao: BTreeMap<usize, B256>,
+
+    patches: BTreeMap<Epoch, StatePatch>,
+}
+
+impl StateInput<'_> {
+    pub fn into_state_reader(self, root: B256, context: &GuestContext) -> SszStateReader {
         let mut beacon_state = self.beacon_state.values();
+
+        // TODO: verify generalized indices
         let (_, genesis_validators_root) = beacon_state.next().unwrap();
+        let (_, slot) = beacon_state.next().unwrap();
         let (_, fork_current_version) = beacon_state.next().unwrap();
-
         let (_, validators_root) = beacon_state.next().unwrap();
-        let (_, randao) = beacon_state.next().unwrap();
 
-        // merkle verify beacon state root against trusted state root from input
+        // the remaining values of the beacon state correspond to RANDAO
+        let randao_gindex_base: u64 = ((1 << BEACON_STATE_TREE_DEPTH) + 13)
+            * context.epochs_per_historical_vector().next_power_of_two();
+        let randao = beacon_state
+            .map(|(gindex, randao)| {
+                // 0 <= index <= EPOCHS_PER_HISTORICAL_VECTOR
+                assert!(gindex >= randao_gindex_base);
+                assert!(gindex <= randao_gindex_base + context.epochs_per_historical_vector());
+
+                let index = (gindex - randao_gindex_base).try_into().unwrap();
+                (index, B256::from(randao))
+            })
+            .collect();
+
         self.beacon_state
-            .verify(&trusted_state_root)
+            .verify(&root)
             .expect("Beacon state root mismatch");
         info!("Beacon state root verified");
-        // merkle verify validators root
-        self.validators
+
+        let state_epoch = context.compute_epoch_at_slot(u64_from_chunk(slot));
+
+        self.active_validators
             .verify(validators_root)
             .expect("Validators root mismatch");
         info!("Validators root verified");
 
-        let mut validator_cache = BTreeMap::new();
-        let mut values = self.validators.values();
+        let mut values = self.active_validators.values();
+        let validator_cache = self
+            .public_keys
+            .into_iter()
+            .map(|pubkey| {
+                // TODO: verify generalized indices
+                let pk_compressed = {
+                    let (_, part_1) = values.next().unwrap();
+                    let (_, part_2) = values.next().unwrap();
+                    (part_1, part_2)
+                };
+                assert!(pubkey.has_compressed_chunks(pk_compressed.0, pk_compressed.1));
 
-        let mut validator_count = 0;
+                let (_, effective_balance) = values.next().unwrap();
+                let effective_balance = u64_from_chunk(effective_balance);
 
-        for i in 0.. {
-            let pk0_maybe = values.next();
-            let pk1_maybe = values.next();
-            if pk1_maybe.is_none() {
-                // we are at the end of the multiproof, the last read value is the total validator count (not just the actives ones)
-                let (_, v_count) = pk0_maybe.unwrap();
-                validator_count = u64_from_b256(v_count, 0);
-                break;
-            }
-            let (_, pk0) = pk0_maybe.unwrap();
+                let (_, activation_epoch) = values.next().unwrap();
+                let activation_epoch = u64_from_chunk(activation_epoch);
 
-            let (_, pk1) = pk1_maybe.unwrap();
+                let (exit_epoch_gindex, exit_epoch) = values.next().unwrap();
+                let exit_epoch = u64_from_chunk(exit_epoch);
 
-            let (_, effective_balance) = values.next().unwrap();
-            let effective_balance = u64_from_b256(effective_balance, 0);
+                // We are calculating the validator index from the gindex.
+                let validator_index =
+                    (exit_epoch_gindex >> VALIDATOR_TREE_DEPTH) - (1 << VALIDATOR_LIST_TREE_DEPTH);
+                let validator_index = usize::try_from(validator_index).unwrap();
 
-            let (_, activation_epoch) = values.next().unwrap();
-            let activation_epoch = u64_from_b256(activation_epoch, 0);
+                (
+                    validator_index,
+                    ValidatorInfo {
+                        pubkey,
+                        effective_balance,
+                        activation_epoch,
+                        exit_epoch,
+                    },
+                )
+            })
+            .collect();
+        assert!(values.next().is_none());
+        info!("Active validators verified");
 
-            let (exit_epoch_gindex, exit_epoch) = values.next().unwrap();
-            let exit_epoch = u64_from_b256(exit_epoch, 0);
-
-            // We are calulating the validator index from the gindex.
-            let validator_index =
-                (exit_epoch_gindex >> VALIDATOR_TREE_DEPTH) - (1 << VALIDATOR_LIST_TREE_DEPTH);
-
-            let uncompressed_key_bytes = &self.public_keys[i * 96..(i + 1) * 96];
-            let pubkey = PublicKey::from_bytes(uncompressed_key_bytes).unwrap();
-
-            let computed_compressed = pubkey.to_bytes();
-
-            // asserts that the ssz serialized key corresponds to the decompressed key
-            assert_eq!(
-                pk0[0..32],
-                computed_compressed[0..32],
-                "Compressed key mismatch"
-            );
-            assert_eq!(
-                pk1[0..16],
-                computed_compressed[32..48],
-                "Compressed key mismatch"
-            );
-
-            #[cfg(not(feature = "host"))]
-            if i % 50000 == 0 {
-                info!("Validator Cache Construction at {} validators", i);
-            }
-
-            validator_cache.insert(
-                validator_index,
-                ValidatorInfo {
-                    pubkey: pubkey.into(),
-                    effective_balance,
-                    activation_epoch,
-                    exit_epoch,
-                },
-            );
+        // TODO: verify state patches
+        for (epoch, _patch) in &self.patches {
+            assert!(*epoch > state_epoch);
         }
-        info!("Validator Cache Construction complete");
+        info!("State patches verified");
 
-        info!("Validator Cache Construction complete");
-
-        assert!(
-            values.next().is_none(),
-            "Validator multiproof has more than expected values"
-        );
-
-        self.cache.validators = validator_cache;
-        self.cache.validator_count = validator_count as u64;
-        self.cache.randao = *randao;
-        self.cache.genesis_validators_root = genesis_validators_root.into();
-        self.cache.fork_version = fork_current_version[0..4].try_into().unwrap();
-        info!(
-            "Genesis validators root: {}",
-            self.cache.genesis_validators_root
-        );
-        info!("Fork version: {:?}", self.cache.fork_version);
+        SszStateReader {
+            context,
+            genesis_validators_root: genesis_validators_root.into(),
+            fork_current_version: fork_current_version[0..4].try_into().unwrap(),
+            epoch: state_epoch,
+            validators: validator_cache,
+            randao,
+            patches: self.patches,
+        }
     }
 }
 
 impl StateReader for SszStateReader<'_> {
     type Error = ();
+    type Context = GuestContext;
 
-    fn get_randao(&self, epoch: crate::Epoch) -> Result<Option<[u8; 32]>, Self::Error> {
-        Ok(self
-            .patches
-            .get(&(epoch))
-            .map(|patch| {
-                info!(
-                    "Using patch {} for randao for epoch {}, randao: {:?}",
-                    epoch - 1,
-                    epoch,
-                    patch.randao_next
-                );
-                patch.randao_next
-            })
-            .or(Some(self.cache.randao)))
-    }
-
-    fn aggregate_validator_keys_and_balance(
-        &self,
-        indices: impl IntoIterator<Item = usize>,
-    ) -> Result<(Vec<PublicKey>, u64), Self::Error> {
-        let mut bal_acc = 0;
-        let pk_acc = indices
-            .into_iter()
-            .map(|idx| {
-                let ValidatorInfo {
-                    pubkey,
-                    effective_balance,
-                    ..
-                } = &self.cache.validators[&(idx as u64)];
-                bal_acc += effective_balance;
-
-                pubkey.clone()
-            })
-            .collect();
-
-        Ok((pk_acc, bal_acc))
-    }
-
-    fn get_validator_activation_and_exit_epochs(
-        &self,
-        epoch: crate::Epoch,
-        validator_index: usize,
-    ) -> Result<(u64, u64), Self::Error> {
-        let mut activation = self
-            .cache
-            .validators
-            .get(&(validator_index as u64))
-            .ok_or(())?
-            .activation_epoch;
-        let mut exit = self
-            .cache
-            .validators
-            .get(&(validator_index as u64))
-            .ok_or(())?
-            .exit_epoch;
-        // replace any activations/exists with their most recent patch updates if any
-        for (epoch, patch) in self.patches.iter().filter(|(e, _)| *e <= &epoch) {
-            if patch
-                .activations
-                .iter()
-                .filter(|vi| **vi == validator_index as u32)
-                .next_back()
-                .is_some()
-            {
-                info!(
-                    "validator {} Patched! activation: {} exit: {}",
-                    validator_index, activation, exit
-                );
-                activation = *epoch;
-            }
-            if patch
-                .exits
-                .iter()
-                .filter(|vi| **vi == validator_index as u32)
-                .next_back()
-                .is_some()
-            {
-                info!(
-                    "validator {} Patched! activation: {} exit: {}",
-                    validator_index, activation, exit
-                );
-                exit = *epoch;
-            }
-        }
-
-        Ok((activation, exit))
-    }
-
-    fn get_validator_count(&self, epoch: crate::Epoch) -> Result<Option<usize>, Self::Error> {
-        let mut c = self.cache.validator_count;
-        for (_, patch) in self.patches.iter().filter(|(e, _)| *e <= &epoch) {
-            c += patch.n_deposits_processed as u64;
-        }
-        Ok(Some(c as usize))
-    }
-
-    fn get_total_active_balance(&self, epoch: crate::Epoch) -> Result<u64, Self::Error> {
-        self.aggregate_validator_keys_and_balance(self.get_active_validator_indices(epoch)?)
-            .map(|x| x.1)
-    }
-
-    fn get_active_validator_indices(
-        &self,
-        epoch: crate::Epoch,
-    ) -> Result<impl Iterator<Item = usize>, Self::Error> {
-        Ok(self
-            .cache
-            .validators
-            .keys()
-            .filter_map(move |validator_index| {
-                if let Ok((activation, exit)) =
-                    self.get_validator_activation_and_exit_epochs(epoch, *validator_index as usize)
-                {
-                    if activation <= epoch && epoch < exit {
-                        Some(*validator_index as usize)
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                }
-            }))
+    fn context(&self) -> &Self::Context {
+        self.context
     }
 
     fn genesis_validators_root(&self) -> B256 {
-        self.cache.genesis_validators_root
+        self.genesis_validators_root
     }
 
-    // TODO(ec2): This needs to be handled for hardforks
-    fn fork_version(&self, _epoch: Epoch) -> [u8; 4] {
-        self.cache.fork_version
+    fn fork_current_version(&self, _epoch: Epoch) -> Result<Version, Self::Error> {
+        Ok(self.fork_current_version)
+    }
+
+    fn active_validators(
+        &self,
+        state_epoch: Epoch,
+        epoch: Epoch,
+    ) -> Result<impl Iterator<Item = (ValidatorIndex, &ValidatorInfo)>, Self::Error> {
+        assert!(state_epoch >= epoch, "Only historical epochs supported");
+
+        let patch = self.patches.get(&state_epoch);
+        assert!(
+            state_epoch == self.epoch || patch.is_some(),
+            "Missing state patch"
+        );
+
+        let iter = self
+            .validators
+            .iter()
+            .map(move |(idx, validator)| match patch {
+                Some(patch) => (*idx, patch.validators.get(idx).unwrap_or(validator)),
+                None => (*idx, validator),
+            });
+
+        Ok(iter.filter(move |(_, validator)| is_active_validator(validator, epoch)))
+    }
+
+    fn randao_mix(&self, epoch: Epoch, index: usize) -> Result<Option<B256>, Self::Error> {
+        let randao = if self.epoch == epoch {
+            self.randao.get(&index)
+        } else {
+            self.patches
+                .get(&epoch)
+                .expect("Missing state patch")
+                .randao_mixes
+                .get(&index)
+        };
+
+        Ok(randao.cloned())
     }
 }
 
-/// Slice an 8 byte u64 out of a 32 byte chunk
-/// pos gives the position (e.g. first 8 bytes, second 8 bytes, etc.)
-fn u64_from_b256(node: &Node, pos: usize) -> u64 {
-    u64::from_le_bytes(node[pos * 8..(pos + 1) * 8].try_into().unwrap())
+/// Extracts an u64 from a 32-byte SSZ chunk.
+fn u64_from_chunk(node: &[u8; 32]) -> u64 {
+    assert!(node[8..].iter().all(|&b| b == 0));
+    u64::from_le_bytes(node[..8].try_into().unwrap())
+}
+
+/// Check if `validator` is active.
+fn is_active_validator(validator: &ValidatorInfo, epoch: Epoch) -> bool {
+    validator.activation_epoch <= epoch && epoch < validator.exit_epoch
 }

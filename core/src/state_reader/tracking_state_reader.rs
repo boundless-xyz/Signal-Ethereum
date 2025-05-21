@@ -2,19 +2,18 @@ use ethereum_consensus::electra::{Validator, mainnet::VALIDATOR_REGISTRY_LIMIT};
 use ssz_multiproofs::MultiproofBuilder;
 use ssz_rs::prelude::*;
 use thiserror::Error;
-use tracing::info;
 
+use super::{HostStateReader, StateInput, host_state_reader::HostReaderError};
 use crate::{
-    Epoch, HostContext, PublicKey, StatePatch, StateReader, beacon_state::mainnet::BeaconState,
-    mainnet::ElectraBeaconState,
+    Epoch, HostContext, StatePatchBuilder, StateReader, ValidatorIndex, ValidatorInfo, Version,
+    beacon_state::mainnet::BeaconState, mainnet::ElectraBeaconState,
 };
+use alloy_primitives::B256;
 use std::{
-    borrow::Cow,
     cell::RefCell,
     collections::{BTreeMap, BTreeSet},
 };
-
-use super::{HostStateReader, SszStateReader, host_state_reader::HostReaderError};
+use tracing::info;
 
 #[derive(Error, Debug)]
 pub enum TrackingReaderError {
@@ -23,215 +22,191 @@ pub enum TrackingReaderError {
 }
 
 pub struct TrackingStateReader {
-    pub trusted_epoch: Epoch,
-    pub patches: RefCell<BTreeMap<Epoch, StatePatch>>,
-    pub reader: HostStateReader,
+    trusted_epoch: Epoch,
+    inner: HostStateReader,
+    validator_indices: RefCell<BTreeSet<ValidatorIndex>>,
+    validator_epochs: RefCell<BTreeSet<Epoch>>,
+    mix_epochs: RefCell<BTreeMap<Epoch, BTreeSet<usize>>>,
 }
 
 impl TrackingStateReader {
     pub fn new(reader: HostStateReader, trusted_epoch: Epoch) -> Self {
         Self {
             trusted_epoch,
-            // validators_accessed: RefCell::new(BTreeSet::new()),
-            patches: RefCell::new(BTreeMap::new()),
-            reader,
+            inner: reader,
+            validator_indices: Default::default(),
+            validator_epochs: Default::default(),
+            mix_epochs: Default::default(),
         }
     }
 
     pub fn host_reader(&self) -> &HostStateReader {
-        &self.reader
+        &self.inner
     }
 
-    #[tracing::instrument(skip(self))]
-    pub fn build(&mut self) -> SszStateReader {
+    pub fn to_input(&self) -> StateInput {
         let state = self
-            .reader
+            .inner
             .get_beacon_state_by_epoch(self.trusted_epoch)
             .unwrap();
         let beacon_state_root = state.hash_tree_root().unwrap();
 
-        let state_builder: MultiproofBuilder = MultiproofBuilder::new();
+        let mut patch_builder: BTreeMap<Epoch, StatePatchBuilder> = BTreeMap::new();
+        let mut proof_builder: MultiproofBuilder = MultiproofBuilder::new();
 
-        let randao_mixes_gindex = {
-            let mix_epoch = (self.trusted_epoch
-                + (self.reader.context.epochs_per_historical_vector
-                    - self.reader.context.min_seed_lookahead)
-                - 1)
-                % self.reader.context.epochs_per_historical_vector;
-            let path = &["randao_mixes".into(), (mix_epoch as usize).into()];
-            ElectraBeaconState::generalized_index(path).unwrap()
-        };
+        for (epoch, indices) in self.mix_epochs.take() {
+            if epoch == self.trusted_epoch {
+                for idx in indices {
+                    let path = ["randao_mixes".into(), idx.into()];
+                    proof_builder = proof_builder.with_path::<ElectraBeaconState>(&path);
+                }
+            } else {
+                let patch = patch_builder
+                    .entry(epoch)
+                    .or_insert(self.patch_builder(epoch).unwrap());
+                for idx in indices {
+                    patch.randao_mix(idx);
+                }
+            }
+        }
 
+        info!("Building State multiproof");
         let state_multiproof = match state {
-            BeaconState::Electra(state) => state_builder
+            BeaconState::Electra(state) => proof_builder
                 .with_path::<ElectraBeaconState>(&["genesis_validators_root".into()])
+                .with_path::<ElectraBeaconState>(&["slot".into()])
                 .with_path::<ElectraBeaconState>(&["fork".into(), "current_version".into()])
                 .with_path::<ElectraBeaconState>(&["validators".into()])
-                .with_gindex(randao_mixes_gindex)
                 .build(state)
                 .unwrap(),
             _ => {
                 panic!("Unsupported beacon fork. electra only for now")
             }
         };
-
         state_multiproof.verify(&beacon_state_root).unwrap();
+        info!("State multiproof finished");
 
         let validators_root = state.validators().hash_tree_root().unwrap();
 
-        info!("Total Number of validators: {}", state.validators().len());
-        let active_validators = self
-            .get_active_validator_indices(self.trusted_epoch)
-            .unwrap()
-            .collect::<Vec<_>>();
-        let active_validator_count = active_validators.len();
-        info!("Number of active validators: {active_validator_count}");
-        let patches: BTreeMap<u64, StatePatch> = self.patches.replace(BTreeMap::new());
-
-        // Get all the validator indices in patches (activations and exits)
-        let patched_val_indices = patches
-            .values()
-            .flat_map(|patch| {
-                patch
-                    .activations
-                    .iter()
-                    .chain(patch.exits.iter())
-                    .map(|idx| *idx as usize)
-            })
-            .collect::<Vec<_>>();
+        let mut validators = BTreeMap::new();
+        for idx in self.validator_indices.take() {
+            let validator = ValidatorInfo::from(state.validators().get(idx).unwrap());
+            validators.insert(idx, validator);
+        }
         info!(
-            "Number of patched validators: {}",
-            patched_val_indices.len()
+            "Used validators: {}/{}",
+            validators.len(),
+            state.validators().len()
         );
-        info!("Patched validator indices: {:?}", patched_val_indices);
-        let sorted_indices = patched_val_indices
-            .iter()
-            .chain(active_validators.iter())
-            .copied()
-            .collect::<BTreeSet<_>>();
 
-        let public_keys = sorted_indices
-            .into_iter()
-            .flat_map(|val_idx| {
-                blst::min_pk::PublicKey::from_bytes(
-                    &state.validators().get(val_idx).unwrap().public_key,
-                )
-                .expect("Bls decompression failed")
-                .serialize()
-                .to_vec()
-            })
-            .collect::<Vec<_>>();
+        let g_indices = validators.keys().flat_map(|&idx| {
+            let public_key_path: &[Path] = &[
+                &[idx.into(), "public_key".into(), 0.into()],
+                &[idx.into(), "public_key".into(), 47.into()], // public key is a Vector<u8, 48>, so it takes up 2 leafs
+            ];
 
-        let g_indices = active_validators
-            .into_iter()
-            .chain(patched_val_indices.into_iter())
-            .flat_map(|idx| {
-                let public_key_path: &[Path] = &[
-                    &[idx.into(), "public_key".into(), 0.into()],
-                    &[idx.into(), "public_key".into(), 47.into()], // public key is a Vector<u8, 48>, so it takes up 2 leafs
-                ];
+            let balance_epoch_path: &[Path] = &[
+                &[idx.into(), "effective_balance".into()],
+                &[idx.into(), "activation_epoch".into()],
+                &[idx.into(), "exit_epoch".into()],
+            ];
 
-                let balance_epoch_path: &[Path] = &[
-                    &[idx.into(), "effective_balance".into()],
-                    &[idx.into(), "activation_epoch".into()],
-                    &[idx.into(), "exit_epoch".into()],
-                ];
+            let g_indices = public_key_path
+                .iter()
+                .chain(balance_epoch_path)
+                .map(|path| {
+                    <List<Validator, VALIDATOR_REGISTRY_LIMIT>>::generalized_index(path).unwrap()
+                })
+                .collect::<Vec<_>>();
 
-                let g_indices = public_key_path
-                    .iter()
-                    .chain(balance_epoch_path)
-                    .map(|path| {
-                        <List<Validator, VALIDATOR_REGISTRY_LIMIT>>::generalized_index(path)
-                            .unwrap()
-                    })
-                    .collect::<Vec<_>>();
-
-                g_indices
-            });
-
-        let v_count_gindex =
-            <List<Validator, VALIDATOR_REGISTRY_LIMIT>>::generalized_index(&[PathElement::Length])
-                .unwrap();
-        let g_indices = g_indices.chain(std::iter::once(v_count_gindex));
+            g_indices
+        });
 
         info!("Building Validator multiproof");
         let validator_multiproof = MultiproofBuilder::new()
             .with_gindices(g_indices)
             .build(state.validators())
             .unwrap();
+        validator_multiproof.verify(&validators_root).unwrap();
         info!("Validator multiproof finished");
 
-        validator_multiproof.verify(&validators_root).unwrap();
-
-        SszStateReader {
-            trusted_epoch: self.trusted_epoch,
-            beacon_state: state_multiproof,
-            validators: validator_multiproof,
-            patches,
-            public_keys: Cow::from(public_keys),
-            cache: Default::default(),
+        for epoch in self.validator_epochs.take() {
+            if epoch != self.trusted_epoch {
+                let patch = patch_builder
+                    .entry(epoch)
+                    .or_insert(self.patch_builder(epoch).unwrap());
+                patch.validator_diff(&validators);
+            }
         }
+
+        let public_keys = validators
+            .into_values()
+            .map(|validator| validator.pubkey)
+            .collect();
+
+        let patches = patch_builder
+            .into_iter()
+            .map(|(k, v)| (k, v.build()))
+            .collect();
+
+        StateInput {
+            beacon_state: state_multiproof,
+            active_validators: validator_multiproof,
+            public_keys,
+            patches,
+        }
+    }
+
+    fn patch_builder(&self, epoch: Epoch) -> Result<StatePatchBuilder, HostReaderError> {
+        let state = self.inner.get_beacon_state_by_epoch(epoch)?;
+        let context = self.inner.context();
+
+        Ok(StatePatchBuilder::new(state, context))
     }
 }
 
 impl StateReader for TrackingStateReader {
     type Error = TrackingReaderError;
+    type Context = HostContext;
 
-    fn get_randao(&self, epoch: Epoch) -> Result<Option<[u8; 32]>, Self::Error> {
-        if epoch != self.trusted_epoch {
-            let state_a = self.reader.get_beacon_state_by_epoch(epoch - 1).unwrap();
-            let state_b = self.reader.get_beacon_state_by_epoch(epoch).unwrap();
-            info!("Creating patch for epoch {} to {}", epoch - 1, epoch);
-            let patch = StatePatch::patch::<HostContext>(
-                &self.reader.context.clone().into(),
-                state_a,
-                state_b,
-            )
-            .unwrap();
-            if self.patches.borrow_mut().insert(epoch, patch).is_some() {
-                panic!("Patch for epoch {} already exists", epoch);
-            }
-        }
-        Ok(self.reader.get_randao(epoch)?)
+    fn context(&self) -> &Self::Context {
+        self.inner.context()
     }
 
-    fn aggregate_validator_keys_and_balance(
+    fn active_validators(
         &self,
-        indices: impl IntoIterator<Item = usize>,
-    ) -> Result<(Vec<PublicKey>, u64), Self::Error> {
-        Ok(self.reader.aggregate_validator_keys_and_balance(indices)?)
-    }
-
-    fn get_validator_activation_and_exit_epochs(
-        &self,
+        state: Epoch,
         epoch: Epoch,
-        validator_index: usize,
-    ) -> Result<(u64, u64), Self::Error> {
-        Ok(self
-            .reader
-            .get_validator_activation_and_exit_epochs(epoch, validator_index)?)
+    ) -> Result<impl Iterator<Item = (ValidatorIndex, &ValidatorInfo)>, Self::Error> {
+        assert!(state >= self.trusted_epoch);
+
+        let iter = self.inner.active_validators(state, epoch)?;
+        self.validator_epochs.borrow_mut().insert(state);
+
+        Ok(iter.inspect(|(idx, _)| {
+            self.validator_indices.borrow_mut().insert(*idx);
+        }))
     }
 
-    fn get_validator_count(&self, epoch: Epoch) -> Result<Option<usize>, Self::Error> {
-        Ok(self.reader.get_validator_count(epoch)?)
-    }
+    fn randao_mix(&self, epoch: Epoch, idx: usize) -> Result<Option<B256>, Self::Error> {
+        assert!(epoch >= self.trusted_epoch);
 
-    fn get_total_active_balance(&self, epoch: Epoch) -> Result<u64, Self::Error> {
-        Ok(self.reader.get_total_active_balance(epoch)?)
-    }
+        // to be able to prove the inclusion, the randao value must exist
+        let randao = self.inner.randao_mix(epoch, idx)?.unwrap();
+        self.mix_epochs
+            .borrow_mut()
+            .entry(epoch)
+            .or_default()
+            .insert(idx);
 
-    fn get_active_validator_indices(
-        &self,
-        epoch: Epoch,
-    ) -> Result<impl Iterator<Item = usize>, Self::Error> {
-        Ok(self.reader.get_active_validator_indices(epoch)?)
+        Ok(Some(randao))
     }
 
     fn genesis_validators_root(&self) -> alloy_primitives::B256 {
-        self.reader.genesis_validators_root()
+        self.inner.genesis_validators_root()
     }
 
-    fn fork_version(&self, epoch: Epoch) -> [u8; 4] {
-        self.reader.fork_version(epoch)
+    fn fork_current_version(&self, epoch: Epoch) -> Result<Version, Self::Error> {
+        Ok(self.inner.fork_current_version(epoch)?)
     }
 }

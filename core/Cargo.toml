@@ -16,9 +16,10 @@ ssz-multiproofs = { path = "../ssz-multiproofs" }
 thiserror = { workspace = true }
 blst = { version = "0.3.14", default-features = false, features = ["serde"]}
 serde_arrays = { version = "0.2.0" }
+elsa = { version = "1.11", optional = true }
 
 [features]
 default = ["host"]
 host = [
-    "dep:ethereum-consensus", "ssz-multiproofs/builder", "blst/default", "ssz-multiproofs/progress-bar"
+    "dep:ethereum-consensus", "ssz-multiproofs/builder", "blst/default", "ssz-multiproofs/progress-bar", "dep:elsa"
 ]

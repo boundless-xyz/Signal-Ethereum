@@ -1,15 +1,16 @@
 use std::collections::BTreeSet;
 
 use crate::{
-    Attestation, BEACON_ATTESTER_DOMAIN, CommitteeCache, CommitteeIndex, Ctx, Domain, Epoch, Input,
-    Link, MAX_COMMITTEES_PER_SLOT, MAX_VALIDATORS_PER_COMMITTEE, PublicKey, Root, ShuffleData,
-    StateReader, Version, fast_aggregate_verify_pre_aggregated,
+    Attestation, AttestationData, BEACON_ATTESTER_DOMAIN, CommitteeCache, Ctx, Domain, Epoch,
+    Input, Link, MAX_COMMITTEES_PER_SLOT, MAX_VALIDATORS_PER_COMMITTEE, PublicKey, Root,
+    ShuffleData, Signature, StateReader, ValidatorIndex, ValidatorInfo, Version,
+    fast_aggregate_verify_pre_aggregated,
 };
 use alloc::collections::BTreeMap;
-use sha2::Digest;
 use ssz_rs::prelude::*;
-use tracing::{debug, error, info, trace, warn};
-pub fn verify<S: StateReader, C: Ctx>(state_reader: &mut S, input: Input, context: &C) -> bool {
+use tracing::{debug, info, warn};
+
+pub fn verify<S: StateReader>(state_reader: &S, input: Input) -> bool {
     // 0. pre-conditions
     assert_eq!(
         input.candidate_checkpoint.epoch,
@@ -17,7 +18,11 @@ pub fn verify<S: StateReader, C: Ctx>(state_reader: &mut S, input: Input, contex
         "Candidate must be direct successor of trusted checkpoint"
     );
 
+    let context = state_reader.context();
+
     // 1. Attestation processing
+    let mut validator_cache: BTreeMap<Epoch, BTreeMap<ValidatorIndex, &ValidatorInfo>> =
+        BTreeMap::new();
     let mut committee_caches: BTreeMap<Epoch, CommitteeCache> = BTreeMap::new();
 
     let mut balances: BTreeMap<Link, u64> = BTreeMap::new();
@@ -26,99 +31,89 @@ pub fn verify<S: StateReader, C: Ctx>(state_reader: &mut S, input: Input, contex
         .into_iter()
         .filter(|a| context.compute_epoch_at_slot(a.data.slot) >= input.trusted_checkpoint.epoch)
         .for_each(|attestation| {
-            debug!(
-                "Checking attestation for slot: {} committee: {}",
-                attestation.data.slot, attestation.data.index
-            );
+            let data = attestation.data;
+            debug!("Processing attestation: {:?}", data);
 
-            let attestation_epoch = context.compute_epoch_at_slot(attestation.data.slot);
-            debug!("Attestation epoch: {}", attestation_epoch);
+            assert_eq!(data.target.epoch, context.compute_epoch_at_slot(data.slot));
+            assert_eq!(data.index, 0);
+
+            let attestation_epoch = data.target.epoch;
 
             let committee_cache = committee_caches
                 .entry(attestation_epoch)
                 .or_insert_with(|| {
-                    get_shufflings_for_epoch(state_reader, attestation_epoch, context)
+                    get_shufflings_for_epoch(state_reader, attestation_epoch, attestation_epoch)
                 });
 
-            let committee_indices: Vec<CommitteeIndex> = attestation
+            // get_attesting_indices
+            // see: https://github.com/ethereum/consensus-specs/blob/dev/specs/electra/beacon-chain.md#modified-get_attesting_indices
+            let mut attesting_indices: BTreeSet<usize> = BTreeSet::new();
+
+            // get_committee_indices
+            let committee_indices = attestation
                 .committee_bits
                 .iter()
                 .enumerate()
-                .flat_map(|(i, bit)| bit.then_some(i))
-                .collect();
-            trace!("Committee indices: {:?}", committee_indices);
+                .filter_map(|(index, bit)| bit.then_some(index));
 
-            let mut attesting_indices = vec![];
-            let committees = committee_cache
-                .get_beacon_committees_at_slot(attestation.data.slot, context)
-                .unwrap();
             let mut committee_offset = 0;
-
-            let committee_count_per_slot = committees.len();
             for committee_index in committee_indices {
-                let beacon_committee = committees
-                    .get(committee_index as usize)
-                    .expect("No committee found");
+                assert!(committee_index < committee_cache.get_committee_count_per_slot());
 
-                if committee_index >= committee_count_per_slot {
-                    error!("Invalid committee index: {}", committee_index);
-                }
-
-                let committee_attesters = beacon_committee
+                let committee = committee_cache
+                    .get_beacon_committee(data.slot, committee_index, context)
+                    .unwrap();
+                let mut committee_attesters = committee
                     .iter()
                     .enumerate()
-                    .filter_map(|(i, &index)| {
-                        if attestation
-                            .aggregation_bits
-                            .get(committee_offset + i)
-                            .unwrap_or(false)
-                        {
-                            Some(index)
-                        } else {
-                            None
-                        }
+                    .filter_map(|(i, attester_index)| {
+                        attestation.aggregation_bits[committee_offset + i]
+                            .then_some(*attester_index)
                     })
-                    .collect::<BTreeSet<usize>>();
-
-                if committee_attesters.is_empty() {
-                    error!("Empty Committee");
-                }
-
+                    .peekable();
+                assert!(committee_attesters.peek().is_some());
                 attesting_indices.extend(committee_attesters);
-                committee_offset += beacon_committee.len();
+
+                committee_offset += committee.len();
             }
-            attesting_indices.sort_unstable();
-            debug!("Attestation has {} participants", attesting_indices.len());
 
-            // check if attestation has a valid aggregate signature
-            let (pubkeys, attesting_balance) = state_reader
-                .aggregate_validator_keys_and_balance(attesting_indices)
-                .unwrap();
+            // Bitfield length matches total number of participants
+            assert_eq!(attestation.aggregation_bits.len(), committee_offset);
 
-            let domain = beacon_attester_signing_domain(state_reader, attestation_epoch);
-            let signing_root = compute_signing_root(&attestation.data, domain);
-            let agg_pk = PublicKey::aggregate(&pubkeys).unwrap();
+            let state_validators = validator_cache.entry(attestation_epoch).or_insert_with(|| {
+                state_reader
+                    .active_validators(attestation_epoch, attestation_epoch)
+                    .unwrap()
+                    .collect()
+            });
+            let attesting_validators = attesting_indices
+                .iter()
+                .map(|i| *state_validators.get(i).unwrap())
+                .collect::<Vec<_>>();
 
-            if let Err(e) = fast_aggregate_verify_pre_aggregated(
-                &agg_pk,
-                signing_root.as_ref(),
-                &attestation.signature,
-            ) {
-                warn!("Signature verification failed: {:?}", e);
-            } else {
-                let attestation_link = Link(attestation.data.source, attestation.data.target);
-                balances
-                    .entry(attestation_link)
-                    .and_modify(|balance| *balance += attesting_balance)
-                    .or_insert(attesting_balance);
-            }
+            assert!(is_valid_indexed_attestation(
+                state_reader,
+                attesting_validators.iter().copied(),
+                &data,
+                attestation.signature
+            ));
+
+            let attesting_balance = attesting_validators
+                .iter()
+                .fold(0u64, |acc, e| acc + e.effective_balance);
+
+            let attestation_link = Link(data.source, data.target);
+            balances
+                .entry(attestation_link)
+                .and_modify(|balance| *balance += attesting_balance)
+                .or_insert(attesting_balance);
         });
     debug!("Links and balances: {:#?}", balances);
 
     /////////// 2. Finality calculation  //////////////
     info!("2. Finality calculation start");
     let sm_links = get_supermajority_links(state_reader, input.trusted_checkpoint.epoch, balances);
-    info!("Supermajority links: {:#?}", sm_links);
+    debug!("Supermajority links: {:#?}", sm_links);
 
     // Because by definition the trusted CP is finalized we know that:
     // - All checkpoints prior to trusted_cp are finalized
@@ -155,44 +150,55 @@ pub fn verify<S: StateReader, C: Ctx>(state_reader: &mut S, input: Input, contex
     true
 }
 
-fn get_seed<S: StateReader>(state_reader: &S, epoch: u64, domain_type: [u8; 4]) -> [u8; 32] {
-    let mix = state_reader.get_randao(epoch).unwrap().unwrap();
+fn is_valid_indexed_attestation<'a, S: StateReader>(
+    state_reader: &S,
+    attesting_validators: impl IntoIterator<Item = &'a ValidatorInfo>,
+    data: &AttestationData,
+    signature: Signature,
+) -> bool {
+    let pubkeys = attesting_validators
+        .into_iter()
+        .map(|validator| &validator.pubkey)
+        .collect::<Vec<_>>();
+    if pubkeys.is_empty() {
+        return false;
+    }
+    let domain = beacon_attester_signing_domain(state_reader, data.target.epoch);
+    let signing_root = compute_signing_root(data, domain);
 
-    let mut h = sha2::Sha256::new();
-    Digest::update(&mut h, domain_type);
-    Digest::update(&mut h, epoch.to_le_bytes());
-    Digest::update(&mut h, mix);
+    let agg_pk = PublicKey::aggregate(&pubkeys).unwrap();
 
-    h.finalize().into()
+    fast_aggregate_verify_pre_aggregated(&agg_pk, signing_root.as_ref(), &signature).is_ok()
 }
 
 // this can compute validators for up to
 // 1 epoch ahead of the epoch the state_reader can read from
-pub fn get_shufflings_for_epoch<S: StateReader, C: Ctx>(
+pub fn get_shufflings_for_epoch<S: StateReader>(
     state_reader: &S,
-    epoch: u64,
-    context: &C,
+    state: Epoch,
+    epoch: Epoch,
 ) -> CommitteeCache {
-    info!("Getting shufflings for epoch: {}", epoch);
-    // first up lets compute and cache the committee shufflings for this epoch
-    let len_total_validators: usize = state_reader.get_validator_count(epoch).unwrap().unwrap();
-    info!("Valdator count: {}", len_total_validators);
+    info!("Getting shufflings for epoch: {}", state);
 
-    let active_validator_indices = state_reader
-        .get_active_validator_indices(epoch)
+    let indices = state_reader
+        .get_active_validator_indices(state, epoch)
         .unwrap()
         .collect();
-
-    let seed = get_seed(state_reader, epoch, BEACON_ATTESTER_DOMAIN);
+    let seed = state_reader
+        .get_seed(state, epoch, BEACON_ATTESTER_DOMAIN.into())
+        .unwrap();
+    let committees_per_slot = state_reader
+        .get_committee_count_per_slot(state, epoch)
+        .unwrap();
 
     CommitteeCache::initialized(
         ShuffleData {
-            seed: seed.into(),
-            active_validator_indices,
-            len_total_validators,
+            seed,
+            indices,
+            committees_per_slot,
         },
-        epoch,
-        context,
+        state,
+        state_reader.context(),
     )
     .unwrap()
 }
@@ -268,7 +274,7 @@ fn fork_data_root<S: StateReader>(
         pub genesis_validators_root: Root,
     }
     ForkData {
-        current_version: state_reader.fork_version(epoch),
+        current_version: state_reader.fork_current_version(epoch).unwrap(),
         genesis_validators_root,
     }
     .hash_tree_root()

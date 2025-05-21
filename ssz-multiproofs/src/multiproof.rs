@@ -48,7 +48,7 @@ use crate::Descriptor;
 /// Note this will iterate over the values/gindices in depth-first left-to-right order as they appear in the SSZ merkle tree.
 /// This will NOT be the order they were added or increasing order of gindex, it will depend on the shape of the data structure.
 ///
-#[derive(Debug, PartialEq, Default, serde::Deserialize, serde::Serialize)]
+#[derive(Clone, Debug, PartialEq, Default, serde::Deserialize, serde::Serialize)]
 pub struct Multiproof<'a> {
     /// The merkle tree nodes corresponding to both leaves and internal proof nodes
     #[serde(borrow)]

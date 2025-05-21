@@ -148,7 +148,7 @@ impl CommitteeCache {
             return Err(Error::NotInitialized);
         }
 
-        (0..self.committees_per_slot())
+        (0..self.get_committee_count_per_slot())
             .map(|index| self.get_beacon_committee(slot, index, context))
             .collect()
     }
@@ -168,7 +168,7 @@ impl CommitteeCache {
     }
 
     /// Returns the number of committees per slot for this cache's epoch.
-    pub fn committees_per_slot(&self) -> usize {
+    pub fn get_committee_count_per_slot(&self) -> usize {
         self.committees_per_slot
     }
 

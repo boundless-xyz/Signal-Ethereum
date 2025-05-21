@@ -1,9 +1,10 @@
 use std::collections::BTreeSet;
 
 use crate::{
-    Attestation, BEACON_ATTESTER_DOMAIN, CommitteeCache, CommitteeIndex, Ctx, Domain, Epoch, Input,
-    Link, MAX_COMMITTEES_PER_SLOT, MAX_VALIDATORS_PER_COMMITTEE, PublicKey, Root, ShuffleData,
-    StateReader, ValidatorIndex, ValidatorInfo, Version, fast_aggregate_verify_pre_aggregated,
+    Attestation, AttestationData, BEACON_ATTESTER_DOMAIN, CommitteeCache, Ctx, Domain, Epoch,
+    Input, Link, MAX_COMMITTEES_PER_SLOT, MAX_VALIDATORS_PER_COMMITTEE, PublicKey, Root,
+    ShuffleData, Signature, StateReader, ValidatorIndex, ValidatorInfo, Version,
+    fast_aggregate_verify_pre_aggregated,
 };
 use alloc::collections::BTreeMap;
 use ssz_rs::prelude::*;
@@ -20,6 +21,8 @@ pub fn verify<S: StateReader>(state_reader: &S, input: Input) -> bool {
     let context = state_reader.context();
 
     // 1. Attestation processing
+    let mut validator_cache: BTreeMap<Epoch, BTreeMap<ValidatorIndex, &ValidatorInfo>> =
+        BTreeMap::new();
     let mut committee_caches: BTreeMap<Epoch, CommitteeCache> = BTreeMap::new();
 
     let mut balances: BTreeMap<Link, u64> = BTreeMap::new();
@@ -28,92 +31,63 @@ pub fn verify<S: StateReader>(state_reader: &S, input: Input) -> bool {
         .into_iter()
         .filter(|a| context.compute_epoch_at_slot(a.data.slot) >= input.trusted_checkpoint.epoch)
         .for_each(|attestation| {
-            debug!(
-                "Checking attestation for slot: {} committee: {}",
-                attestation.data.slot, attestation.data.index
-            );
+            let data = attestation.data;
+            debug!("Processing attestation: {:?}", data);
 
-            let attestation_epoch = context.compute_epoch_at_slot(attestation.data.slot);
-            debug!("Attestation epoch: {}", attestation_epoch);
-
+            let attestation_epoch = context.compute_epoch_at_slot(data.slot);
             let committee_cache = committee_caches
                 .entry(attestation_epoch)
                 .or_insert_with(|| {
                     // TODO: The state epoch does not necessarily match the attestation epoch
                     get_shufflings_for_epoch(state_reader, attestation_epoch, attestation_epoch)
                 });
+            assert!(data.index < committee_cache.get_committee_count_per_slot());
 
-            let committee_indices: Vec<CommitteeIndex> = attestation
-                .committee_bits
+            let committee = committee_cache
+                .get_beacon_committee(data.slot, data.index, context)
+                .unwrap();
+            assert_eq!(attestation.aggregation_bits.len(), committee.len());
+
+            // get_attesting_indices
+            let attesting_indices: BTreeSet<_> = committee
                 .iter()
                 .enumerate()
-                .flat_map(|(i, bit)| bit.then_some(i))
+                .filter_map(|(i, index)| {
+                    if attestation.aggregation_bits[i] {
+                        Some(*index)
+                    } else {
+                        None
+                    }
+                })
                 .collect();
-            trace!("Committee indices: {:?}", committee_indices);
 
-            let mut attesting_indices = vec![];
-            let committees = committee_cache
-                .get_beacon_committees_at_slot(attestation.data.slot, context)
-                .unwrap();
-            let mut committee_offset = 0;
+            let state_validators = validator_cache.entry(attestation_epoch).or_insert_with(|| {
+                state_reader
+                    .active_validators(attestation_epoch, attestation_epoch)
+                    .unwrap()
+                    .collect()
+            });
+            let attesting_validators = attesting_indices
+                .iter()
+                .map(|i| *state_validators.get(i).unwrap())
+                .collect::<Vec<_>>();
 
-            let committee_count_per_slot = committees.len();
-            for committee_index in committee_indices {
-                let beacon_committee = committees.get(committee_index).expect("No committee found");
+            assert!(is_valid_indexed_attestation(
+                state_reader,
+                attesting_validators.iter().copied(),
+                &data,
+                attestation.signature
+            ));
 
-                if committee_index >= committee_count_per_slot {
-                    error!("Invalid committee index: {}", committee_index);
-                }
+            let attesting_balance = attesting_validators
+                .iter()
+                .fold(0u64, |acc, e| acc + e.effective_balance);
 
-                let committee_attesters = beacon_committee
-                    .iter()
-                    .enumerate()
-                    .filter_map(|(i, &index)| {
-                        if attestation
-                            .aggregation_bits
-                            .get(committee_offset + i)
-                            .unwrap_or(false)
-                        {
-                            Some(index)
-                        } else {
-                            None
-                        }
-                    })
-                    .collect::<BTreeSet<usize>>();
-
-                if committee_attesters.is_empty() {
-                    error!("Empty Committee");
-                }
-
-                attesting_indices.extend(committee_attesters);
-                committee_offset += beacon_committee.len();
-            }
-            debug!("Attestation has {} participants", attesting_indices.len());
-
-            // check if attestation has a valid aggregate signature
-            let validators = state_reader
-                .active_validators(attestation_epoch, attestation_epoch)
-                .unwrap();
-            let (pubkeys, attesting_balance) =
-                aggregate_validator_keys_and_balance(attesting_indices, validators);
-
-            let domain = beacon_attester_signing_domain(state_reader, attestation_epoch);
-            let signing_root = compute_signing_root(&attestation.data, domain);
-            let agg_pk = PublicKey::aggregate(&pubkeys).unwrap();
-
-            if let Err(e) = fast_aggregate_verify_pre_aggregated(
-                &agg_pk,
-                signing_root.as_ref(),
-                &attestation.signature,
-            ) {
-                warn!("Signature verification failed: {:?}", e);
-            } else {
-                let attestation_link = Link(attestation.data.source, attestation.data.target);
-                balances
-                    .entry(attestation_link)
-                    .and_modify(|balance| *balance += attesting_balance)
-                    .or_insert(attesting_balance);
-            }
+            let attestation_link = Link(data.source, data.target);
+            balances
+                .entry(attestation_link)
+                .and_modify(|balance| *balance += attesting_balance)
+                .or_insert(attesting_balance);
         });
     debug!("Links and balances: {:#?}", balances);
 
@@ -157,23 +131,25 @@ pub fn verify<S: StateReader>(state_reader: &S, input: Input) -> bool {
     true
 }
 
-fn aggregate_validator_keys_and_balance<'a>(
-    indices: impl IntoIterator<Item = usize>,
-    validators: impl IntoIterator<Item = (ValidatorIndex, &'a ValidatorInfo)>,
-) -> (Vec<&'a PublicKey>, u64) {
-    let indices = BTreeSet::from_iter(indices);
-
-    let mut bal_acc = 0;
-    let pubkeys = validators
+fn is_valid_indexed_attestation<'a, S: StateReader>(
+    state_reader: &S,
+    attesting_validators: impl IntoIterator<Item = &'a ValidatorInfo>,
+    data: &AttestationData,
+    signature: Signature,
+) -> bool {
+    let pubkeys = attesting_validators
         .into_iter()
-        .filter_map(|(index, validator)| indices.contains(&index).then_some(validator))
-        .map(|validator| {
-            bal_acc += validator.effective_balance;
-            &validator.pubkey
-        })
+        .map(|validator| &validator.pubkey)
         .collect::<Vec<_>>();
+    if pubkeys.is_empty() {
+        return false;
+    }
+    let domain = beacon_attester_signing_domain(state_reader, data.target.epoch);
+    let signing_root = compute_signing_root(data, domain);
 
-    (pubkeys, bal_acc)
+    let agg_pk = PublicKey::aggregate(&pubkeys).unwrap();
+
+    fast_aggregate_verify_pre_aggregated(&agg_pk, signing_root.as_ref(), &signature).is_ok()
 }
 
 // this can compute validators for up to

@@ -63,18 +63,18 @@ pub fn verify<S: StateReader>(state_reader: &S, input: Input) -> bool {
                 let committee = committee_cache
                     .get_beacon_committee(data.slot, committee_index, context)
                     .unwrap();
-                let committee_attesters: BTreeSet<_> = committee
+                let mut committee_attesters = committee
                     .iter()
                     .enumerate()
                     .filter_map(|(i, attester_index)| {
                         attestation.aggregation_bits[committee_offset + i]
                             .then_some(*attester_index)
                     })
-                    .collect();
-                assert!(!committee_attesters.is_empty());
-                committee_offset += committee.len();
+                    .peekable();
+                assert!(committee_attesters.peek().is_some());
+                attesting_indices.extend(committee_attesters);
 
-                attesting_indices.extend(&committee_attesters);
+                committee_offset += committee.len();
             }
 
             // Bitfield length matches total number of participants

@@ -8,7 +8,7 @@ use crate::{
 };
 use alloc::collections::BTreeMap;
 use ssz_rs::prelude::*;
-use tracing::{debug, error, info, trace, warn};
+use tracing::{debug, info, warn};
 
 pub fn verify<S: StateReader>(state_reader: &S, input: Input) -> bool {
     // 0. pre-conditions

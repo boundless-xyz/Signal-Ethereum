@@ -18,12 +18,12 @@ use crate::{Descriptor, Result};
 use indicatif::{ParallelProgressIterator, ProgressBar, ProgressStyle};
 use itertools::Itertools;
 use rayon::prelude::*;
+use smallvec::SmallVec;
 use ssz_rs::prelude::{GeneralizedIndex, GeneralizedIndexable, Path, Prove};
 use ssz_rs::proofs::Prover;
 use std::borrow::Cow;
 use std::collections::BTreeSet;
 use std::collections::HashSet;
-
 /// The only way to create a multiproof is via this builder.
 ///
 /// The usage process is as follows:
@@ -101,7 +101,9 @@ impl MultiproofBuilder {
             })
             .collect::<Result<Vec<_>>>()?;
 
-        let descriptor = compute_proof_descriptor(&gindices)?;
+        tracing::debug!("Computing proof descriptor");
+        let descriptor = compute_proof_descriptor(&proof_indices)?;
+        tracing::debug!("Computing proof descriptor done");
         let max_stack_depth = calculate_max_stack_depth(&descriptor);
 
         let data: Vec<u8> = nodes
@@ -119,63 +121,77 @@ impl MultiproofBuilder {
     }
 }
 
-fn compute_proof_indices(indices: &[GeneralizedIndex]) -> Vec<GeneralizedIndex> {
-    let mut indices_set: HashSet<GeneralizedIndex> = HashSet::new();
-    for &index in indices {
-        let helper_indices = get_helper_indices(&[index]);
-        for helper_index in helper_indices {
-            indices_set.insert(helper_index);
-        }
-    }
-    for &index in indices {
-        let path_indices = get_path_indices(index);
-        for path_index in path_indices {
-            indices_set.remove(&path_index);
-        }
-        indices_set.insert(index);
-    }
-    let mut sorted_indices: Vec<GeneralizedIndex> = indices_set.into_iter().collect();
-    sorted_indices.sort_by_key(|index| format!("{:b}", *index));
-    sorted_indices
-}
-
 fn compute_proof_indices_and_value_mask(
     indices: &[GeneralizedIndex],
 ) -> (Vec<GeneralizedIndex>, Vec<bool>) {
-    let mut all_helper_indices = HashSet::new();
-    let mut all_path_indices = HashSet::new();
-
-    for index in indices {
-        all_helper_indices.extend(get_branch_indices(*index).iter());
-        all_path_indices.extend(get_path_indices(*index).iter());
-    }
-
+    let (all_helper_indices, all_path_indices) = indices
+        .par_iter()
+        .with_min_len(10000)
+        .map(|&index| {
+            let branch = get_branch_indices(index);
+            let path = get_path_indices(index);
+            (
+                branch.into_iter().collect::<HashSet<_>>(),
+                path.into_iter().collect::<HashSet<_>>(),
+            )
+        })
+        .reduce(
+            || (HashSet::new(), HashSet::new()),
+            |(mut h1, mut p1), (h2, p2)| {
+                h1.extend(h2);
+                p1.extend(p2);
+                (h1, p1)
+            },
+        );
     let helper_indices = all_helper_indices
         .difference(&all_path_indices)
-        .map(|a| (a, false));
+        .map(|a| (*a, false));
 
-    let ind = helper_indices
-        .chain(indices.iter().map(|a| (a, true)))
-        .sorted_by_key(|(index, _)| format!("{:b}", index));
+    let idx_and_mask = helper_indices
+        .chain(indices.iter().map(|a| (*a, true)))
+        .sorted_by(|(a, _), (b, _)| cmp_binary_lexicographically(*a, *b));
 
-    let (sorted_indices, value_mask) = ind.unzip();
+    let (sorted_indices, value_mask) = idx_and_mask.unzip();
 
     (sorted_indices, value_mask)
 }
 
-fn compute_proof_descriptor(indices: &[GeneralizedIndex]) -> Result<Descriptor> {
-    let indices = compute_proof_indices(indices);
+/// Compare two GeneralizedIndex values lexicographically in the binary representation (without padding).
+/// Equivalent to: .sorted_by_key(|(index, _)| format!("{:b}", index))
+fn cmp_binary_lexicographically(a: GeneralizedIndex, b: GeneralizedIndex) -> std::cmp::Ordering {
+    if a == 0 && b == 0 {
+        return std::cmp::Ordering::Equal;
+    } else if a == 0 {
+        return std::cmp::Ordering::Less;
+    } else if b == 0 {
+        return std::cmp::Ordering::Greater;
+    }
+
+    let a_len = GeneralizedIndex::BITS - a.leading_zeros();
+    let b_len = GeneralizedIndex::BITS - b.leading_zeros();
+
+    let a_shifted = a << (GeneralizedIndex::BITS - a_len);
+    let b_shifted = b << (GeneralizedIndex::BITS - b_len);
+
+    match a_shifted.cmp(&b_shifted) {
+        std::cmp::Ordering::Equal => a_len.cmp(&b_len),
+        other => other,
+    }
+}
+
+fn compute_proof_descriptor(proof_indices: &[GeneralizedIndex]) -> Result<Descriptor> {
     let mut descriptor = Descriptor::new();
-    for index in indices {
+    for index in proof_indices {
         descriptor.extend(std::iter::repeat_n(false, index.trailing_zeros() as usize));
         descriptor.push(true);
     }
     Ok(descriptor)
 }
 
-fn get_branch_indices(tree_index: GeneralizedIndex) -> Vec<GeneralizedIndex> {
+fn get_branch_indices(tree_index: GeneralizedIndex) -> SmallVec<[GeneralizedIndex; 64]> {
     let mut focus = sibling(tree_index);
-    let mut result = vec![focus];
+    let mut result = SmallVec::<[GeneralizedIndex; 64]>::new();
+    result.push(focus);
     while focus > 1 {
         focus = sibling(parent(focus));
         result.push(focus);
@@ -184,32 +200,16 @@ fn get_branch_indices(tree_index: GeneralizedIndex) -> Vec<GeneralizedIndex> {
     result
 }
 
-fn get_path_indices(tree_index: GeneralizedIndex) -> Vec<GeneralizedIndex> {
+fn get_path_indices(tree_index: GeneralizedIndex) -> SmallVec<[GeneralizedIndex; 64]> {
     let mut focus = tree_index;
-    let mut result = vec![focus];
+    let mut result = SmallVec::<[GeneralizedIndex; 64]>::new();
+    result.push(focus);
     while focus > 1 {
         focus = parent(focus);
         result.push(focus);
     }
     result.truncate(result.len() - 1);
     result
-}
-
-fn get_helper_indices(indices: &[GeneralizedIndex]) -> Vec<GeneralizedIndex> {
-    let mut all_helper_indices = HashSet::new();
-    let mut all_path_indices = HashSet::new();
-
-    for index in indices {
-        all_helper_indices.extend(get_branch_indices(*index).iter());
-        all_path_indices.extend(get_path_indices(*index).iter());
-    }
-
-    let mut all_branch_indices = all_helper_indices
-        .difference(&all_path_indices)
-        .cloned()
-        .collect::<Vec<_>>();
-    all_branch_indices.sort_by(|a: &GeneralizedIndex, b: &GeneralizedIndex| b.cmp(a));
-    all_branch_indices
 }
 
 const fn sibling(index: GeneralizedIndex) -> GeneralizedIndex {

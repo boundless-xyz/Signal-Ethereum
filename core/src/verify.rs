@@ -18,6 +18,7 @@ pub fn verify<S: StateReader>(state_reader: &S, input: Input) -> ConsensusState 
         ..
     } = input;
     // TODO(ec2): I think we need to enforce here that the trusted state is less than or equal to state.finalized_checkpoint epoch
+    // TODO(ec2): We can also bound the number of state patches to the k in k-finality case
     let context = state_reader.context();
 
     // 1. Attestation processing

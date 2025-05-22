@@ -6,7 +6,7 @@ use methods::BEACON_GUEST_ELF;
 use risc0_zkvm::{default_executor, ExecutorEnv};
 use ssz_rs::prelude::*;
 use std::{fmt, fs, path::PathBuf};
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info, trace, warn};
 use url::Url;
 use z_core::{
     mainnet::BeaconState, verify, AssertStateReader, ConsensusState, Ctx, GuestContext,
@@ -195,15 +195,15 @@ async fn compute_next_candidate(
     let mut next_state: Option<&BeaconState> = None;
     for epoch in trusted_checkpoint.epoch + 1..trusted_checkpoint.epoch + 3 {
         let state = reader.get_beacon_state_by_epoch(epoch).unwrap();
-        debug!(
+        trace!(
             r#"
             State {epoch} Previous Justified: {:?}
-            State {epoch} Current Justified: {:?}
             State {epoch} Current Finalized: {:?}
+            State {epoch} Current Justified: {:?}
             "#,
             state.previous_justified_checkpoint(),
-            state.current_justified_checkpoint(),
             state.finalized_checkpoint(),
+            state.current_justified_checkpoint(),
         );
         // TODO(ec2): We really should be checking the root as well
         if state.finalized_checkpoint().epoch == trusted_checkpoint.epoch {
@@ -212,37 +212,38 @@ async fn compute_next_candidate(
         }
     }
     let next_state = next_state.expect("Next state should exist");
-    info!(
+    debug!(
         r#"
-        Trusted State was finalized Checkpoint at epoch: {}
-            Previous Justified: {:?} (should be trusted checkpoint)
-            Current Justified: {:?} (new source checkpoint)
-            Current Finalized: {:?} (should be trusted checkpoint)
+        Trusted State was finalized at epoch: {}
+            Previous Justified: {:?} (trusted checkpoint)
+            Current Finalized: {:?} (trusted checkpoint)
+            Current Justified: {:?} (new source)
+
         "#,
         reader.context().compute_epoch_at_slot(next_state.slot()),
         next_state.previous_justified_checkpoint(),
-        next_state.current_justified_checkpoint(),
         next_state.finalized_checkpoint(),
+        next_state.current_justified_checkpoint(),
     );
 
-    // Link(source)
     let new_previous_justified_checkpoint: Checkpoint =
         next_state.current_justified_checkpoint().clone();
 
-    // 3. Find the state where new_previous_justified_checkpoint is justified a second time
-    // In times of inactivity, this can be quite far
+    // 3. Find the state where some thing new is justified which is  where new_previous_justified_checkpoint is justified a second time
+    // This is only not the case when a justification is rolled back... Do we need to handle that?
+    // In normal times, this should be only a few epochs, but in times of inactivity, this can be quite far...
     let mut next_next_state: Option<&BeaconState> = None;
     for epoch in new_previous_justified_checkpoint.epoch + 1.. {
         let state = reader.get_beacon_state_by_epoch(epoch).unwrap();
-        debug!(
+        trace!(
             r#"
             State {epoch} Previous Justified: {:?}
-            State {epoch} Current Justified: {:?}
             State {epoch} Current Finalized: {:?}
+            State {epoch} Current Justified: {:?}
             "#,
             state.previous_justified_checkpoint(),
-            state.current_justified_checkpoint(),
             state.finalized_checkpoint(),
+            state.current_justified_checkpoint(),
         );
         if state.previous_justified_checkpoint() == &new_previous_justified_checkpoint {
             next_next_state = Some(state);
@@ -250,32 +251,38 @@ async fn compute_next_candidate(
         }
     }
     let next_next_state = next_next_state.expect("Next next state should exist");
-    info!(
+    debug!(
         r#"
-        Next State was justified Checkpoint at epoch: {}
-            Previous Justified: {:?}
-            Current Justified: {:?}
-            Current Finalized: {:?}
+        Supermajority event at epoch: {}
+            Previous Justified: {:?} (source checkpoint)
+            Current Finalized: {:?} (usually source but, depends on delay or leak)
+            Current Justified: {:?} (new target)
         "#,
         reader
             .context()
             .compute_epoch_at_slot(next_next_state.slot()),
         next_next_state.previous_justified_checkpoint(),
-        next_next_state.current_justified_checkpoint(),
         next_next_state.finalized_checkpoint(),
+        next_next_state.current_justified_checkpoint(),
     );
 
+    // 4. Link construction
+    let source = new_previous_justified_checkpoint;
+    let target = next_next_state.current_justified_checkpoint().clone();
     let link = Link {
-        source: new_previous_justified_checkpoint.into(),
-        target: next_next_state
-            .current_justified_checkpoint()
-            .clone()
-            .into(),
+        source: source.clone().into(),
+        target: target.clone().into(),
     };
 
-    info!("Get all blocks from trusted checkpoint to where candidate checkpoint gets finalized");
+    info!("Link to be verified: {:#?}", link);
 
     let mut blocks = Vec::new();
+    info!(
+        "Get blocks from trusted checkpoint slot {} to where target checkpoint gets justified {}",
+        trusted_state.slot(),
+        next_next_state.slot()
+    );
+
     for slot in trusted_state.slot()..=next_next_state.slot() {
         let block = beacon_client.get_block(BlockId::Slot(slot)).await;
         match block {
@@ -292,18 +299,13 @@ async fn compute_next_candidate(
             }
             _ => unimplemented!("Electra Only!"),
         })
-        .filter(|a| {
-            // TODO(ec2): (this is only 1 finality)
-            a.data.target.epoch == link.target.epoch
-                && a.data.source.epoch == link.source.epoch
-                && a.data.target.root == link.target.root
-                && a.data.source.root == link.source.root
-        })
+        .filter(|a| a.data.target == target && a.data.source == source)
         .collect::<Vec<_>>();
 
     info!("Got {} attestations", attestations.len());
 
     // TODO(willem): This is hard-coded for one-finality. Need to add extra conditions for building inputs for the other cases
+    // TODO(ec2): I think i've covered the other cases, pls confirm
     Input {
         state: ConsensusState {
             finalized_checkpoint: next_state.finalized_checkpoint().clone().into(),

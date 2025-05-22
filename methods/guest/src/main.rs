@@ -1,4 +1,5 @@
 use risc0_zkvm::guest::env;
+use sha2::{Digest, Sha256};
 use z_core::{verify, GuestContext, Input, StateInput};
 
 fn print_mem() {
@@ -47,19 +48,23 @@ fn main() {
     // the input bytes are no longer needed
     drop((ssz_reader_bytes, input_bytes));
 
-    let candidate_epoch = input.candidate_checkpoint.epoch;
+    env::commit(&input.trusted_checkpoint_state_root);
 
-    env::log("Running FFG Verification");
-    let t = verify(&state_reader, input);
+    env::log("Running FFG state update");
 
-    if t {
-        env::log("FFG Verification passed");
-    } else {
-        env::log("FFG Verification failed");
-    }
+    let trusted_state_root = input.trusted_checkpoint_state_root;
+
+    let pre_state_bytes = bincode::serialize(&input.state).unwrap();
+    let pre_state_hash = Sha256::digest(&pre_state_bytes);
+
+    let post_state = verify(&state_reader, input);
+    let post_state_bytes = bincode::serialize(&post_state).unwrap();
+    let post_state_hash = Sha256::digest(&post_state_bytes);
 
     // write public output to the journal
-    env::commit(&candidate_epoch.to_le_bytes());
+    env::commit_slice(trusted_state_root.as_slice());
+    env::commit_slice(&pre_state_hash);
+    env::commit_slice(&post_state_hash);
 
     print_mem();
 }

@@ -5,7 +5,7 @@ edition = "2021"
 
 [features]
 default = []
-builder = ["dep:ssz_rs", "dep:ethereum-consensus", "dep:rayon", "dep:smallvec"]
+builder = ["dep:ssz_rs", "dep:ethereum-consensus", "dep:rayon"]
 progress-bar = ["dep:indicatif"]
 
 [dependencies]
@@ -23,7 +23,6 @@ ethereum-consensus = { workspace = true, optional = true , features = ["serde"] 
 rayon = { version = "1.10.0", optional = true }
 indicatif = { version = "0.17.9", features = ["rayon"], optional = true }
 itertools = "0.14.0"
-smallvec = { version = "1.15.0", optional = true }
 
 [dev-dependencies]
 # gindices.workspace = true

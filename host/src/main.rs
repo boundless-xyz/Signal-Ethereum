@@ -180,6 +180,7 @@ async fn compute_next_candidate(
     trusted_checkpoint: Checkpoint,
     reader: &HostStateReader,
 ) -> Input {
+    // 1. Start with trusted checkpoint (CP_T)
     let trusted_state = reader
         .get_beacon_state_by_epoch(trusted_checkpoint.epoch)
         .expect("trusted state should exist");
@@ -189,21 +190,30 @@ async fn compute_next_candidate(
         trusted_state.slot()
     );
 
-    info!(
-        r#"
-        Trusted State Previous Justified: {:?}
-        Trusted State Current Justified: {:?}
-        Trusted State Current Finalized: {:?}
-        "#,
-        trusted_state.previous_justified_checkpoint(),
-        trusted_state.current_justified_checkpoint(),
-        trusted_state.finalized_checkpoint(),
-    );
-
-    let next_state = reader
-        .get_beacon_state_by_epoch(trusted_checkpoint.epoch + 1)
-        .expect("next state should exist");
-
+    // 2. Find the next_state where CP_T == next_state.finalized_checkpoint
+    // We know this must exist and must be at most 2 epochs ahead because of finalization rules
+    let mut next_state: Option<&BeaconState> = None;
+    for epoch in trusted_checkpoint.epoch.. {
+        let state = reader.get_beacon_state_by_epoch(epoch).unwrap();
+        debug!(
+            r#"
+            State {epoch} Previous Justified: {:?}
+            State {epoch} Current Justified: {:?}
+            State {epoch} Current Finalized: {:?}
+            "#,
+            state.previous_justified_checkpoint(),
+            state.current_justified_checkpoint(),
+            state.finalized_checkpoint(),
+        );
+        // TODO(ec2): We really should be checking the root as well
+        if state.finalized_checkpoint().epoch == trusted_checkpoint.epoch {
+            next_state = Some(state);
+            break;
+        }
+    }
+    let next_state = next_state.expect("Next state should exist");
+    let next_state_epoch = reader.context().compute_epoch_at_slot(next_state.slot());
+    info!("Trusted State was finalized Checkpoint at epoch: {next_state_epoch}");
     info!(
         r#"
         Next State Previous Justified: {:?}
@@ -214,14 +224,56 @@ async fn compute_next_candidate(
         next_state.current_justified_checkpoint(),
         next_state.finalized_checkpoint(),
     );
-    // Sanity check to make sure we have this saved
-    reader
-        .get_beacon_state_by_epoch(next_state.finalized_checkpoint().epoch)
-        .expect("Candidate state should exist");
+    // 3. Find the state where next_state gets justified
+    let mut next_next_state: Option<&BeaconState> = None;
+    for epoch in next_state_epoch.. {
+        let state = reader.get_beacon_state_by_epoch(epoch).unwrap();
+        debug!(
+            r#"
+            State {epoch} Previous Justified: {:?}
+            State {epoch} Current Justified: {:?}
+            State {epoch} Current Finalized: {:?}
+            "#,
+            state.previous_justified_checkpoint(),
+            state.current_justified_checkpoint(),
+            state.finalized_checkpoint(),
+        );
+        // TODO(ec2): We really should be checking the root as well
+        if state.current_justified_checkpoint().epoch == next_state_epoch {
+            // 3.1 If next_state.finalized_checkpoint == CP_T, then we collect the attestations from CP_T to next_state.slot (1-finality)
+            // 3.2 If next_state.finalized_checkpoint (2-finality)
+            next_next_state = Some(state);
+            break;
+        }
+    }
+    let next_next_state = next_next_state.expect("Next next state should exist");
+    let next_next_state_epoch = reader
+        .context()
+        .compute_epoch_at_slot(next_next_state.slot());
+    info!("Next State was justified Checkpoint at epoch: {next_next_state_epoch}");
+    info!(
+        r#"
+        Next Next State Previous Justified: {:?}
+        Next Next State Current Justified: {:?}
+        Next Next State Current Finalized: {:?}
+        "#,
+        next_next_state.previous_justified_checkpoint(),
+        next_next_state.current_justified_checkpoint(),
+        next_next_state.finalized_checkpoint(),
+    );
+
+    let link = Link {
+        source: next_state.current_justified_checkpoint().clone().into(),
+        target: next_next_state
+            .current_justified_checkpoint()
+            .clone()
+            .into(),
+    };
+
     info!("Get all blocks from trusted checkpoint to where candidate checkpoint gets finalized");
 
     let mut blocks = Vec::new();
-    for slot in trusted_state.slot()..=next_state.slot() {
+    for slot in trusted_state.slot()..=next_next_state.slot() {
         let block = beacon_client.get_block(BlockId::Slot(slot)).await;
         match block {
             Ok(block) => blocks.push(block),
@@ -237,25 +289,28 @@ async fn compute_next_candidate(
             }
             _ => unimplemented!("Electra Only!"),
         })
+        .filter(|a| {
+            // TODO(ec2): (this is only 1 finality)
+            a.data.target.epoch == link.target.epoch
+                && a.data.source.epoch == link.source.epoch
+                && a.data.target.root == link.target.root
+                && a.data.source.root == link.source.root
+        })
         .collect::<Vec<_>>();
 
     info!("Got {} attestations", attestations.len());
 
-    let finalized = trusted_state.finalized_checkpoint().clone().into();
-    let current_justified = next_state.current_justified_checkpoint().clone().into();
-    let next_justified = next_state.current_justified_checkpoint().clone().into();
-
     // TODO(willem): This is hard-coded for one-finality. Need to add extra conditions for building inputs for the other cases
     Input {
         state: ConsensusState {
-            finalized_checkpoint: finalized,
-            current_justified_checkpoint: current_justified,
-            previous_justified_checkpoint: finalized,
+            finalized_checkpoint: next_state.finalized_checkpoint().clone().into(),
+            current_justified_checkpoint: next_state.current_justified_checkpoint().clone().into(),
+            previous_justified_checkpoint: next_state
+                .previous_justified_checkpoint()
+                .clone()
+                .into(),
         },
-        link: Link {
-            source: current_justified,
-            target: next_justified,
-        },
+        link,
         attestations: attestations.into_iter().map(Into::into).collect(),
         trusted_checkpoint_state_root: trusted_state.hash_tree_root().unwrap(),
     }

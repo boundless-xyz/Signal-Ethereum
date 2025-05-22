@@ -110,7 +110,7 @@ pub fn verify<S: StateReader>(state_reader: &S, input: Input) -> ConsensusState 
     /////////// 2. State update calculation  //////////////
     info!("2. State update calculation start");
 
-    match link {
+    let post_state = match link {
         // Case 1: 1-finality. Finalizes and justifies the source and target checkpoints respectively
         // where they are adjacent checkpoints.
         // This applies when the source checkpoint is the current justified checkpoint or the previous justified checkpoint
@@ -151,7 +151,9 @@ pub fn verify<S: StateReader>(state_reader: &S, input: Input) -> ConsensusState 
         _ => {
             panic!("Unsupported state update")
         }
-    }
+    };
+    info!("New ConsensusState: {:?}", post_state);
+    post_state
 }
 
 fn is_valid_indexed_attestation<'a, S: StateReader>(

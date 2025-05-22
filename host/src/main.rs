@@ -9,8 +9,8 @@ use std::{fmt, fs, path::PathBuf};
 use tracing::{debug, error, info, warn};
 use url::Url;
 use z_core::{
-    mainnet::BeaconState, verify, AssertStateReader, Ctx, GuestContext, HostStateReader, Input,
-    StateInput, StateReader,
+    mainnet::BeaconState, verify, AssertStateReader, ConsensusState, Ctx, GuestContext,
+    HostStateReader, Input, Link, StateInput, StateReader,
 };
 
 mod beacon_client;
@@ -106,22 +106,15 @@ async fn main() -> anyhow::Result<()> {
 
             let input = compute_next_candidate(&beacon_client, trusted_checkpoint, &reader).await;
 
-            let reader = reader.track(input.trusted_checkpoint.epoch);
-            if verify(&reader, input.clone()) {
-                info!("FFG Verification passed with HostStateReader");
-            } else {
-                error!("FFG Verification failed with HostStateReader");
-            }
+            let reader = reader.track(input.state.finalized_checkpoint.epoch);
+            verify(&reader, input.clone()); // will panic if verification fails
+
             let state_input = reader.to_input();
             let ssz_reader = state_input
                 .clone()
                 .into_state_reader(input.trusted_checkpoint_state_root, &GuestContext);
 
-            if verify(&AssertStateReader::new(&ssz_reader, &reader), input.clone()) {
-                info!("FFG Verification passed with SszStateReader");
-            } else {
-                error!("FFG Verification failed with SszStateReader");
-            }
+            verify(&AssertStateReader::new(&ssz_reader, &reader), input.clone()); // will panic if verification fails
 
             info!("Running FFG Verification in R0VM");
             let journal = execute_guest_program(state_input, input, GuestContext);
@@ -138,22 +131,15 @@ async fn main() -> anyhow::Result<()> {
 
             let input = compute_next_candidate(&beacon_client, trusted_checkpoint, &reader).await;
 
-            let reader = reader.track(input.trusted_checkpoint.epoch);
-            if verify(&reader, input.clone()) {
-                info!("FFG Verification passed with HostStateReader");
-            } else {
-                error!("FFG Verification failed with HostStateReader");
-            }
+            let reader = reader.track(input.state.finalized_checkpoint.epoch);
+            verify(&reader, input.clone()); // will panic if verification fails
 
             let state_input = reader.to_input();
             let ssz_reader =
                 state_input.into_state_reader(input.trusted_checkpoint_state_root, &GuestContext);
 
-            if verify(&AssertStateReader::new(&ssz_reader, &reader), input.clone()) {
-                info!("FFG Verification passed with SszStateReader");
-            } else {
-                error!("FFG Verification failed with SszStateReader");
-            }
+            verify(&AssertStateReader::new(&ssz_reader, &reader), input.clone());
+            // will panic if verification fails
         }
         Command::Daemon => {
             daemon(state_dir, &beacon_client).await?;
@@ -203,22 +189,9 @@ async fn compute_next_candidate(
         trusted_state.slot()
     );
 
-    // Get the next state where theres a the states finalized checkpoint epoch is larger than the trusted_state
-    let mut next_state: Option<&BeaconState> = None;
-    for epoch in trusted_checkpoint.epoch.. {
-        let state = reader.get_beacon_state_by_epoch(epoch).unwrap();
-        if state.finalized_checkpoint().epoch > trusted_checkpoint.epoch {
-            next_state = Some(state);
-            break;
-        }
-    }
-
-    let next_state = next_state.expect("Next state should exist");
-    info!(
-        "Found new Candidate Checkpoint: {:?} at epoch: {}",
-        next_state.finalized_checkpoint(),
-        reader.context().compute_epoch_at_slot(next_state.slot())
-    );
+    let next_state = reader
+        .get_beacon_state_by_epoch(trusted_checkpoint.epoch + 1)
+        .expect("next state should exist");
 
     // Sanity check to make sure we have this saved
     reader
@@ -247,9 +220,21 @@ async fn compute_next_candidate(
 
     info!("Got {} attestations", attestations.len());
 
+    let finalized = trusted_state.finalized_checkpoint().clone().into();
+    let current_justified = next_state.current_justified_checkpoint().clone().into();
+    let next_justified = next_state.current_justified_checkpoint().clone().into();
+
+    // TODO(willem): This is hard-coded for one-finality. Need to add extra conditions for building inputs for the other cases
     Input {
-        trusted_checkpoint: trusted_checkpoint.into(),
-        candidate_checkpoint: next_state.finalized_checkpoint().clone().into(),
+        state: ConsensusState {
+            finalized_checkpoint: finalized,
+            current_justified_checkpoint: current_justified,
+            previous_justified_checkpoint: None,
+        },
+        link: Link {
+            source: current_justified,
+            target: next_justified,
+        },
         attestations: attestations.into_iter().map(Into::into).collect(),
         trusted_checkpoint_state_root: trusted_state.hash_tree_root().unwrap(),
     }

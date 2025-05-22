@@ -17,6 +17,7 @@ pub fn verify<S: StateReader>(state_reader: &S, input: Input) -> ConsensusState 
         attestations,
         ..
     } = input;
+    // TODO(ec2): I think we need to enforce here that the trusted state is less than or equal to state.finalized_checkpoint epoch
     let context = state_reader.context();
 
     // 1. Attestation processing
@@ -116,12 +117,12 @@ pub fn verify<S: StateReader>(state_reader: &S, input: Input) -> ConsensusState 
         Link { source, target }
             if target.epoch == source.epoch + 1
                 && (source == state.current_justified_checkpoint
-                    || Some(source) == state.previous_justified_checkpoint) =>
+                    || source == state.previous_justified_checkpoint) =>
         {
             ConsensusState {
                 finalized_checkpoint: link.source,
                 current_justified_checkpoint: link.target,
-                previous_justified_checkpoint: None,
+                previous_justified_checkpoint: link.source,
             }
         }
         // Case 2: Justification only. This occurs when the source is an already finalized checkpoint
@@ -132,19 +133,19 @@ pub fn verify<S: StateReader>(state_reader: &S, input: Input) -> ConsensusState 
             ConsensusState {
                 finalized_checkpoint: state.finalized_checkpoint, // no change
                 current_justified_checkpoint: link.target,
-                previous_justified_checkpoint: Some(state.current_justified_checkpoint),
+                previous_justified_checkpoint: state.current_justified_checkpoint,
             }
         }
         // Case 3: 2-finality. Finalizes the source checkpoint and justifies the target checkpoint
         // with a link that skips over an intermediate justified checkpoint
         Link { source, target }
             if target.epoch == source.epoch + 2
-                && Some(source) == state.previous_justified_checkpoint =>
+                && source == state.previous_justified_checkpoint =>
         {
             ConsensusState {
                 finalized_checkpoint: link.source,
                 current_justified_checkpoint: link.target,
-                previous_justified_checkpoint: Some(state.current_justified_checkpoint),
+                previous_justified_checkpoint: state.current_justified_checkpoint,
             }
         }
         _ => {

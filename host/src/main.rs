@@ -250,7 +250,7 @@ async fn compute_next_candidate(
         state: ConsensusState {
             finalized_checkpoint: finalized,
             current_justified_checkpoint: current_justified,
-            previous_justified_checkpoint: None,
+            previous_justified_checkpoint: finalized,
         },
         link: Link {
             source: current_justified,

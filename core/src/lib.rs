@@ -48,7 +48,7 @@ pub const BEACON_STATE_TREE_DEPTH: u32 = 6;
 pub struct ConsensusState {
     pub finalized_checkpoint: Checkpoint,
     pub current_justified_checkpoint: Checkpoint,
-    pub previous_justified_checkpoint: Option<Checkpoint>,
+    pub previous_justified_checkpoint: Checkpoint,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]

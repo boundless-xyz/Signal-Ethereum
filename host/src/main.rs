@@ -189,10 +189,31 @@ async fn compute_next_candidate(
         trusted_state.slot()
     );
 
+    info!(
+        r#"
+        Trusted State Previous Justified: {:?}
+        Trusted State Current Justified: {:?}
+        Trusted State Current Finalized: {:?}
+        "#,
+        trusted_state.previous_justified_checkpoint(),
+        trusted_state.current_justified_checkpoint(),
+        trusted_state.finalized_checkpoint(),
+    );
+
     let next_state = reader
         .get_beacon_state_by_epoch(trusted_checkpoint.epoch + 1)
         .expect("next state should exist");
 
+    info!(
+        r#"
+        Next State Previous Justified: {:?}
+        Next State Current Justified : {:?}
+        Next State Current Finalized: {:?}
+        "#,
+        next_state.previous_justified_checkpoint(),
+        next_state.current_justified_checkpoint(),
+        next_state.finalized_checkpoint(),
+    );
     // Sanity check to make sure we have this saved
     reader
         .get_beacon_state_by_epoch(next_state.finalized_checkpoint().epoch)

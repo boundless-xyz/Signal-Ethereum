@@ -215,9 +215,9 @@ async fn compute_next_candidate(
     info!(
         r#"
         Trusted State was finalized Checkpoint at epoch: {}
-        Next State Previous Justified: {:?} (should be trusted checkpoint)
-        Next State Current Justified: {:?} (new source checkpoint)
-        Next State Current Finalized: {:?} (should be trusted checkpoint)
+            Previous Justified: {:?} (should be trusted checkpoint)
+            Current Justified: {:?} (new source checkpoint)
+            Current Finalized: {:?} (should be trusted checkpoint)
         "#,
         reader.context().compute_epoch_at_slot(next_state.slot()),
         next_state.previous_justified_checkpoint(),
@@ -252,10 +252,10 @@ async fn compute_next_candidate(
     let next_next_state = next_next_state.expect("Next next state should exist");
     info!(
         r#"
-        Next Next State was justified Checkpoint at epoch: {}
-        Next Next State Previous Justified: {:?}
-        Next Next State Current Justified: {:?}
-        Next Next State Current Finalized: {:?}
+        Next State was justified Checkpoint at epoch: {}
+            Previous Justified: {:?}
+            Current Justified: {:?}
+            Current Finalized: {:?}
         "#,
         reader
             .context()

@@ -191,9 +191,9 @@ async fn compute_next_candidate(
     );
 
     // 2. Find the next_state where CP_T == next_state.finalized_checkpoint
-    // We know this must exist and must be at most 2 epochs ahead because of finalization rules
+    // We know this must exist and must be at most 3? epochs ahead because of finalization rules
     let mut next_state: Option<&BeaconState> = None;
-    for epoch in trusted_checkpoint.epoch.. {
+    for epoch in trusted_checkpoint.epoch + 1..trusted_checkpoint.epoch + 3 {
         let state = reader.get_beacon_state_by_epoch(epoch).unwrap();
         debug!(
             r#"
@@ -212,21 +212,27 @@ async fn compute_next_candidate(
         }
     }
     let next_state = next_state.expect("Next state should exist");
-    let next_state_epoch = reader.context().compute_epoch_at_slot(next_state.slot());
-    info!("Trusted State was finalized Checkpoint at epoch: {next_state_epoch}");
     info!(
         r#"
-        Next State Previous Justified: {:?}
-        Next State Current Justified : {:?}
-        Next State Current Finalized: {:?}
+        Trusted State was finalized Checkpoint at epoch: {}
+        Next State Previous Justified: {:?} (should be trusted checkpoint)
+        Next State Current Justified: {:?} (new source checkpoint)
+        Next State Current Finalized: {:?} (should be trusted checkpoint)
         "#,
+        reader.context().compute_epoch_at_slot(next_state.slot()),
         next_state.previous_justified_checkpoint(),
         next_state.current_justified_checkpoint(),
         next_state.finalized_checkpoint(),
     );
-    // 3. Find the state where next_state gets justified
+
+    // Link(source)
+    let new_previous_justified_checkpoint: Checkpoint =
+        next_state.current_justified_checkpoint().clone();
+
+    // 3. Find the state where new_previous_justified_checkpoint is justified a second time
+    // In times of inactivity, this can be quite far
     let mut next_next_state: Option<&BeaconState> = None;
-    for epoch in next_state_epoch.. {
+    for epoch in new_previous_justified_checkpoint.epoch + 1.. {
         let state = reader.get_beacon_state_by_epoch(epoch).unwrap();
         debug!(
             r#"
@@ -238,32 +244,29 @@ async fn compute_next_candidate(
             state.current_justified_checkpoint(),
             state.finalized_checkpoint(),
         );
-        // TODO(ec2): We really should be checking the root as well
-        if state.current_justified_checkpoint().epoch == next_state_epoch {
-            // 3.1 If next_state.finalized_checkpoint == CP_T, then we collect the attestations from CP_T to next_state.slot (1-finality)
-            // 3.2 If next_state.finalized_checkpoint (2-finality)
+        if state.previous_justified_checkpoint() == &new_previous_justified_checkpoint {
             next_next_state = Some(state);
             break;
         }
     }
     let next_next_state = next_next_state.expect("Next next state should exist");
-    let next_next_state_epoch = reader
-        .context()
-        .compute_epoch_at_slot(next_next_state.slot());
-    info!("Next State was justified Checkpoint at epoch: {next_next_state_epoch}");
     info!(
         r#"
+        Next Next State was justified Checkpoint at epoch: {}
         Next Next State Previous Justified: {:?}
         Next Next State Current Justified: {:?}
         Next Next State Current Finalized: {:?}
         "#,
+        reader
+            .context()
+            .compute_epoch_at_slot(next_next_state.slot()),
         next_next_state.previous_justified_checkpoint(),
         next_next_state.current_justified_checkpoint(),
         next_next_state.finalized_checkpoint(),
     );
 
     let link = Link {
-        source: next_state.current_justified_checkpoint().clone().into(),
+        source: new_previous_justified_checkpoint.into(),
         target: next_next_state
             .current_justified_checkpoint()
             .clone()

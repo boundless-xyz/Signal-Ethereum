@@ -1,23 +1,22 @@
 use std::collections::BTreeSet;
 
 use crate::{
-    Attestation, AttestationData, BEACON_ATTESTER_DOMAIN, CommitteeCache, Ctx, Domain, Epoch,
-    Input, Link, MAX_COMMITTEES_PER_SLOT, MAX_VALIDATORS_PER_COMMITTEE, PublicKey, Root,
+    Attestation, AttestationData, BEACON_ATTESTER_DOMAIN, CommitteeCache, ConsensusState, Domain,
+    Epoch, Input, Link, MAX_COMMITTEES_PER_SLOT, MAX_VALIDATORS_PER_COMMITTEE, PublicKey, Root,
     ShuffleData, Signature, StateReader, ValidatorIndex, ValidatorInfo, Version,
     fast_aggregate_verify_pre_aggregated,
 };
 use alloc::collections::BTreeMap;
 use ssz_rs::prelude::*;
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
-pub fn verify<S: StateReader>(state_reader: &S, input: Input) -> bool {
-    // 0. pre-conditions
-    assert_eq!(
-        input.candidate_checkpoint.epoch,
-        input.trusted_checkpoint.epoch + 1,
-        "Candidate must be direct successor of trusted checkpoint"
-    );
-
+pub fn verify<S: StateReader>(state_reader: &S, input: Input) -> ConsensusState {
+    let Input {
+        state,
+        link,
+        attestations,
+        ..
+    } = input;
     let context = state_reader.context();
 
     // 1. Attestation processing
@@ -25,16 +24,13 @@ pub fn verify<S: StateReader>(state_reader: &S, input: Input) -> bool {
         BTreeMap::new();
     let mut committee_caches: BTreeMap<Epoch, CommitteeCache> = BTreeMap::new();
 
-    let mut balances: BTreeMap<Link, u64> = BTreeMap::new();
-    input
-        .attestations
+    let attesting_balance: u64 = attestations
         .into_iter()
-        .filter(|a| context.compute_epoch_at_slot(a.data.slot) >= input.trusted_checkpoint.epoch)
-        .for_each(|attestation| {
+        .filter(|a| a.data.source == link.source && a.data.target == input.link.target)
+        .map(|attestation| {
             let data = attestation.data;
             debug!("Processing attestation: {:?}", data);
 
-            assert_eq!(data.target.epoch, context.compute_epoch_at_slot(data.slot));
             assert_eq!(data.index, 0);
 
             let attestation_epoch = data.target.epoch;
@@ -98,56 +94,63 @@ pub fn verify<S: StateReader>(state_reader: &S, input: Input) -> bool {
                 attestation.signature
             ));
 
-            let attesting_balance = attesting_validators
+            attesting_validators
                 .iter()
-                .fold(0u64, |acc, e| acc + e.effective_balance);
+                .fold(0u64, |acc, e| acc + e.effective_balance)
+        })
+        .sum();
 
-            let attestation_link = Link(data.source, data.target);
-            balances
-                .entry(attestation_link)
-                .and_modify(|balance| *balance += attesting_balance)
-                .or_insert(attesting_balance);
-        });
-    debug!("Links and balances: {:#?}", balances);
+    let total_active_balance = state_reader
+        .get_total_active_balance(link.target.epoch)
+        .unwrap();
 
-    /////////// 2. Finality calculation  //////////////
-    info!("2. Finality calculation start");
-    let sm_links = get_supermajority_links(state_reader, input.trusted_checkpoint.epoch, balances);
-    debug!("Supermajority links: {:#?}", sm_links);
+    assert!(attesting_balance * 3 >= &total_active_balance * 2);
 
-    // Because by definition the trusted CP is finalized we know that:
-    // - All checkpoints prior to trusted_cp are finalized
-    // - The candidate is justified (since to finalize requires a link forward to the tip of a chain of justified CPs which must include the direct successor)
-    // so all we really need to look at is finalizing the candidate or (in the case of delayed finality) one of its successors.
-    // we will ignore the delayed finality case for now
+    /////////// 2. State update calculation  //////////////
+    info!("2. State update calculation start");
 
-    // by definition the trusted and candidate checkpoints are justified
-    let mut highest_justified_epoch = input.candidate_checkpoint.epoch;
-    info!("Highest justified epoch: {}", highest_justified_epoch);
-    for epoch in input.candidate_checkpoint.epoch + 1.. {
-        // if we can justify the checkpoint at that epoch then do it or else abort
-        if sm_links
-            .iter()
-            .any(|link| link.0.epoch <= highest_justified_epoch && link.1.epoch == epoch)
+    match link {
+        // Case 1: 1-finality. Finalizes and justifies the source and target checkpoints respectively
+        // where they are adjacent checkpoints.
+        // This applies when the source checkpoint is the current justified checkpoint or the previous justified checkpoint
+        Link { source, target }
+            if target.epoch == source.epoch + 1
+                && (source == state.current_justified_checkpoint
+                    || Some(source) == state.previous_justified_checkpoint) =>
         {
-            highest_justified_epoch = epoch;
-            info!("Successfully justified epoch: {}", epoch);
-        } else {
-            // no way to finalize if we have a gap in the sequence of justified checkpoints
-            warn!(
-                "Non-contiguous sequence of finalized checkpoints prohibits finalizing candidate"
-            );
-            return false;
+            ConsensusState {
+                finalized_checkpoint: link.source,
+                current_justified_checkpoint: link.target,
+                previous_justified_checkpoint: None,
+            }
         }
-        // see if we can now finalize the candidate by linking to the end of a sequence of justified checkpoints
-        if sm_links.iter().any(|link| {
-            link.0 == input.candidate_checkpoint && link.1.epoch <= highest_justified_epoch
-        }) {
-            info!("Successfully finalized candidate");
-            return true;
+        // Case 2: Justification only. This occurs when the source is an already finalized checkpoint
+        Link { source, target }
+            if source == state.finalized_checkpoint
+                && target.epoch == state.current_justified_checkpoint.epoch + 1 =>
+        {
+            ConsensusState {
+                finalized_checkpoint: state.finalized_checkpoint, // no change
+                current_justified_checkpoint: link.target,
+                previous_justified_checkpoint: Some(state.current_justified_checkpoint),
+            }
+        }
+        // Case 3: 2-finality. Finalizes the source checkpoint and justifies the target checkpoint
+        // with a link that skips over an intermediate justified checkpoint
+        Link { source, target }
+            if target.epoch == source.epoch + 2
+                && Some(source) == state.previous_justified_checkpoint =>
+        {
+            ConsensusState {
+                finalized_checkpoint: link.source,
+                current_justified_checkpoint: link.target,
+                previous_justified_checkpoint: Some(state.current_justified_checkpoint),
+            }
+        }
+        _ => {
+            panic!("Unsupported state update")
         }
     }
-    true
 }
 
 fn is_valid_indexed_attestation<'a, S: StateReader>(
@@ -215,24 +218,6 @@ pub fn get_attesting_indices(
         .enumerate()
         .filter(|(i, _)| attestation.aggregation_bits[*i])
         .map(|(_, validator_index)| *validator_index)
-        .collect()
-}
-
-// process attestations to produce supermajority links. A supermajority link is defined as a
-// (source, target) pair with:
-// - valid signatures by enough validators to comprise 2/3 of the total active balance in the validator set
-// - a justified source
-fn get_supermajority_links<S: StateReader>(
-    state_reader: &S,
-    epoch: u64,
-    balances: BTreeMap<Link, u64>,
-) -> Vec<Link> {
-    let total_active_balance = state_reader.get_total_active_balance(epoch).unwrap();
-
-    balances
-        .into_iter()
-        .filter(|(_, attesting_balance)| *attesting_balance * 3 >= &total_active_balance * 2) // check enough participation
-        .map(|(link, _)| link)
         .collect()
 }
 

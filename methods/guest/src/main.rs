@@ -54,7 +54,7 @@ fn main() {
 
     let trusted_state_root = input.trusted_checkpoint_state_root;
 
-    let pre_state_bytes = bincode::serialize(&input.state).unwrap();
+    let pre_state_bytes = bincode::serialize(&input.consensus_state).unwrap();
     let pre_state_hash = Sha256::digest(&pre_state_bytes);
 
     let post_state = verify(&state_reader, input);

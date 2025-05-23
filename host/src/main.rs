@@ -6,7 +6,7 @@ use methods::BEACON_GUEST_ELF;
 use risc0_zkvm::{default_executor, ExecutorEnv};
 use ssz_rs::prelude::*;
 use std::{fmt, fs, path::PathBuf};
-use tracing::{debug, error, info, trace, warn};
+use tracing::{debug, info, trace, warn};
 use url::Url;
 use z_core::{
     mainnet::BeaconState, verify, AssertStateReader, ConsensusState, Ctx, GuestContext,
@@ -106,7 +106,7 @@ async fn main() -> anyhow::Result<()> {
 
             let input = compute_next_candidate(&beacon_client, trusted_checkpoint, &reader).await;
 
-            let reader = reader.track(input.state.finalized_checkpoint.epoch);
+            let reader = reader.track(input.consensus_state.finalized_checkpoint.epoch);
             verify(&reader, input.clone()); // will panic if verification fails
 
             let state_input = reader.to_input();
@@ -131,7 +131,7 @@ async fn main() -> anyhow::Result<()> {
 
             let input = compute_next_candidate(&beacon_client, trusted_checkpoint, &reader).await;
 
-            let reader = reader.track(input.state.finalized_checkpoint.epoch);
+            let reader = reader.track(input.consensus_state.finalized_checkpoint.epoch);
             verify(&reader, input.clone()); // will panic if verification fails
 
             let state_input = reader.to_input();
@@ -307,7 +307,7 @@ async fn compute_next_candidate(
     // TODO(willem): This is hard-coded for one-finality. Need to add extra conditions for building inputs for the other cases
     // TODO(ec2): I think i've covered the other cases, pls confirm
     Input {
-        state: ConsensusState {
+        consensus_state: ConsensusState {
             finalized_checkpoint: next_state.finalized_checkpoint().clone().into(),
             current_justified_checkpoint: next_state.current_justified_checkpoint().clone().into(),
             previous_justified_checkpoint: next_state

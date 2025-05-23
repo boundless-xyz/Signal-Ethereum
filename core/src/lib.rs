@@ -1,7 +1,6 @@
 extern crate alloc;
 
 use alloy_primitives::B256;
-use consensus_state::ConsensusState;
 use ssz_rs::prelude::*;
 #[cfg(feature = "host")]
 mod beacon_state;
@@ -16,13 +15,13 @@ mod verify;
 
 #[cfg(feature = "host")]
 pub use beacon_state::*;
+pub use bls::*;
 pub use committee_cache::*;
+pub use consensus_state::*;
 pub use context::*;
 pub use state_patch::*;
 pub use state_reader::*;
 pub use verify::*;
-
-pub use bls::*;
 
 // Need to redefine/redeclare a bunch of types and constants because we can't use ssz-rs and ethereum-consensus in the guest
 

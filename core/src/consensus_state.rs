@@ -10,13 +10,31 @@ pub struct ConsensusState {
 
 #[derive(Debug, Error, PartialEq)]
 pub enum StateTransitionError {
+    #[error("The passed link is invalid")]
+    LinkNotValid,
+    #[error("Link target is lower than the current justified checkpoint")]
+    LinkTargetTooLow,
     #[error("Invalid state transition")]
     CannotEvolveState,
 }
 
 impl ConsensusState {
     /// Apply a supermajority link to the current consensus state to obtain a new consensus state.
+    ///
+    /// Pre-conditions:
+    /// - The consensus state must be internally consistent.
+    ///     - the finalized checkpoint must be less than the current justified checkpoint.
+    ///     - the current justified checkpoint must be less than or equal to the previous justified checkpoint.
+    ///
     pub fn state_transition(&self, link: &Link) -> Result<ConsensusState, StateTransitionError> {
+        if link.target.epoch <= link.source.epoch {
+            return Err(StateTransitionError::LinkNotValid);
+        }
+
+        if link.target.epoch < self.current_justified_checkpoint.epoch {
+            return Err(StateTransitionError::LinkTargetTooLow);
+        }
+
         match link {
             // Case 1: 1-finality. Finalizes and justifies the source and target checkpoints respectively
             // where they are adjacent checkpoints.
@@ -33,10 +51,7 @@ impl ConsensusState {
                 })
             }
             // Case 2: Justification only. This occurs when the source is an already finalized checkpoint
-            Link { source, target }
-                if *source == self.finalized_checkpoint
-                    && target.epoch == self.current_justified_checkpoint.epoch + 1 =>
-            {
+            Link { source, .. } if *source == self.finalized_checkpoint => {
                 Ok(ConsensusState {
                     finalized_checkpoint: self.finalized_checkpoint, // no change
                     current_justified_checkpoint: link.target,
@@ -47,10 +62,25 @@ impl ConsensusState {
             // with a link that skips over an intermediate justified checkpoint
             Link { source, target }
                 if target.epoch == source.epoch + 2
-                    && *source == self.previous_justified_checkpoint =>
+                    && *source == self.previous_justified_checkpoint
+                    && self.current_justified_checkpoint.epoch == source.epoch + 1 =>
             {
                 Ok(ConsensusState {
                     finalized_checkpoint: link.source,
+                    current_justified_checkpoint: link.target,
+                    previous_justified_checkpoint: self.current_justified_checkpoint,
+                })
+            }
+            // Case 4: Justify a future checkpoint without finalizing
+            // This occurs when the source is justified but the link skips over one or more unjustified epochs when justifying the target
+            // The result is that the target becomes justified but the source does not finalize.
+            Link { source, target }
+                if target.epoch > source.epoch + 1
+                    && (*source == self.current_justified_checkpoint
+                        || *source == self.previous_justified_checkpoint) =>
+            {
+                Ok(ConsensusState {
+                    finalized_checkpoint: self.finalized_checkpoint, // no change
                     current_justified_checkpoint: link.target,
                     previous_justified_checkpoint: self.current_justified_checkpoint,
                 })
@@ -120,7 +150,7 @@ mod tests {
                 previous_justified_checkpoint: cp(3),
             }),
         ),
-        // Justify only case
+        // Justify only due to finalized source
         //  F   C   C'       F   P   C
         // [0]-[1]-[2]  ->  [0]-[1]-[2]
         //  └───────┘
@@ -179,6 +209,71 @@ mod tests {
                 current_justified_checkpoint: cp(3),
                 previous_justified_checkpoint: cp(2),
             }),
+        ),
+        // Justify only due to skipping over unjustified checkpoint
+        //  F   C       C'       F   P       C
+        // [0]-[1]-[2]-[3]  ->  [0]-[1]-[2]-[3]
+        //      └───────┘
+        (
+            ConsensusState {
+                finalized_checkpoint: cp(0),
+                current_justified_checkpoint: cp(1),
+                previous_justified_checkpoint: cp(1),
+            },
+            Link {
+                source: cp(1),
+                target: cp(3),
+            },
+            Ok(ConsensusState {
+                finalized_checkpoint: cp(0),
+                current_justified_checkpoint: cp(3),
+                previous_justified_checkpoint: cp(1),
+            }),
+        ),
+        //
+        // FAILURE CASES
+
+        // Invalid link
+        (
+            ConsensusState {
+                finalized_checkpoint: cp(0),
+                current_justified_checkpoint: cp(1),
+                previous_justified_checkpoint: cp(1),
+            },
+            Link {
+                source: cp(2),
+                target: cp(2),
+            },
+            Err(StateTransitionError::LinkNotValid),
+        ),
+        // Source checkpoint is not justified
+        //
+        (
+            ConsensusState {
+                finalized_checkpoint: cp(0),
+                current_justified_checkpoint: cp(1),
+                previous_justified_checkpoint: cp(1),
+            },
+            Link {
+                source: cp(2),
+                target: cp(3),
+            },
+            Err(StateTransitionError::CannotEvolveState),
+        ),
+        // Target < current_justified_checkpoint (which is always >= previous_justified_checkpoint)
+        // This is the "inner vote" case
+        //
+        (
+            ConsensusState {
+                finalized_checkpoint: cp(0),
+                current_justified_checkpoint: cp(2),
+                previous_justified_checkpoint: cp(2),
+            },
+            Link {
+                source: cp(0),
+                target: cp(1),
+            },
+            Err(StateTransitionError::LinkTargetTooLow),
         ),
     ];
 

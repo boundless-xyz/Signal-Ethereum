@@ -1,19 +1,18 @@
 use std::collections::BTreeSet;
 
 use crate::{
-    Attestation, AttestationData, BEACON_ATTESTER_DOMAIN, CommitteeCache, ConsensusState, Domain,
-    Epoch, Input, Link, MAX_COMMITTEES_PER_SLOT, MAX_VALIDATORS_PER_COMMITTEE, PublicKey, Root,
-    ShuffleData, Signature, StateReader, ValidatorIndex, ValidatorInfo, Version,
+    Attestation, AttestationData, BEACON_ATTESTER_DOMAIN, CommitteeCache, Domain, Epoch, Input,
+    MAX_COMMITTEES_PER_SLOT, MAX_VALIDATORS_PER_COMMITTEE, PublicKey, Root, ShuffleData, Signature,
+    StateReader, ValidatorIndex, ValidatorInfo, Version, consensus_state::ConsensusState,
     fast_aggregate_verify_pre_aggregated,
 };
 use alloc::collections::BTreeMap;
 use ssz_rs::prelude::*;
-use thiserror::Error;
 use tracing::{debug, info};
 
 pub fn verify<S: StateReader>(state_reader: &S, input: Input) -> ConsensusState {
     let Input {
-        state,
+        consensus_state,
         link,
         attestations,
         ..
@@ -112,60 +111,9 @@ pub fn verify<S: StateReader>(state_reader: &S, input: Input) -> ConsensusState 
     /////////// 2. State update calculation  //////////////
     info!("2. State update calculation start");
 
-    state_transition(&state, &link).expect("State transition failed")
-}
-
-#[derive(Debug, Error, PartialEq)]
-enum StateTransitionError {
-    #[error("Invalid state transition")]
-    CannotEvolveState,
-}
-
-/// Apply a supermajority link to the current consensus state to obtain a new consensus state.
-fn state_transition(
-    state: &ConsensusState,
-    link: &Link,
-) -> Result<ConsensusState, StateTransitionError> {
-    match link {
-        // Case 1: 1-finality. Finalizes and justifies the source and target checkpoints respectively
-        // where they are adjacent checkpoints.
-        // This applies when the source checkpoint is the current justified checkpoint or the previous justified checkpoint
-        Link { source, target }
-            if target.epoch == source.epoch + 1
-                && (*source == state.current_justified_checkpoint
-                    || *source == state.previous_justified_checkpoint) =>
-        {
-            Ok(ConsensusState {
-                finalized_checkpoint: link.source,
-                current_justified_checkpoint: link.target,
-                previous_justified_checkpoint: link.source,
-            })
-        }
-        // Case 2: Justification only. This occurs when the source is an already finalized checkpoint
-        Link { source, target }
-            if *source == state.finalized_checkpoint
-                && target.epoch == state.current_justified_checkpoint.epoch + 1 =>
-        {
-            Ok(ConsensusState {
-                finalized_checkpoint: state.finalized_checkpoint, // no change
-                current_justified_checkpoint: link.target,
-                previous_justified_checkpoint: state.current_justified_checkpoint,
-            })
-        }
-        // Case 3: 2-finality. Finalizes the source checkpoint and justifies the target checkpoint
-        // with a link that skips over an intermediate justified checkpoint
-        Link { source, target }
-            if target.epoch == source.epoch + 2
-                && *source == state.previous_justified_checkpoint =>
-        {
-            Ok(ConsensusState {
-                finalized_checkpoint: link.source,
-                current_justified_checkpoint: link.target,
-                previous_justified_checkpoint: state.current_justified_checkpoint,
-            })
-        }
-        _ => Err(StateTransitionError::CannotEvolveState),
-    }
+    consensus_state
+        .state_transition(&link)
+        .expect("State transition failed")
 }
 
 fn is_valid_indexed_attestation<'a, S: StateReader>(
@@ -279,135 +227,4 @@ fn fork_data_root<S: StateReader>(
     }
     .hash_tree_root()
     .unwrap()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::Checkpoint;
-    use alloy_primitives::B256;
-
-    const fn cp(epoch: Epoch) -> Checkpoint {
-        Checkpoint {
-            epoch,
-            root: B256::ZERO,
-        }
-    }
-
-    /// Test cases for the state transition function.
-    /// (pre-state, link, expected post-state)
-    const TEST_CASES: &[(
-        ConsensusState,
-        Link,
-        Result<ConsensusState, StateTransitionError>,
-    )] = &[
-        // Simple 1-finality case
-        //  F   C   C'           F   C
-        // [0]-[1]-[2]  ->  [0]-[1]-[2]
-        //      └───┘
-        (
-            ConsensusState {
-                finalized_checkpoint: cp(0),
-                current_justified_checkpoint: cp(1),
-                previous_justified_checkpoint: cp(1),
-            },
-            Link {
-                source: cp(1),
-                target: cp(2),
-            },
-            Ok(ConsensusState {
-                finalized_checkpoint: cp(1),
-                current_justified_checkpoint: cp(2),
-                previous_justified_checkpoint: cp(2),
-            }),
-        ),
-        // Other 1-finality case
-        //  F   P   C   C'               F   C
-        // [0]-[1]-[2]-[3]  ->  [0]-[1]-[2]-[3]
-        //          └───┘
-        (
-            ConsensusState {
-                finalized_checkpoint: cp(0),
-                current_justified_checkpoint: cp(2),
-                previous_justified_checkpoint: cp(1),
-            },
-            Link {
-                source: cp(2),
-                target: cp(3),
-            },
-            Ok(ConsensusState {
-                finalized_checkpoint: cp(2),
-                current_justified_checkpoint: cp(3),
-                previous_justified_checkpoint: cp(3),
-            }),
-        ),
-        // Justify only case
-        //  F   C   C'       F   P   C
-        // [0]-[1]-[2]  ->  [0]-[1]-[2]
-        //  └───────┘
-        (
-            ConsensusState {
-                finalized_checkpoint: cp(0),
-                current_justified_checkpoint: cp(1),
-                previous_justified_checkpoint: cp(1),
-            },
-            Link {
-                source: cp(0),
-                target: cp(2),
-            },
-            Ok(ConsensusState {
-                finalized_checkpoint: cp(0),
-                current_justified_checkpoint: cp(2),
-                previous_justified_checkpoint: cp(1),
-            }),
-        ),
-        // 2-finality case (other variant)
-        //  F   P   C   C'       F       P   C
-        // [0]-[1]-[2]-[3]  ->  [0]-[1]-[2]-[3]
-        //  └───────────┘
-        (
-            ConsensusState {
-                finalized_checkpoint: cp(0),
-                current_justified_checkpoint: cp(2),
-                previous_justified_checkpoint: cp(1),
-            },
-            Link {
-                source: cp(0),
-                target: cp(3),
-            },
-            Ok(ConsensusState {
-                finalized_checkpoint: cp(0),
-                current_justified_checkpoint: cp(3),
-                previous_justified_checkpoint: cp(2),
-            }),
-        ),
-        // 2-finality case
-        //  F   P   C   C'           F   P   C
-        // [0]-[1]-[2]-[3]  ->  [0]-[1]-[2]-[3]
-        //      └───────┘
-        (
-            ConsensusState {
-                finalized_checkpoint: cp(0),
-                current_justified_checkpoint: cp(2),
-                previous_justified_checkpoint: cp(1),
-            },
-            Link {
-                source: cp(1),
-                target: cp(3),
-            },
-            Ok(ConsensusState {
-                finalized_checkpoint: cp(1),
-                current_justified_checkpoint: cp(3),
-                previous_justified_checkpoint: cp(2),
-            }),
-        ),
-    ];
-
-    #[test]
-    fn test_state_transition() {
-        for (state, link, expected) in TEST_CASES {
-            let result = state_transition(state, link);
-            assert_eq!(result, *expected);
-        }
-    }
 }

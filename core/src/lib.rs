@@ -1,11 +1,13 @@
 extern crate alloc;
 
 use alloy_primitives::B256;
+use consensus_state::ConsensusState;
 use ssz_rs::prelude::*;
 #[cfg(feature = "host")]
 mod beacon_state;
 mod bls;
 mod committee_cache;
+mod consensus_state;
 mod context;
 mod shuffle_list;
 mod state_patch;
@@ -44,16 +46,9 @@ pub const VALIDATOR_TREE_DEPTH: u32 = 3;
 /// The depth of the Merkle tree of the BeaconState container.
 pub const BEACON_STATE_TREE_DEPTH: u32 = 6;
 
-#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct ConsensusState {
-    pub finalized_checkpoint: Checkpoint,
-    pub current_justified_checkpoint: Checkpoint,
-    pub previous_justified_checkpoint: Checkpoint,
-}
-
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Input {
-    pub state: ConsensusState,
+    pub consensus_state: ConsensusState,
     pub link: Link,
 
     pub attestations: Vec<

@@ -19,6 +19,12 @@ pub enum StateTransitionError {
 }
 
 impl ConsensusState {
+    /// Ensure a consensus state is internally consistent.
+    pub fn is_consistent(&self) -> bool {
+        self.finalized_checkpoint.epoch < self.current_justified_checkpoint.epoch
+            && self.current_justified_checkpoint.epoch <= self.previous_justified_checkpoint.epoch
+    }
+
     /// Apply a supermajority link to the current consensus state to obtain a new consensus state.
     ///
     /// Pre-conditions:

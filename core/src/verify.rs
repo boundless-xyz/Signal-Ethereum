@@ -110,7 +110,7 @@ pub fn verify<S: StateReader>(state_reader: &S, input: Input) -> ConsensusState 
 
     /////////// 2. State update calculation  //////////////
     info!("2. State update calculation start");
-
+    assert!(consensus_state.is_consistent());
     consensus_state
         .state_transition(&link)
         .expect("State transition failed")

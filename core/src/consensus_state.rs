@@ -22,7 +22,7 @@ impl ConsensusState {
     /// Ensure a consensus state is internally consistent.
     pub fn is_consistent(&self) -> bool {
         self.finalized_checkpoint.epoch < self.current_justified_checkpoint.epoch
-            && self.current_justified_checkpoint.epoch <= self.previous_justified_checkpoint.epoch
+            && self.current_justified_checkpoint.epoch >= self.previous_justified_checkpoint.epoch
     }
 
     /// Apply a supermajority link to the current consensus state to obtain a new consensus state.
@@ -30,7 +30,7 @@ impl ConsensusState {
     /// Pre-conditions:
     /// - The consensus state must be internally consistent.
     ///     - the finalized checkpoint must be less than the current justified checkpoint.
-    ///     - the current justified checkpoint must be less than or equal to the previous justified checkpoint.
+    ///     - the current justified checkpoint must be greater than or equal to the previous justified checkpoint.
     ///
     pub fn state_transition(&self, link: &Link) -> Result<ConsensusState, StateTransitionError> {
         if link.target.epoch <= link.source.epoch {

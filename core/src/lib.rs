@@ -44,7 +44,7 @@ pub const VALIDATOR_TREE_DEPTH: u32 = 3;
 /// The depth of the Merkle tree of the BeaconState container.
 pub const BEACON_STATE_TREE_DEPTH: u32 = 6;
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct ConsensusState {
     pub finalized_checkpoint: Checkpoint,
     pub current_justified_checkpoint: Checkpoint,

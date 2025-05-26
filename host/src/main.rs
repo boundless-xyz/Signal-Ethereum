@@ -13,6 +13,9 @@ use z_core::{
     HostStateReader, Input, Link, StateInput, StateReader,
 };
 
+#[cfg(feature = "host_profile")]
+use {pprof::protos::Message, std::io::Write};
+
 mod beacon_client;
 
 use crate::beacon_client::{BeaconClient, EventKind, EventTopic};
@@ -81,6 +84,13 @@ async fn main() -> anyhow::Result<()> {
         .with_env_filter(tracing_subscriber::filter::EnvFilter::from_default_env())
         .init();
 
+    #[cfg(feature = "host_profile")]
+    let guard = pprof::ProfilerGuardBuilder::default()
+        .frequency(1000)
+        .blocklist(&["libc", "libgcc", "pthread", "vdso"])
+        .build()
+        .unwrap();
+
     let args = Args::parse();
 
     // Note: The part of the context we use for mainnet and sepolia is the same.
@@ -145,6 +155,16 @@ async fn main() -> anyhow::Result<()> {
             daemon(state_dir, &beacon_client).await?;
         }
     }
+
+    #[cfg(feature = "host_profile")]
+    if let Ok(report) = guard.report().build() {
+        let mut file = std::fs::File::create("host_profile.pb").unwrap();
+        let profile = report.pprof().unwrap();
+
+        let mut content = Vec::new();
+        profile.write_to_vec(&mut content).unwrap();
+        file.write_all(&content).unwrap();
+    };
 
     Ok(())
 }

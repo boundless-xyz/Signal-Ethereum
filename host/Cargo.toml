@@ -28,3 +28,10 @@ tracing =  { workspace = true }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 url = { version = "2.5" }
 z-core = { path = "../core", default-features = false, features = ["host"] }
+
+# profiling host
+pprof = { version = "0.14", features = ["flamegraph", "protobuf-codec"], optional = true }
+
+[features]
+default = []
+host_profile = ["dep:pprof"]

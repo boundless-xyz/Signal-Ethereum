@@ -6,6 +6,7 @@ use ssz_rs::prelude::*;
 mod beacon_state;
 mod bls;
 mod committee_cache;
+mod consensus_state;
 mod context;
 mod shuffle_list;
 mod state_patch;
@@ -14,13 +15,13 @@ mod verify;
 
 #[cfg(feature = "host")]
 pub use beacon_state::*;
+pub use bls::*;
 pub use committee_cache::*;
+pub use consensus_state::*;
 pub use context::*;
 pub use state_patch::*;
 pub use state_reader::*;
 pub use verify::*;
-
-pub use bls::*;
 
 // Need to redefine/redeclare a bunch of types and constants because we can't use ssz-rs and ethereum-consensus in the guest
 
@@ -46,8 +47,8 @@ pub const BEACON_STATE_TREE_DEPTH: u32 = 6;
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Input {
-    pub trusted_checkpoint: Checkpoint, // Already finalized Checkpoint
-    pub candidate_checkpoint: Checkpoint, // Justified Checkpoint we are trying to finalize
+    pub consensus_state: ConsensusState,
+    pub link: Link,
 
     pub attestations: Vec<
         Attestation<
@@ -99,6 +100,7 @@ pub struct Attestation<const MAX_VALIDATORS_PER_SLOT: usize, const MAX_COMMITTEE
 
 #[derive(
     Clone,
+    Copy,
     Debug,
     PartialEq,
     Eq,
@@ -113,8 +115,13 @@ pub struct Checkpoint {
     pub root: Root,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub struct Link(pub Checkpoint, pub Checkpoint);
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+)]
+pub struct Link {
+    pub source: Checkpoint,
+    pub target: Checkpoint,
+}
 
 #[cfg(feature = "host")]
 impl From<ethereum_consensus::electra::Checkpoint> for Checkpoint {

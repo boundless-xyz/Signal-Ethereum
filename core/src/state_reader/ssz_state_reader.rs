@@ -115,7 +115,7 @@ impl StateInput<'_> {
         for (epoch, _patch) in &self.patches {
             assert!(*epoch > state_epoch);
         }
-        info!("State patches verified");
+        info!("{} State patches verified", self.patches.len());
 
         SszStateReader {
             context,

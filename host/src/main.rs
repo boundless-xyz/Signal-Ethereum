@@ -6,11 +6,11 @@ use methods::BEACON_GUEST_ELF;
 use risc0_zkvm::{default_executor, ExecutorEnv};
 use ssz_rs::prelude::*;
 use std::{fmt, fs, path::PathBuf};
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info, trace, warn};
 use url::Url;
 use z_core::{
-    mainnet::BeaconState, verify, AssertStateReader, Ctx, GuestContext, HostStateReader, Input,
-    StateInput, StateReader,
+    mainnet::BeaconState, verify, AssertStateReader, ConsensusState, Ctx, GuestContext,
+    HostStateReader, Input, Link, StateInput, StateReader,
 };
 
 mod beacon_client;
@@ -106,22 +106,15 @@ async fn main() -> anyhow::Result<()> {
 
             let input = compute_next_candidate(&beacon_client, trusted_checkpoint, &reader).await;
 
-            let reader = reader.track(input.trusted_checkpoint.epoch);
-            if verify(&reader, input.clone()) {
-                info!("FFG Verification passed with HostStateReader");
-            } else {
-                error!("FFG Verification failed with HostStateReader");
-            }
+            let reader = reader.track(input.consensus_state.finalized_checkpoint.epoch);
+            verify(&reader, input.clone()); // will panic if verification fails
+
             let state_input = reader.to_input();
             let ssz_reader = state_input
                 .clone()
                 .into_state_reader(input.trusted_checkpoint_state_root, &GuestContext);
 
-            if verify(&AssertStateReader::new(&ssz_reader, &reader), input.clone()) {
-                info!("FFG Verification passed with SszStateReader");
-            } else {
-                error!("FFG Verification failed with SszStateReader");
-            }
+            verify(&AssertStateReader::new(&ssz_reader, &reader), input.clone()); // will panic if verification fails
 
             info!("Running FFG Verification in R0VM");
             let journal = execute_guest_program(state_input, input, GuestContext);
@@ -138,22 +131,15 @@ async fn main() -> anyhow::Result<()> {
 
             let input = compute_next_candidate(&beacon_client, trusted_checkpoint, &reader).await;
 
-            let reader = reader.track(input.trusted_checkpoint.epoch);
-            if verify(&reader, input.clone()) {
-                info!("FFG Verification passed with HostStateReader");
-            } else {
-                error!("FFG Verification failed with HostStateReader");
-            }
+            let reader = reader.track(input.consensus_state.finalized_checkpoint.epoch);
+            verify(&reader, input.clone()); // will panic if verification fails
 
             let state_input = reader.to_input();
             let ssz_reader =
                 state_input.into_state_reader(input.trusted_checkpoint_state_root, &GuestContext);
 
-            if verify(&AssertStateReader::new(&ssz_reader, &reader), input.clone()) {
-                info!("FFG Verification passed with SszStateReader");
-            } else {
-                error!("FFG Verification failed with SszStateReader");
-            }
+            verify(&AssertStateReader::new(&ssz_reader, &reader), input.clone());
+            // will panic if verification fails
         }
         Command::Daemon => {
             daemon(state_dir, &beacon_client).await?;
@@ -194,6 +180,7 @@ async fn compute_next_candidate(
     trusted_checkpoint: Checkpoint,
     reader: &HostStateReader,
 ) -> Input {
+    // 1. Start with trusted checkpoint (CP_T)
     let trusted_state = reader
         .get_beacon_state_by_epoch(trusted_checkpoint.epoch)
         .expect("trusted state should exist");
@@ -203,31 +190,100 @@ async fn compute_next_candidate(
         trusted_state.slot()
     );
 
-    // Get the next state where theres a the states finalized checkpoint epoch is larger than the trusted_state
+    // 2. Find the next_state where CP_T == next_state.finalized_checkpoint
+    // We know this must exist and must be at most 3? epochs ahead because of finalization rules
     let mut next_state: Option<&BeaconState> = None;
-    for epoch in trusted_checkpoint.epoch.. {
+    for epoch in trusted_checkpoint.epoch + 1..trusted_checkpoint.epoch + 3 {
         let state = reader.get_beacon_state_by_epoch(epoch).unwrap();
-        if state.finalized_checkpoint().epoch > trusted_checkpoint.epoch {
+        trace!(
+            r#"
+            State {epoch} Previous Justified: {:?}
+            State {epoch} Current Finalized: {:?}
+            State {epoch} Current Justified: {:?}
+            "#,
+            state.previous_justified_checkpoint(),
+            state.finalized_checkpoint(),
+            state.current_justified_checkpoint(),
+        );
+        // TODO(ec2): We really should be checking the root as well
+        if state.finalized_checkpoint().epoch == trusted_checkpoint.epoch {
             next_state = Some(state);
             break;
         }
     }
-
     let next_state = next_state.expect("Next state should exist");
-    info!(
-        "Found new Candidate Checkpoint: {:?} at epoch: {}",
+    debug!(
+        r#"
+        Trusted State was finalized at epoch: {}
+            Previous Justified: {:?} (trusted checkpoint)
+            Current Finalized: {:?} (trusted checkpoint)
+            Current Justified: {:?} (new source)
+
+        "#,
+        reader.context().compute_epoch_at_slot(next_state.slot()),
+        next_state.previous_justified_checkpoint(),
         next_state.finalized_checkpoint(),
-        reader.context().compute_epoch_at_slot(next_state.slot())
+        next_state.current_justified_checkpoint(),
     );
 
-    // Sanity check to make sure we have this saved
-    reader
-        .get_beacon_state_by_epoch(next_state.finalized_checkpoint().epoch)
-        .expect("Candidate state should exist");
-    info!("Get all blocks from trusted checkpoint to where candidate checkpoint gets finalized");
+    let new_previous_justified_checkpoint: Checkpoint =
+        next_state.current_justified_checkpoint().clone();
+
+    // 3. Find the state where some thing new is justified which is  where new_previous_justified_checkpoint is justified a second time
+    // This is only not the case when a justification is rolled back... Do we need to handle that?
+    // In normal times, this should be only a few epochs, but in times of inactivity, this can be quite far...
+    let mut next_next_state: Option<&BeaconState> = None;
+    for epoch in new_previous_justified_checkpoint.epoch + 1.. {
+        let state = reader.get_beacon_state_by_epoch(epoch).unwrap();
+        trace!(
+            r#"
+            State {epoch} Previous Justified: {:?}
+            State {epoch} Current Finalized: {:?}
+            State {epoch} Current Justified: {:?}
+            "#,
+            state.previous_justified_checkpoint(),
+            state.finalized_checkpoint(),
+            state.current_justified_checkpoint(),
+        );
+        if state.previous_justified_checkpoint() == &new_previous_justified_checkpoint {
+            next_next_state = Some(state);
+            break;
+        }
+    }
+    let next_next_state = next_next_state.expect("Next next state should exist");
+    debug!(
+        r#"
+        Supermajority event at epoch: {}
+            Previous Justified: {:?} (source checkpoint)
+            Current Finalized: {:?} (usually source but, depends on delay or leak)
+            Current Justified: {:?} (new target)
+        "#,
+        reader
+            .context()
+            .compute_epoch_at_slot(next_next_state.slot()),
+        next_next_state.previous_justified_checkpoint(),
+        next_next_state.finalized_checkpoint(),
+        next_next_state.current_justified_checkpoint(),
+    );
+
+    // 4. Link construction
+    let source = new_previous_justified_checkpoint;
+    let target = next_next_state.current_justified_checkpoint().clone();
+    let link = Link {
+        source: source.clone().into(),
+        target: target.clone().into(),
+    };
+
+    info!("Link to be verified: {:#?}", link);
 
     let mut blocks = Vec::new();
-    for slot in trusted_state.slot()..=next_state.slot() {
+    info!(
+        "Get blocks from trusted checkpoint slot {} to where target checkpoint gets justified {}",
+        trusted_state.slot(),
+        next_next_state.slot()
+    );
+
+    for slot in trusted_state.slot()..=next_next_state.slot() {
         let block = beacon_client.get_block(BlockId::Slot(slot)).await;
         match block {
             Ok(block) => blocks.push(block),
@@ -243,13 +299,23 @@ async fn compute_next_candidate(
             }
             _ => unimplemented!("Electra Only!"),
         })
+        .filter(|a| a.data.target == target && a.data.source == source)
         .collect::<Vec<_>>();
 
     info!("Got {} attestations", attestations.len());
 
+    // TODO(willem): This is hard-coded for one-finality. Need to add extra conditions for building inputs for the other cases
+    // TODO(ec2): I think i've covered the other cases, pls confirm
     Input {
-        trusted_checkpoint: trusted_checkpoint.into(),
-        candidate_checkpoint: next_state.finalized_checkpoint().clone().into(),
+        consensus_state: ConsensusState {
+            finalized_checkpoint: next_state.finalized_checkpoint().clone().into(),
+            current_justified_checkpoint: next_state.current_justified_checkpoint().clone().into(),
+            previous_justified_checkpoint: next_state
+                .previous_justified_checkpoint()
+                .clone()
+                .into(),
+        },
+        link,
         attestations: attestations.into_iter().map(Into::into).collect(),
         trusted_checkpoint_state_root: trusted_state.hash_tree_root().unwrap(),
     }

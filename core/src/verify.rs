@@ -1,23 +1,24 @@
 use std::collections::BTreeSet;
 
 use crate::{
-    Attestation, AttestationData, BEACON_ATTESTER_DOMAIN, CommitteeCache, Ctx, Domain, Epoch,
-    Input, Link, MAX_COMMITTEES_PER_SLOT, MAX_VALIDATORS_PER_COMMITTEE, PublicKey, Root,
-    ShuffleData, Signature, StateReader, ValidatorIndex, ValidatorInfo, Version,
+    Attestation, AttestationData, BEACON_ATTESTER_DOMAIN, CommitteeCache, Domain, Epoch, Input,
+    MAX_COMMITTEES_PER_SLOT, MAX_VALIDATORS_PER_COMMITTEE, PublicKey, Root, ShuffleData, Signature,
+    StateReader, ValidatorIndex, ValidatorInfo, Version, consensus_state::ConsensusState,
     fast_aggregate_verify_pre_aggregated,
 };
 use alloc::collections::BTreeMap;
 use ssz_rs::prelude::*;
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
-pub fn verify<S: StateReader>(state_reader: &S, input: Input) -> bool {
-    // 0. pre-conditions
-    assert_eq!(
-        input.candidate_checkpoint.epoch,
-        input.trusted_checkpoint.epoch + 1,
-        "Candidate must be direct successor of trusted checkpoint"
-    );
-
+pub fn verify<S: StateReader>(state_reader: &S, input: Input) -> ConsensusState {
+    let Input {
+        consensus_state,
+        link,
+        attestations,
+        ..
+    } = input;
+    // TODO(ec2): I think we need to enforce here that the trusted state is less than or equal to state.finalized_checkpoint epoch
+    // TODO(ec2): We can also bound the number of state patches to the k in k-finality case
     let context = state_reader.context();
 
     // 1. Attestation processing
@@ -25,16 +26,13 @@ pub fn verify<S: StateReader>(state_reader: &S, input: Input) -> bool {
         BTreeMap::new();
     let mut committee_caches: BTreeMap<Epoch, CommitteeCache> = BTreeMap::new();
 
-    let mut balances: BTreeMap<Link, u64> = BTreeMap::new();
-    input
-        .attestations
+    let attesting_balance: u64 = attestations
         .into_iter()
-        .filter(|a| context.compute_epoch_at_slot(a.data.slot) >= input.trusted_checkpoint.epoch)
-        .for_each(|attestation| {
+        .filter(|a| a.data.source == link.source && a.data.target == input.link.target)
+        .map(|attestation| {
             let data = attestation.data;
             debug!("Processing attestation: {:?}", data);
 
-            assert_eq!(data.target.epoch, context.compute_epoch_at_slot(data.slot));
             assert_eq!(data.index, 0);
 
             let attestation_epoch = data.target.epoch;
@@ -98,56 +96,24 @@ pub fn verify<S: StateReader>(state_reader: &S, input: Input) -> bool {
                 attestation.signature
             ));
 
-            let attesting_balance = attesting_validators
+            attesting_validators
                 .iter()
-                .fold(0u64, |acc, e| acc + e.effective_balance);
+                .fold(0u64, |acc, e| acc + e.effective_balance)
+        })
+        .sum();
 
-            let attestation_link = Link(data.source, data.target);
-            balances
-                .entry(attestation_link)
-                .and_modify(|balance| *balance += attesting_balance)
-                .or_insert(attesting_balance);
-        });
-    debug!("Links and balances: {:#?}", balances);
+    let total_active_balance = state_reader
+        .get_total_active_balance(link.target.epoch)
+        .unwrap();
 
-    /////////// 2. Finality calculation  //////////////
-    info!("2. Finality calculation start");
-    let sm_links = get_supermajority_links(state_reader, input.trusted_checkpoint.epoch, balances);
-    debug!("Supermajority links: {:#?}", sm_links);
+    assert!(attesting_balance * 3 >= &total_active_balance * 2);
 
-    // Because by definition the trusted CP is finalized we know that:
-    // - All checkpoints prior to trusted_cp are finalized
-    // - The candidate is justified (since to finalize requires a link forward to the tip of a chain of justified CPs which must include the direct successor)
-    // so all we really need to look at is finalizing the candidate or (in the case of delayed finality) one of its successors.
-    // we will ignore the delayed finality case for now
-
-    // by definition the trusted and candidate checkpoints are justified
-    let mut highest_justified_epoch = input.candidate_checkpoint.epoch;
-    info!("Highest justified epoch: {}", highest_justified_epoch);
-    for epoch in input.candidate_checkpoint.epoch + 1.. {
-        // if we can justify the checkpoint at that epoch then do it or else abort
-        if sm_links
-            .iter()
-            .any(|link| link.0.epoch <= highest_justified_epoch && link.1.epoch == epoch)
-        {
-            highest_justified_epoch = epoch;
-            info!("Successfully justified epoch: {}", epoch);
-        } else {
-            // no way to finalize if we have a gap in the sequence of justified checkpoints
-            warn!(
-                "Non-contiguous sequence of finalized checkpoints prohibits finalizing candidate"
-            );
-            return false;
-        }
-        // see if we can now finalize the candidate by linking to the end of a sequence of justified checkpoints
-        if sm_links.iter().any(|link| {
-            link.0 == input.candidate_checkpoint && link.1.epoch <= highest_justified_epoch
-        }) {
-            info!("Successfully finalized candidate");
-            return true;
-        }
-    }
-    true
+    /////////// 2. State update calculation  //////////////
+    info!("2. State update calculation start");
+    assert!(consensus_state.is_consistent());
+    consensus_state
+        .state_transition(&link)
+        .expect("State transition failed")
 }
 
 fn is_valid_indexed_attestation<'a, S: StateReader>(
@@ -215,24 +181,6 @@ pub fn get_attesting_indices(
         .enumerate()
         .filter(|(i, _)| attestation.aggregation_bits[*i])
         .map(|(_, validator_index)| *validator_index)
-        .collect()
-}
-
-// process attestations to produce supermajority links. A supermajority link is defined as a
-// (source, target) pair with:
-// - valid signatures by enough validators to comprise 2/3 of the total active balance in the validator set
-// - a justified source
-fn get_supermajority_links<S: StateReader>(
-    state_reader: &S,
-    epoch: u64,
-    balances: BTreeMap<Link, u64>,
-) -> Vec<Link> {
-    let total_active_balance = state_reader.get_total_active_balance(epoch).unwrap();
-
-    balances
-        .into_iter()
-        .filter(|(_, attesting_balance)| *attesting_balance * 3 >= &total_active_balance * 2) // check enough participation
-        .map(|(link, _)| link)
         .collect()
 }
 

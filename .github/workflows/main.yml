@@ -1,0 +1,68 @@
+name: main
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+
+  # Allows you to run this workflow manually from the Actions tab
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  RUST_BACKTRACE: "1"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      # This is a workaround from: https://github.com/actions/checkout/issues/590#issuecomment-970586842
+      - name: checkout dummy commit (submodule bug workaround)
+        run: "git checkout -f $(git -c user.name=x -c user.email=x@x commit-tree $(git hash-object -t tree /dev/null) < /dev/null) || :"
+
+      - name: clone repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install rust
+        uses: risc0/risc0/.github/actions/rustup@main
+
+      - name: install cargo risczero
+        uses: ./.github/actions/bininstall-risc0
+        with:
+          risczero-version: "2.0.0"
+          toolchain-version: "1.85.0"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  
+      - name: build guest
+        working-directory: methods/guest
+        run: cargo build
+
+      - name: run tests
+        env:
+            RISC0_DEV_MODE: true
+        run: cargo test
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - name: checkout code
+        uses: actions/checkout@v3
+        with:
+          submodules: recursive
+
+      - name: install rust
+        uses: risc0/risc0/.github/actions/rustup@main
+
+      - name: lint rust code
+        run: cargo fmt --all --check
+
+      - name: lint guest code
+        working-directory: methods/guest
+        run: cargo fmt --all --check

@@ -25,11 +25,11 @@ pub use verify::*;
 
 // Need to redefine/redeclare a bunch of types and constants because we can't use ssz-rs and ethereum-consensus in the guest
 
-type Epoch = u64;
-type Slot = u64;
+pub type Epoch = u64;
+pub type Slot = u64;
 type CommitteeIndex = usize;
 type ValidatorIndex = usize;
-type Root = B256;
+pub type Root = B256;
 pub type Version = [u8; 4];
 pub type ForkDigest = [u8; 4];
 pub type Domain = [u8; 32];

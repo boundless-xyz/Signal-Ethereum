@@ -35,7 +35,7 @@ use std::fmt::{self, Display};
 use std::path::PathBuf;
 use tracing::{info, warn};
 use url::Url;
-use z_core::mainnet::BeaconState;
+use z_core::{mainnet::BeaconState, StateProvider};
 
 /// Errors returned by the [BeaconClient].
 #[derive(Debug, thiserror::Error)]

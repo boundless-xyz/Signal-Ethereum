@@ -13,7 +13,8 @@ use z_core::{
     HostStateReader, Input, Link, StateInput, StateReader,
 };
 
-mod beacon_client;
+pub mod beacon_client;
+pub mod input_builder;
 
 use crate::beacon_client::{BeaconClient, EventKind, EventTopic};
 

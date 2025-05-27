@@ -19,7 +19,7 @@ mod state_provider;
 mod tracking_state_reader;
 
 #[cfg(feature = "host")]
-pub use self::{host_state_reader::*, tracking_state_reader::*};
+pub use self::{host_state_reader::*, state_provider::*, tracking_state_reader::*};
 pub use assert_state_reader::*;
 pub use ssz_state_reader::*;
 

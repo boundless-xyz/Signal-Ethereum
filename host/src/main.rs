@@ -1,7 +1,11 @@
 use beacon_api_client::{BlockId, StateId};
 use clap::{Parser, ValueEnum};
-use ethereum_consensus::electra::{Checkpoint, Context, Epoch};
+use ethereum_consensus::{
+    electra::{Checkpoint, Context, Epoch},
+    phase0::mainnet::SLOTS_PER_EPOCH,
+};
 use futures::StreamExt;
+use input_builder::build_input;
 use methods::BEACON_GUEST_ELF;
 use risc0_zkvm::{default_executor, ExecutorEnv};
 use ssz_rs::prelude::*;
@@ -24,7 +28,7 @@ use crate::beacon_client::{BeaconClient, EventKind, EventTopic};
 struct Args {
     /// Trusted epoch
     #[clap(long)]
-    trusted_epoch: Option<Epoch>,
+    trusted_epoch: Epoch,
 
     /// Beacon API URL
     #[clap(long, env = "BEACON_RPC_URL")]
@@ -54,6 +58,12 @@ enum Command {
     Verify {
         #[clap(long, default_value_t = false)]
         r0vm: bool, // If true, runs in R0VM as well, otherwise runs natively
+    },
+    #[clap(name = "run-local")]
+    RunLocal {
+        /// Number of iterations to run
+        #[clap(short('i'), long, default_value_t = 1)]
+        iterations: u64, // Number of iterations to run
     },
 }
 
@@ -96,7 +106,7 @@ async fn main() -> anyhow::Result<()> {
     match args.command {
         Command::Verify { r0vm } => {
             let reader = HostStateReader::new_with_dir(&state_dir, context.into())?;
-            let trusted_epoch = args.trusted_epoch.expect("trusted_epoch is required");
+            let trusted_epoch = args.trusted_epoch;
             let trusted_checkpoint = Checkpoint {
                 epoch: trusted_epoch,
                 // TODO(ec2): this should be the root of the block at the trusted checkpoint
@@ -120,8 +130,54 @@ async fn main() -> anyhow::Result<()> {
                 info!("Journal: {:?}", journal);
             }
         }
+        Command::RunLocal { iterations } => {
+            let s = beacon_client
+                .get_beacon_state(args.trusted_epoch * SLOTS_PER_EPOCH)
+                .await?;
+
+            // set the initial consensus state from the beacon state at `from_epoch`
+            let mut consensus_state = ConsensusState {
+                finalized_checkpoint: s.finalized_checkpoint().clone().into(),
+                current_justified_checkpoint: s.current_justified_checkpoint().clone().into(),
+                previous_justified_checkpoint: s.previous_justified_checkpoint().clone().into(),
+            };
+            tracing::info!("Initial consensus state: {:#?}", consensus_state);
+
+            for i in 0..iterations {
+                tracing::info!("Iteration: {}", i);
+
+                let input = build_input(&beacon_client, consensus_state.clone()).await?;
+
+                for epoch in input.consensus_state.finalized_checkpoint.epoch
+                    ..=input.consensus_state.finalized_checkpoint.epoch + 3
+                {
+                    tracing::debug!("Caching beacon state for epoch: {}", epoch);
+                    cache_beacon_state(&beacon_client, epoch, &state_dir).await?;
+                }
+                let reader =
+                    HostStateReader::new_with_dir(&state_dir, Context::for_mainnet().into())?;
+                let reader = reader.track(consensus_state.finalized_checkpoint.epoch);
+                consensus_state = verify(&reader, input.clone()); // will panic if verification fails
+                tracing::info!("Verification Success!");
+                tracing::info!("Consensus state: {:#?}", consensus_state);
+            }
+        }
     }
 
+    Ok(())
+}
+
+async fn cache_beacon_state(
+    beacon_client: &BeaconClient,
+    epoch: u64,
+    cache_dir: &std::path::Path,
+) -> anyhow::Result<()> {
+    let s = beacon_client
+        .get_beacon_state(epoch * SLOTS_PER_EPOCH)
+        .await?;
+    let file_name = cache_dir.join(format!("{}_beacon_state.ssz", epoch));
+    tracing::debug!("Writing state to: {}", file_name.display());
+    fs::write(file_name, &ssz_rs::serialize(&s)?)?;
     Ok(())
 }
 

@@ -68,6 +68,17 @@ pub struct ValidatorInfo {
     pub exit_epoch: u64,
 }
 
+impl Default for ValidatorInfo {
+    fn default() -> Self {
+        Self {
+            pubkey: PublicKey::default(),
+            effective_balance: 0,
+            activation_epoch: u64::MAX,
+            exit_epoch: u64::MAX,
+        }
+    }
+}
+
 #[cfg(feature = "host")]
 impl From<&ethereum_consensus::phase0::Validator> for ValidatorInfo {
     fn from(v: &ethereum_consensus::phase0::Validator) -> Self {

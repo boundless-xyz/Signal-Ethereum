@@ -80,27 +80,3 @@ mod host {
         validator.activation_epoch <= epoch && epoch < validator.exit_epoch
     }
 }
-
-impl StatePatch {
-    pub fn validate<C: Ctx>(&self, _n_active_validators: u32, _context: &C) -> bool {
-        // TODO: Implement validator
-        unimplemented!()
-
-        // let churn_limit = get_validator_churn_limit(n_active_validators, context);
-        // if (self.activations.len() as u32) > churn_limit || (self.exits.len() as u32) > churn_limit
-        // {
-        //     trace!("patch activations or exits exceeds churn limit");
-        //     return false;
-        // }
-        //
-        // if self.n_deposits_processed
-        //     > context.max_deposits() as u32 * (context.slots_per_epoch() as u32)
-        // {
-        //     trace!("patch n_deposits_processed exceeds max");
-        //     return false;
-        // }
-    }
-}
-fn get_validator_churn_limit<C: Ctx>(_n_active_validators: u32, _context: &C) -> u32 {
-    todo!()
-}

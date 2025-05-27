@@ -4,8 +4,15 @@ use crate::{
     VALIDATOR_LIST_TREE_DEPTH, VALIDATOR_TREE_DEPTH, ValidatorIndex, ValidatorInfo, Version,
 };
 use alloy_primitives::B256;
+use ethereum_consensus::electra::{
+    PROPOSER_WEIGHT, SYNC_REWARD_WEIGHT, TIMELY_HEAD_WEIGHT, TIMELY_SOURCE_WEIGHT,
+    TIMELY_TARGET_WEIGHT, WEIGHT_DENOMINATOR,
+};
+use ethereum_consensus::phase0::mainnet::MIN_EPOCHS_TO_INACTIVITY_PENALTY;
+use integer_sqrt::IntegerSquareRoot;
 use serde::{Deserialize, Serialize};
 use ssz_multiproofs::Multiproof;
+use std::cmp::{max, min};
 use std::collections::BTreeMap;
 use tracing::info;
 
@@ -107,13 +114,228 @@ impl StateInput<'_> {
                     },
                 )
             })
-            .collect();
+            .collect::<BTreeMap<_, _>>();
         assert!(values.next().is_none());
         info!("Active validators verified");
 
-        // TODO: verify state patches
-        for (epoch, _patch) in &self.patches {
-            assert!(*epoch > state_epoch);
+        for (&patch_epoch, patch) in &self.patches {
+            assert!(patch_epoch > state_epoch);
+            info!("Validating patch {}", patch_epoch);
+
+            let is_in_inactivity_leak =
+                (patch_epoch - state_epoch) >= MIN_EPOCHS_TO_INACTIVITY_PENALTY;
+            // TODO: add support of inactivity leak penalties
+            assert!(!is_in_inactivity_leak);
+
+            // get the validator of the specified epoch
+            let get_validator = |epoch: Epoch, index: ValidatorIndex| -> Option<&ValidatorInfo> {
+                for e in (state_epoch + 1..=epoch).rev() {
+                    match &self.patches.get(&e).unwrap().validators.get(&index) {
+                        Some(validator) => {
+                            return Some(*validator);
+                        }
+                        None => {}
+                    }
+                }
+                validator_cache.get(&index)
+            };
+
+            // the total active balance in GWEI
+            let last_idx = *validator_cache.last_key_value().unwrap().0;
+            let total_active_balance = validator_cache
+                .iter()
+                .chain(patch.validators.range(last_idx + 1..))
+                .map(|(idx, validator)| patch.validators.get(idx).unwrap_or(validator))
+                .filter(|validator| is_active_validator(validator, patch_epoch))
+                .map(|validator| validator.effective_balance)
+                .try_fold(0u64, |acc, x| acc.checked_add(x))
+                .unwrap();
+
+            let base_reward_per_increment = (context.effective_balance_increment()
+                * context.base_reward_factor())
+                / total_active_balance.integer_sqrt();
+            // will always be at least `unslashed_participating_increments`
+            let total_active_increments =
+                total_active_balance / context.effective_balance_increment();
+            let total_base_rewards = total_active_increments * base_reward_per_increment;
+
+            let mut total_deposited: u64 = 0;
+
+            let default = ValidatorInfo::default();
+            for (&validator_index, validator) in &patch.validators {
+                let prev_validator =
+                    get_validator(patch_epoch - 1, validator_index).unwrap_or(&default);
+
+                // pubkey must never change
+                assert_eq!(prev_validator.pubkey, validator.pubkey);
+
+                if prev_validator.activation_epoch != validator.activation_epoch {
+                    // activation_epoch must only change once
+                    assert_eq!(prev_validator.activation_epoch, u64::MAX);
+
+                    assert!(validator.effective_balance >= context.min_activation_balance());
+                    assert!(validator.activation_epoch >= patch_epoch + 5);
+
+                    // there is no need to check the balance against some churn limit here, this check happened when the validator was created (deposit)
+                }
+
+                if prev_validator.exit_epoch != validator.exit_epoch {
+                    // exit_epoch must only change once
+                    assert_eq!(prev_validator.exit_epoch, u64::MAX);
+
+                    let earliest_exit_epoch = patch_epoch + 5;
+                    // TODO: this is not correct we need to handle state.exit_balance_to_consume as well as multiple validators existing in this epoch
+                    let exit_epoch =
+                        earliest_exit_epoch
+                            + validator.effective_balance.div_ceil(
+                                get_activation_exit_churn_limit(total_active_balance, context),
+                            );
+
+                    assert!(validator.exit_epoch >= exit_epoch);
+                }
+
+                if prev_validator.effective_balance != validator.effective_balance {
+                    // if the validator has never been active, it cannot gain rewards or penalties
+                    if validator.activation_epoch < patch_epoch {
+                        // it must be a deposit
+                        assert!(prev_validator.effective_balance <= validator.effective_balance);
+                        total_deposited = total_deposited.saturating_add(
+                            validator.effective_balance - prev_validator.effective_balance,
+                        );
+                    }
+
+                    let ebi = context.effective_balance_increment();
+
+                    // effective_balance must be a multiple of EBI
+                    assert_eq!(validator.effective_balance % ebi, 0);
+                    // effective_balance must not exceed MAX_EFFECTIVE_BALANCE
+                    assert!(validator.effective_balance <= context.max_effective_balance());
+                    // if the effective_balance is less than EJECTION_BALANCE, validator must be exiting
+                    if validator.effective_balance < context.ejection_balance() {
+                        assert_ne!(validator.exit_epoch, u64::MAX);
+                    }
+
+                    let increments = prev_validator.effective_balance / ebi;
+                    let base_reward = increments * base_reward_per_increment;
+
+                    //// compute an upper bound for the participation reward ////
+                    // https://github.com/ethereum/consensus-specs/blob/dev/specs/altair/beacon-chain.md#get_flag_index_deltas
+
+                    let max_participation_reward = (base_reward
+                        * (TIMELY_SOURCE_WEIGHT + TIMELY_TARGET_WEIGHT + TIMELY_HEAD_WEIGHT)
+                        * total_active_increments)
+                        / (total_active_increments * WEIGHT_DENOMINATOR);
+
+                    //// compute an upper bound for the proposer reward ////
+                    // https://github.com/ethereum/consensus-specs/blob/dev/specs/electra/beacon-chain.md#modified-process_attestation
+
+                    // Sum of get_base_reward(state, index) over all attesting indices
+                    // for one slot there can be at most num_active_validators(state) / 32 validators
+                    // thus Sum get_base_reward(state, index) <= num_active_validators(state) / 32 * (MAX_EFFECTIVE_BALANCE / EFFECTIVE_BALANCE_INCREMENT * get_base_reward_per_increment(state)
+                    // TODO: Nice to have; Compute the actual proposer index and only use it there
+
+                    let proposer_reward_numerator = total_active_increments
+                        / context.slots_per_epoch()
+                        * base_reward_per_increment
+                        * (TIMELY_SOURCE_WEIGHT + TIMELY_TARGET_WEIGHT + TIMELY_HEAD_WEIGHT);
+
+                    let proposer_reward_denominator = (WEIGHT_DENOMINATOR - PROPOSER_WEIGHT)
+                        * WEIGHT_DENOMINATOR
+                        / PROPOSER_WEIGHT;
+
+                    // Proposer are able to include up to MAX_ATTESTATIONS slots of attestations.
+                    // assume this validator proposed one slot with full attestations
+                    let max_proposer_reward = (proposer_reward_numerator
+                        / proposer_reward_denominator)
+                        * (context.max_attestations() as u64);
+
+                    //// compute an upper bound for the sync committee reward ////
+                    // https://github.com/ethereum/consensus-specs/blob/dev/specs/altair/beacon-chain.md#sync-aggregate-processing
+
+                    let (max_sync_participant_reward, max_sync_proposer_reward) = {
+                        // Calculate the total reward pool for sync committee per slot
+                        let max_participant_rewards_pool_per_slot = total_base_rewards
+                            * SYNC_REWARD_WEIGHT
+                            / WEIGHT_DENOMINATOR
+                            / context.slots_per_epoch();
+
+                        // Calculate the reward per participant per slot
+                        let participant_reward_per_slot = max_participant_rewards_pool_per_slot
+                            / (context.sync_committee_size() as u64);
+
+                        // Calculate the reward the proposer gets per included participant
+                        let proposer_reward_per_participant = participant_reward_per_slot
+                            * PROPOSER_WEIGHT
+                            / (WEIGHT_DENOMINATOR - PROPOSER_WEIGHT); // This is participant_reward_per_slot / 7
+
+                        // Max reward *if* this validator is a participant (participates all slots)
+                        let max_reward_as_participant =
+                            participant_reward_per_slot * context.slots_per_epoch();
+
+                        // Max reward *if* this validator proposes (includes all 512 participants)
+                        let max_reward_as_proposer =
+                            proposer_reward_per_participant * context.sync_committee_size() as u64;
+
+                        (max_reward_as_participant, max_reward_as_proposer)
+                    };
+
+                    let max_reward = max_participation_reward
+                        + max_proposer_reward
+                        + max_sync_participant_reward
+                        + max_sync_proposer_reward;
+                    // use the Hysteresis parameter
+                    let max_effective_reward = max_reward.next_multiple_of(ebi);
+
+                    if prev_validator.effective_balance + max_effective_reward
+                        < validator.effective_balance
+                    {
+                        // The new effective_balance is higher than what max protocol rewards alone could achieve.
+                        // This difference MUST be explained by deposits.
+
+                        // This is the additional *effective balance increase* that deposits need to account for.
+                        // It's guaranteed to be a multiple of ebi because both terms are.
+                        let effective_increase_to_be_explained_by_deposits = validator
+                            .effective_balance
+                            - (prev_validator.effective_balance + max_effective_reward);
+
+                        total_deposited = total_deposited
+                            .saturating_add(effective_increase_to_be_explained_by_deposits);
+                    }
+
+                    //// compute an upper bound for the participation penalty ////
+                    let max_participation_penalty = base_reward
+                        * (TIMELY_SOURCE_WEIGHT + TIMELY_TARGET_WEIGHT)
+                        / WEIGHT_DENOMINATOR;
+                    let max_sync_participation_penalty = max_sync_participant_reward;
+
+                    let max_penality = max_participation_penalty + max_sync_participation_penalty;
+                    // use the Hysteresis parameter
+                    let max_effective_penality = max_penality.next_multiple_of(ebi);
+
+                    if prev_validator
+                        .effective_balance
+                        .saturating_sub(max_effective_penality)
+                        > validator.effective_balance
+                    {
+                        // it is only ever possible to withdraw the entire balance
+                        assert_eq!(validator.effective_balance, 0);
+                        // it is only possible to withdraw after the withdrawable_epoch, which we don't have so we have to estimate
+                        assert!(
+                            patch_epoch
+                                >= validator.exit_epoch
+                                    + context.min_validator_withdrawability_delay()
+                        );
+                    }
+                }
+            }
+
+            // without the actual consolidation requests it is impossible to distinguish between deposit and consolidation so we just sum them up
+            // TODO: This is not correct! We must handle state.consolidation_balance_to_consume and state.deposit_balance_to_consume for pending deposits
+            assert!(
+                total_deposited
+                    <= get_activation_exit_churn_limit(total_active_balance, context)
+                        + get_consolidation_churn_limit(total_active_balance, context)
+            );
         }
         info!("{} State patches verified", self.patches.len());
 
@@ -158,13 +380,17 @@ impl StateReader for SszStateReader<'_> {
             "Missing state patch"
         );
 
+        let (&last_idx, _) = self.validators.last_key_value().unwrap();
+        static EMPTY_VALIDATORS: BTreeMap<ValidatorIndex, ValidatorInfo> = BTreeMap::new();
+        let patch_val = patch
+            .map(|patch| &patch.validators)
+            .unwrap_or(&EMPTY_VALIDATORS);
+
         let iter = self
             .validators
             .iter()
-            .map(move |(idx, validator)| match patch {
-                Some(patch) => (*idx, patch.validators.get(idx).unwrap_or(validator)),
-                None => (*idx, validator),
-            });
+            .chain(patch_val.range(last_idx + 1..))
+            .map(|(idx, validator)| (*idx, patch_val.get(idx).unwrap_or(validator)));
 
         Ok(iter.filter(move |(_, validator)| is_active_validator(validator, epoch)))
     }
@@ -193,4 +419,21 @@ fn u64_from_chunk(node: &[u8; 32]) -> u64 {
 /// Check if `validator` is active.
 fn is_active_validator(validator: &ValidatorInfo, epoch: Epoch) -> bool {
     validator.activation_epoch <= epoch && epoch < validator.exit_epoch
+}
+
+fn get_balance_churn_limit(total_active_balance: u64, context: &impl Ctx) -> u64 {
+    let churn = max(context.min_per_epoch_churn_limit(), total_active_balance);
+    churn - churn % context.effective_balance_increment()
+}
+
+fn get_activation_exit_churn_limit(total_active_balance: u64, context: &impl Ctx) -> u64 {
+    min(
+        context.max_per_epoch_activation_exit_churn_limit(),
+        get_balance_churn_limit(total_active_balance, context),
+    )
+}
+
+fn get_consolidation_churn_limit(total_active_balance: u64, context: &impl Ctx) -> u64 {
+    get_balance_churn_limit(total_active_balance, context)
+        - get_activation_exit_churn_limit(total_active_balance, context)
 }

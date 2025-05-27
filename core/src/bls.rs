@@ -35,7 +35,7 @@ impl core::fmt::Display for BlsError {
         }
     }
 }
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[repr(transparent)]
 #[serde(transparent)]
 pub struct PublicKey(bls::PublicKey);

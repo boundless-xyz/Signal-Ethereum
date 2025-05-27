@@ -17,6 +17,7 @@ thiserror = { workspace = true }
 blst = { version = "0.3.14", default-features = false, features = ["serde"]}
 serde_arrays = { version = "0.2.0" }
 elsa = { version = "1.11", optional = true }
+integer-sqrt = "0.1"
 
 [features]
 default = ["host"]

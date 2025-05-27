@@ -20,6 +20,23 @@ pub trait Ctx {
     fn shuffle_round_count(&self) -> u64;
     fn target_committee_size(&self) -> u64;
     fn max_deposits(&self) -> usize;
+
+    fn max_effective_balance(&self) -> u64;
+    fn ejection_balance(&self) -> u64;
+
+    fn base_reward_factor(&self) -> u64;
+
+    fn sync_committee_size(&self) -> usize;
+
+    fn max_attestations(&self) -> usize;
+
+    fn min_per_epoch_churn_limit(&self) -> u64;
+    fn max_per_epoch_activation_exit_churn_limit(&self) -> u64;
+    fn churn_limit_quotient(&self) -> u64;
+
+    fn min_validator_withdrawability_delay(&self) -> u64;
+
+    fn min_activation_balance(&self) -> u64;
 }
 
 #[derive(Serialize, Deserialize)]
@@ -63,6 +80,46 @@ impl Ctx for GuestContext {
 
     fn max_deposits(&self) -> usize {
         16
+    }
+
+    fn max_effective_balance(&self) -> u64 {
+        2048_000_000_000
+    }
+
+    fn ejection_balance(&self) -> u64 {
+        16_000_000_000
+    }
+
+    fn base_reward_factor(&self) -> u64 {
+        64
+    }
+
+    fn sync_committee_size(&self) -> usize {
+        512
+    }
+
+    fn max_attestations(&self) -> usize {
+        8
+    }
+
+    fn min_per_epoch_churn_limit(&self) -> u64 {
+        128_000_000_000
+    }
+
+    fn max_per_epoch_activation_exit_churn_limit(&self) -> u64 {
+        256_000_000_000
+    }
+
+    fn churn_limit_quotient(&self) -> u64 {
+        65536
+    }
+
+    fn min_validator_withdrawability_delay(&self) -> u64 {
+        256
+    }
+
+    fn min_activation_balance(&self) -> u64 {
+        32_000_000_000
     }
 }
 
@@ -116,5 +173,45 @@ impl Ctx for HostContext {
 
     fn max_deposits(&self) -> usize {
         self.0.max_deposits
+    }
+
+    fn max_effective_balance(&self) -> u64 {
+        self.0.max_effective_balance_electra
+    }
+
+    fn ejection_balance(&self) -> u64 {
+        self.0.ejection_balance
+    }
+
+    fn base_reward_factor(&self) -> u64 {
+        self.0.base_reward_factor
+    }
+
+    fn sync_committee_size(&self) -> usize {
+        self.0.sync_committee_size
+    }
+
+    fn max_attestations(&self) -> usize {
+        self.0.max_attestations_electra
+    }
+
+    fn min_per_epoch_churn_limit(&self) -> u64 {
+        self.0.min_per_epoch_churn_limit_electra
+    }
+
+    fn max_per_epoch_activation_exit_churn_limit(&self) -> u64 {
+        self.0.max_per_epoch_activation_exit_churn_limit
+    }
+
+    fn churn_limit_quotient(&self) -> u64 {
+        self.0.churn_limit_quotient
+    }
+
+    fn min_validator_withdrawability_delay(&self) -> u64 {
+        self.0.min_validator_withdrawability_delay
+    }
+
+    fn min_activation_balance(&self) -> u64 {
+        self.0.min_activation_balance
     }
 }

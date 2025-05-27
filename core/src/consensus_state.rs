@@ -53,7 +53,7 @@ impl ConsensusState {
                 Ok(ConsensusState {
                     finalized_checkpoint: link.source,
                     current_justified_checkpoint: link.target,
-                    previous_justified_checkpoint: link.target,
+                    previous_justified_checkpoint: link.source,
                 })
             }
             // Case 2: Justification only. This occurs when the source is an already finalized checkpoint
@@ -133,7 +133,7 @@ mod tests {
             Ok(ConsensusState {
                 finalized_checkpoint: cp(1),
                 current_justified_checkpoint: cp(2),
-                previous_justified_checkpoint: cp(2),
+                previous_justified_checkpoint: cp(1),
             }),
         ),
         // Other 1-finality case
@@ -153,7 +153,7 @@ mod tests {
             Ok(ConsensusState {
                 finalized_checkpoint: cp(2),
                 current_justified_checkpoint: cp(3),
-                previous_justified_checkpoint: cp(3),
+                previous_justified_checkpoint: cp(2),
             }),
         ),
         // Justify only due to finalized source

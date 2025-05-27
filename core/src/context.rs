@@ -46,6 +46,8 @@ pub trait Ctx {
     fn min_activation_balance(&self) -> u64;
 
     fn min_epochs_to_inactivity_penalty(&self) -> u64;
+
+    fn max_seed_lookahead(&self) -> u64;
 }
 
 #[derive(Serialize, Deserialize)]
@@ -132,6 +134,10 @@ impl Ctx for GuestContext {
     }
 
     fn min_epochs_to_inactivity_penalty(&self) -> u64 {
+        4
+    }
+
+    fn max_seed_lookahead(&self) -> u64 {
         4
     }
 }
@@ -230,5 +236,9 @@ impl Ctx for HostContext {
 
     fn min_epochs_to_inactivity_penalty(&self) -> u64 {
         self.0.min_epochs_to_inactivity_penalty
+    }
+
+    fn max_seed_lookahead(&self) -> u64 {
+        self.0.max_seed_lookahead
     }
 }

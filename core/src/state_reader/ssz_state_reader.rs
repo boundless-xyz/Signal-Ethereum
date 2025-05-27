@@ -167,9 +167,13 @@ impl StateInput<'_> {
                 if prev_validator.activation_epoch != validator.activation_epoch {
                     // activation_epoch must only change once
                     assert_eq!(prev_validator.activation_epoch, u64::MAX);
-
+                    // effective balance must be at least MIN_ACTIVATION_BALANCE
                     assert!(validator.effective_balance >= context.min_activation_balance());
-                    assert!(validator.activation_epoch >= patch_epoch + 5);
+                    // activation epoch must be in the future
+                    assert_eq!(
+                        validator.activation_epoch,
+                        compute_activation_exit_epoch(patch_epoch, context)
+                    );
 
                     // there is no need to check the balance against some churn limit here, this check happened when the validator was created (deposit)
                 }
@@ -178,7 +182,7 @@ impl StateInput<'_> {
                     // exit_epoch must only change once
                     assert_eq!(prev_validator.exit_epoch, u64::MAX);
 
-                    let earliest_exit_epoch = patch_epoch + 5;
+                    let earliest_exit_epoch = compute_activation_exit_epoch(patch_epoch, context);
                     // TODO: this is not correct we need to handle state.exit_balance_to_consume as well as multiple validators existing in this epoch
                     let exit_epoch =
                         earliest_exit_epoch
@@ -438,4 +442,8 @@ fn get_activation_exit_churn_limit(total_active_balance: u64, context: &impl Ctx
 fn get_consolidation_churn_limit(total_active_balance: u64, context: &impl Ctx) -> u64 {
     get_balance_churn_limit(total_active_balance, context)
         - get_activation_exit_churn_limit(total_active_balance, context)
+}
+
+fn compute_activation_exit_epoch(state_epoch: Epoch, context: &impl Ctx) -> Epoch {
+    state_epoch + 1 + context.max_seed_lookahead()
 }

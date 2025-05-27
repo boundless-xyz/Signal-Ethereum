@@ -27,7 +27,7 @@ struct Args {
     trusted_epoch: Option<Epoch>,
 
     /// Beacon API URL
-    #[clap(long)]
+    #[clap(long, env = "BEACON_RPC_URL")]
     beacon_api: Url,
 
     /// Max Beacon API requests per second (0 to disable rate limit)
@@ -50,13 +50,11 @@ struct Args {
 #[derive(Parser, Debug)]
 enum Command {
     /// Runs FFG verification in R0VM Executor
-    #[clap(name = "exec")]
-    Exec,
-    /// Runs FFG verification in the host
-    #[clap(name = "native-exec")]
-    NativeExec,
-    #[clap(name = "daemon")]
-    Daemon,
+    #[clap(name = "verify")]
+    Verify {
+        #[clap(long, default_value_t = false)]
+        r0vm: bool, // If true, runs in R0VM as well, otherwise runs natively
+    },
 }
 
 /// Enum for network selection
@@ -96,7 +94,7 @@ async fn main() -> anyhow::Result<()> {
     fs::create_dir_all(&state_dir)?;
 
     match args.command {
-        Command::Exec => {
+        Command::Verify { r0vm } => {
             let reader = HostStateReader::new_with_dir(&state_dir, context.into())?;
             let trusted_epoch = args.trusted_epoch.expect("trusted_epoch is required");
             let trusted_checkpoint = Checkpoint {
@@ -104,7 +102,6 @@ async fn main() -> anyhow::Result<()> {
                 // TODO(ec2): this should be the root of the block at the trusted checkpoint
                 root: Default::default(),
             };
-
             let input = compute_next_candidate(&beacon_client, trusted_checkpoint, &reader).await;
 
             let reader = reader.track(input.consensus_state.finalized_checkpoint.epoch);
@@ -117,33 +114,11 @@ async fn main() -> anyhow::Result<()> {
 
             verify(&AssertStateReader::new(&ssz_reader, &reader), input.clone()); // will panic if verification fails
 
-            info!("Running FFG Verification in R0VM");
-            let journal = execute_guest_program(state_input, input, GuestContext);
-            info!("Journal: {:?}", journal);
-        }
-        Command::NativeExec => {
-            let reader = HostStateReader::new_with_dir(&state_dir, context.into())?;
-            let trusted_epoch = args.trusted_epoch.expect("trusted_epoch is required");
-            let trusted_checkpoint = Checkpoint {
-                epoch: trusted_epoch,
-                // TODO(ec2): this should be the root of the block at the trusted checkpoint
-                root: Default::default(),
-            };
-
-            let input = compute_next_candidate(&beacon_client, trusted_checkpoint, &reader).await;
-
-            let reader = reader.track(input.consensus_state.finalized_checkpoint.epoch);
-            verify(&reader, input.clone()); // will panic if verification fails
-
-            let state_input = reader.to_input();
-            let ssz_reader =
-                state_input.into_state_reader(input.trusted_checkpoint_state_root, &GuestContext);
-
-            verify(&AssertStateReader::new(&ssz_reader, &reader), input.clone());
-            // will panic if verification fails
-        }
-        Command::Daemon => {
-            daemon(state_dir, &beacon_client).await?;
+            if r0vm {
+                info!("Running FFG Verification in R0VM");
+                let journal = execute_guest_program(state_input, input, GuestContext);
+                info!("Journal: {:?}", journal);
+            }
         }
     }
 
@@ -320,61 +295,4 @@ async fn compute_next_candidate(
         attestations: attestations.into_iter().map(Into::into).collect(),
         trusted_checkpoint_state_root: trusted_state.hash_tree_root().unwrap(),
     }
-}
-
-async fn daemon(
-    data_dir: impl Into<PathBuf>,
-    beacon_client: &beacon_client::BeaconClient,
-) -> anyhow::Result<()> {
-    let data_dir = data_dir.into();
-
-    let head = beacon_client.get_block(BlockId::Head).await?;
-    info!("Current Chain Head Block: {:?}", head.slot());
-
-    let cp = beacon_client
-        .get_finality_checkpoints(StateId::Head)
-        .await?;
-    info!(
-        r#"Previous Justified Checkpoint: {:?}
-   Current Justified Checkpoint: {:?}
-   Current Finalize Checkpoint: {:?}"#,
-        cp.previous_justified, cp.current_justified, cp.finalized
-    );
-
-    let mut event_stream = beacon_client
-        .get_events(&[EventTopic::Head, EventTopic::FinalizedCheckpoint])
-        .await
-        .unwrap();
-
-    info!("event stream started");
-    while let Some(event) = event_stream.next().await {
-        match event {
-            Ok(EventKind::Head(h)) => {
-                info!(
-                    "New Head at slot: {}, state: {}, epoch_transition {}",
-                    h.slot, h.state, h.epoch_transition
-                );
-            }
-            Ok(EventKind::FinalizedCheckpoint(cp)) => {
-                info!(
-                    "New finalized cp epoch: {}, block: {}, state: {}",
-                    cp.epoch, cp.block, cp.state
-                );
-                let s = beacon_client
-                    .get_beacon_state_ssz(StateId::Root(cp.state))
-                    .await?;
-                let file_name = data_dir.join(format!("{}_beacon_state.ssz", cp.epoch));
-                debug!("Writing state to: {}", file_name.display());
-                fs::write(file_name, &ssz_rs::serialize(&s)?)?;
-            }
-            Err(e) => {
-                warn!("Error: {:?}", e);
-            }
-            _ => {
-                warn!("Unknown event: {:?}", event);
-            }
-        }
-    }
-
-    Ok(())
 }

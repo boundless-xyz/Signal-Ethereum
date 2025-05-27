@@ -57,9 +57,8 @@ pub mod mainnet {
 }
 
 mod electra {
-    use ethereum_consensus::electra::{
-        DepositReceipt, PendingConsolidation, PendingPartialWithdrawal,
-    };
+    use ethereum_consensus::electra::PendingConsolidation;
+    use ethereum_consensus::primitives::{BlsPublicKey, BlsSignature};
     use ethereum_consensus::serde::{as_str, seq_of_str};
     use ethereum_consensus::{
         altair::SyncCommittee,
@@ -72,7 +71,35 @@ mod electra {
             Bytes32, Epoch, Gwei, ParticipationFlags, Root, Slot, ValidatorIndex, WithdrawalIndex,
         },
     };
+
     use ssz_rs::prelude::*;
+
+    #[derive(
+        Default, Debug, Clone, SimpleSerialize, PartialEq, Eq, serde::Serialize, serde::Deserialize,
+    )]
+    pub struct DepositReceipt {
+        #[serde(rename = "pubkey")]
+        pub public_key: BlsPublicKey,
+        pub withdrawal_credentials: Bytes32,
+        #[serde(with = "as_str")]
+        pub amount: Gwei,
+        pub signature: BlsSignature,
+        #[serde(with = "as_str")]
+        pub slot: Slot,
+    }
+
+    #[derive(
+        Default, Debug, Clone, SimpleSerialize, PartialEq, Eq, serde::Serialize, serde::Deserialize,
+    )]
+    pub struct PendingPartialWithdrawal {
+        #[serde(with = "as_str")]
+        pub validator_index: ValidatorIndex,
+        #[serde(with = "as_str")]
+        pub amount: Gwei,
+        #[serde(with = "as_str")]
+        pub withdrawable_epoch: Epoch,
+    }
+
     #[derive(
         Default, Debug, SimpleSerialize, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize,
     )]

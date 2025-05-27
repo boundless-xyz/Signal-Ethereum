@@ -6,6 +6,13 @@ use serde::{Deserialize, Serialize};
 pub trait Ctx {
     type Error: Debug;
 
+    const TIMELY_SOURCE_WEIGHT: u64 = 14;
+    const TIMELY_TARGET_WEIGHT: u64 = 26;
+    const TIMELY_HEAD_WEIGHT: u64 = 14;
+    const SYNC_REWARD_WEIGHT: u64 = 2;
+    const PROPOSER_WEIGHT: u64 = 8;
+    const WEIGHT_DENOMINATOR: u64 = 64;
+
     fn slots_per_epoch(&self) -> u64;
     fn effective_balance_increment(&self) -> u64;
     fn max_validators_per_committee(&self) -> usize;
@@ -37,6 +44,8 @@ pub trait Ctx {
     fn min_validator_withdrawability_delay(&self) -> u64;
 
     fn min_activation_balance(&self) -> u64;
+
+    fn min_epochs_to_inactivity_penalty(&self) -> u64;
 }
 
 #[derive(Serialize, Deserialize)]
@@ -120,6 +129,10 @@ impl Ctx for GuestContext {
 
     fn min_activation_balance(&self) -> u64 {
         32_000_000_000
+    }
+
+    fn min_epochs_to_inactivity_penalty(&self) -> u64 {
+        4
     }
 }
 
@@ -213,5 +226,9 @@ impl Ctx for HostContext {
 
     fn min_activation_balance(&self) -> u64 {
         self.0.min_activation_balance
+    }
+
+    fn min_epochs_to_inactivity_penalty(&self) -> u64 {
+        self.0.min_epochs_to_inactivity_penalty
     }
 }

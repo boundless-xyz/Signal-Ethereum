@@ -4,11 +4,6 @@ use crate::{
     VALIDATOR_LIST_TREE_DEPTH, VALIDATOR_TREE_DEPTH, ValidatorIndex, ValidatorInfo, Version,
 };
 use alloy_primitives::B256;
-use ethereum_consensus::electra::{
-    PROPOSER_WEIGHT, SYNC_REWARD_WEIGHT, TIMELY_HEAD_WEIGHT, TIMELY_SOURCE_WEIGHT,
-    TIMELY_TARGET_WEIGHT, WEIGHT_DENOMINATOR,
-};
-use ethereum_consensus::phase0::mainnet::MIN_EPOCHS_TO_INACTIVITY_PENALTY;
 use integer_sqrt::IntegerSquareRoot;
 use serde::{Deserialize, Serialize};
 use ssz_multiproofs::Multiproof;
@@ -123,7 +118,7 @@ impl StateInput<'_> {
             info!("Validating patch {}", patch_epoch);
 
             let is_in_inactivity_leak =
-                (patch_epoch - state_epoch) >= MIN_EPOCHS_TO_INACTIVITY_PENALTY;
+                (patch_epoch - state_epoch) >= context.min_epochs_to_inactivity_penalty();
             // TODO: add support of inactivity leak penalties
             assert!(!is_in_inactivity_leak);
 
@@ -222,9 +217,11 @@ impl StateInput<'_> {
                     // https://github.com/ethereum/consensus-specs/blob/dev/specs/altair/beacon-chain.md#get_flag_index_deltas
 
                     let max_participation_reward = (base_reward
-                        * (TIMELY_SOURCE_WEIGHT + TIMELY_TARGET_WEIGHT + TIMELY_HEAD_WEIGHT)
+                        * (<GuestContext as Ctx>::TIMELY_SOURCE_WEIGHT
+                            + <GuestContext as Ctx>::TIMELY_TARGET_WEIGHT
+                            + <GuestContext as Ctx>::TIMELY_HEAD_WEIGHT)
                         * total_active_increments)
-                        / (total_active_increments * WEIGHT_DENOMINATOR);
+                        / (total_active_increments * <GuestContext as Ctx>::WEIGHT_DENOMINATOR);
 
                     //// compute an upper bound for the proposer reward ////
                     // https://github.com/ethereum/consensus-specs/blob/dev/specs/electra/beacon-chain.md#modified-process_attestation
@@ -237,11 +234,14 @@ impl StateInput<'_> {
                     let proposer_reward_numerator = total_active_increments
                         / context.slots_per_epoch()
                         * base_reward_per_increment
-                        * (TIMELY_SOURCE_WEIGHT + TIMELY_TARGET_WEIGHT + TIMELY_HEAD_WEIGHT);
+                        * (<GuestContext as Ctx>::TIMELY_SOURCE_WEIGHT
+                            + <GuestContext as Ctx>::TIMELY_TARGET_WEIGHT
+                            + <GuestContext as Ctx>::TIMELY_HEAD_WEIGHT);
 
-                    let proposer_reward_denominator = (WEIGHT_DENOMINATOR - PROPOSER_WEIGHT)
-                        * WEIGHT_DENOMINATOR
-                        / PROPOSER_WEIGHT;
+                    let proposer_reward_denominator = (<GuestContext as Ctx>::WEIGHT_DENOMINATOR
+                        - <GuestContext as Ctx>::PROPOSER_WEIGHT)
+                        * <GuestContext as Ctx>::WEIGHT_DENOMINATOR
+                        / <GuestContext as Ctx>::PROPOSER_WEIGHT;
 
                     // Proposer are able to include up to MAX_ATTESTATIONS slots of attestations.
                     // assume this validator proposed one slot with full attestations
@@ -255,8 +255,8 @@ impl StateInput<'_> {
                     let (max_sync_participant_reward, max_sync_proposer_reward) = {
                         // Calculate the total reward pool for sync committee per slot
                         let max_participant_rewards_pool_per_slot = total_base_rewards
-                            * SYNC_REWARD_WEIGHT
-                            / WEIGHT_DENOMINATOR
+                            * <GuestContext as Ctx>::SYNC_REWARD_WEIGHT
+                            / <GuestContext as Ctx>::WEIGHT_DENOMINATOR
                             / context.slots_per_epoch();
 
                         // Calculate the reward per participant per slot
@@ -265,8 +265,9 @@ impl StateInput<'_> {
 
                         // Calculate the reward the proposer gets per included participant
                         let proposer_reward_per_participant = participant_reward_per_slot
-                            * PROPOSER_WEIGHT
-                            / (WEIGHT_DENOMINATOR - PROPOSER_WEIGHT); // This is participant_reward_per_slot / 7
+                            * <GuestContext as Ctx>::PROPOSER_WEIGHT
+                            / (<GuestContext as Ctx>::WEIGHT_DENOMINATOR
+                                - <GuestContext as Ctx>::PROPOSER_WEIGHT); // This is participant_reward_per_slot / 7
 
                         // Max reward *if* this validator is a participant (participates all slots)
                         let max_reward_as_participant =
@@ -304,8 +305,9 @@ impl StateInput<'_> {
 
                     //// compute an upper bound for the participation penalty ////
                     let max_participation_penalty = base_reward
-                        * (TIMELY_SOURCE_WEIGHT + TIMELY_TARGET_WEIGHT)
-                        / WEIGHT_DENOMINATOR;
+                        * (<GuestContext as Ctx>::TIMELY_SOURCE_WEIGHT
+                            + <GuestContext as Ctx>::TIMELY_TARGET_WEIGHT)
+                        / <GuestContext as Ctx>::WEIGHT_DENOMINATOR;
                     let max_sync_participation_penalty = max_sync_participant_reward;
 
                     let max_penality = max_participation_penalty + max_sync_participation_penalty;

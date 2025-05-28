@@ -59,6 +59,18 @@ pub async fn build_input<CR: ChainReader>(
     // We now need to compute the links that take us from the first state to the finalized one.
     let links = generate_links(&states)?;
     debug!("Links: {:#?}", links);
+
+    // Sanity check to see the ConsensusState transition will work properly
+    for (i, link) in links.iter().enumerate() {
+        let post = states[i].state_transition(link);
+        match post {
+            Ok(post) => assert_eq!(post, states[i + 1], "State transition mismatch"),
+            Err(e) => {
+                panic!("Link {}: Transition failed: {}", i, e);
+            }
+        }
+    }
+
     let links_and_attestations =
         collect_attestations_for_links(chain_reader, &links, start_slot, end_slot).await?;
 
@@ -223,9 +235,8 @@ fn generate_links(states: &[ConsensusState]) -> Result<Vec<Link>, InputBuilderEr
         }
     }
 
-    assert!(
-        !links.is_empty(),
-        "Must have at least one link to evolve the state"
-    );
+    if links.is_empty() {
+        return Err(InputBuilderError::FailedToFindLink);
+    }
     Ok(links)
 }

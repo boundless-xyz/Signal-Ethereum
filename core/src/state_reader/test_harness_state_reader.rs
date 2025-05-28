@@ -1,20 +1,18 @@
-use std::str::FromStr;
-
-///
-/// A test harness that allows us to write tests using the BeaconChainHarness from sigp/lighthouse
-/// and have its data read directly by the verify function
-///
+//!
+//! A test harness that allows us to write tests using the BeaconChainHarness from sigp/lighthouse
+//! and have its data read directly by the verify function
+//!
+//!
 use crate::{
     ChainReader, Epoch, GuestContext, StateReader, ValidatorIndex, ValidatorInfo, Version,
 };
-use alloy_primitives::ruint::aliases::B256;
 use beacon_chain::{
     BeaconChainError, BeaconChainTypes, StateSkipConfig, WhenSlotSkipped,
     test_utils::BeaconChainHarness,
 };
 use beacon_types::{BeaconState, EthSpec, Hash256, Validator};
 use elsa::FrozenMap;
-use serde::{Deserialize, Serialize};
+use std::str::FromStr;
 use thiserror::Error;
 
 pub struct HarnessStateReader<T: BeaconChainTypes> {

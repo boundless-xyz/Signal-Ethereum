@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = [ "core", "host", "methods", "ssz-multiproofs" ]
+members = [ "core", "host", "methods", "ssz-multiproofs", "core/test_utils" ]
 
 # Always optimize; building and running the guest takes much longer without optimization.
 [profile.dev]

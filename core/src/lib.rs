@@ -25,11 +25,11 @@ pub use verify::*;
 
 // Need to redefine/redeclare a bunch of types and constants because we can't use ssz-rs and ethereum-consensus in the guest
 
-type Epoch = u64;
-type Slot = u64;
-type CommitteeIndex = usize;
-type ValidatorIndex = usize;
-type Root = B256;
+pub type Epoch = u64;
+pub type Slot = u64;
+pub type CommitteeIndex = usize;
+pub type ValidatorIndex = usize;
+pub type Root = B256;
 pub type Version = [u8; 4];
 pub type ForkDigest = [u8; 4];
 pub type Domain = [u8; 32];
@@ -76,6 +76,18 @@ impl From<&ethereum_consensus::phase0::Validator> for ValidatorInfo {
             effective_balance: v.effective_balance,
             activation_epoch: v.activation_epoch,
             exit_epoch: v.exit_epoch,
+        }
+    }
+}
+
+#[cfg(feature = "host")]
+impl From<&beacon_types::Validator> for ValidatorInfo {
+    fn from(v: &beacon_types::Validator) -> Self {
+        Self {
+            pubkey: PublicKey::uncompress(&v.pubkey.serialize()).unwrap(),
+            effective_balance: v.effective_balance,
+            activation_epoch: v.activation_epoch.into(),
+            exit_epoch: v.exit_epoch.into(),
         }
     }
 }

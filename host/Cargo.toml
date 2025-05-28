@@ -23,7 +23,7 @@ serde = "1.0"
 serde_json = "1.0.133"
 ssz_rs = { workspace = true, default-features = false, features = ["serde", "std"] }
 thiserror = "2.0.6"
-tokio = { version = "1.35", features = ["full"] }
+tokio = { workspace = true }
 tracing =  { workspace = true }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 url = { version = "2.5" }

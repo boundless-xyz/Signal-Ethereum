@@ -18,8 +18,14 @@ blst = { version = "0.3.14", default-features = false, features = ["serde"]}
 serde_arrays = { version = "0.2.0" }
 elsa = { version = "1.11", optional = true }
 
+beacon_chain = { git = "https://github.com/sigp/lighthouse.git", rev = "7759cb8f91c01a7d335469d317b5787368656064", optional = true } 
+beacon_types = { package = "types", git = "https://github.com/sigp/lighthouse.git", rev = "7759cb8f91c01a7d335469d317b5787368656064", optional = true } 
+
+[dev-dependencies]
+tokio = { workspace = true }
+
 [features]
 default = ["host"]
 host = [
-    "dep:ethereum-consensus", "ssz-multiproofs/builder", "blst/default", "ssz-multiproofs/progress-bar", "dep:elsa"
+    "dep:ethereum-consensus", "ssz-multiproofs/builder", "blst/default", "ssz-multiproofs/progress-bar", "dep:elsa", "dep:beacon_chain", "dep:beacon_types"
 ]

@@ -35,6 +35,8 @@ bitvec = { version = "1", features = ["serde"] }
 tracing = "0.1.41"
 anyhow = "1.0.57"
 thiserror = "2.0"
+tokio = { version = "1.35", features = ["full"] }
+
 
 [patch."https://github.com/ralexstokes/ssz-rs"]
 # Get the merkle tree empty node virtualization so non-trivial merkle trees actually fit in memory

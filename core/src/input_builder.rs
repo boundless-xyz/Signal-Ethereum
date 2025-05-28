@@ -58,7 +58,6 @@ pub async fn build_input<CR: ChainReader>(
     // We now have a list of at least 2 consensus states (one being the initial one).
     // We now need to compute the links that take us from the first state to the finalized one.
     let links = generate_links(&states)?;
-    debug!("Links: {:#?}", links);
 
     // Sanity check to see the ConsensusState transition will work properly
     for (i, link) in links.iter().enumerate() {
@@ -78,6 +77,10 @@ pub async fn build_input<CR: ChainReader>(
         debug!("Link: {:?}, Attestations: {}", link, attestations.len());
     }
 
+    info!(
+        "Building input complete with {} links",
+        links_and_attestations.len()
+    );
     // TODO(ec2): Make this work for when we have multiple links
     let (link, attestations) = links_and_attestations[0].clone();
 

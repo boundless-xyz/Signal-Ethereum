@@ -234,7 +234,9 @@ async fn compute_next_candidate(
     // In normal times, this should be only a few epochs, but in times of inactivity, this can be quite far...
     let mut next_next_state: Option<&BeaconState> = None;
     for epoch in new_previous_justified_checkpoint.epoch + 1.. {
-        let state = reader.get_beacon_state_by_epoch(epoch).unwrap();
+        let state = reader
+            .get_beacon_state_by_epoch(epoch)
+            .unwrap_or_else(|err| panic!("Invalid Beacon state {}: {}", epoch, err));
         trace!(
             r#"
             State {epoch} Previous Justified: {:?}

@@ -43,7 +43,7 @@ pub struct PublicKey(bls::PublicKey);
 impl PublicKey {
     #[inline]
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, BlsError> {
-        Ok(PublicKey(bls::PublicKey::deserialize(bytes).unwrap()))
+        Ok(PublicKey(bls::PublicKey::deserialize(bytes)?))
     }
 
     #[inline]
@@ -53,7 +53,7 @@ impl PublicKey {
 
     #[inline]
     pub fn uncompress(bytes: &[u8]) -> Result<Self, BlsError> {
-        Ok(PublicKey(bls::PublicKey::uncompress(bytes).unwrap()))
+        Ok(PublicKey(bls::PublicKey::uncompress(bytes)?))
     }
 
     #[inline]

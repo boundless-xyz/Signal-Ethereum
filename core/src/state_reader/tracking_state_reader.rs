@@ -51,6 +51,10 @@ impl TrackingStateReader {
             .unwrap();
         let beacon_state_root = state.hash_tree_root().unwrap();
 
+        let BeaconState::Electra(state) = state else {
+            panic!("Unsupported beacon fork. electra only for now")
+        };
+
         let mut patch_builder: BTreeMap<Epoch, StatePatchBuilder> = BTreeMap::new();
         let mut proof_builder: MultiproofBuilder = MultiproofBuilder::new();
 
@@ -73,35 +77,38 @@ impl TrackingStateReader {
         }
 
         info!("Building State multiproof");
-        let state_multiproof = match state {
-            BeaconState::Electra(state) => proof_builder
+        let state_multiproof = {
+            proof_builder
                 .with_path::<ElectraBeaconState>(&["genesis_validators_root".into()])
                 .with_path::<ElectraBeaconState>(&["slot".into()])
                 .with_path::<ElectraBeaconState>(&["fork".into(), "current_version".into()])
                 .with_path::<ElectraBeaconState>(&["validators".into()])
+                .with_path::<ElectraBeaconState>(&["deposit_balance_to_consume".into()])
                 .with_path::<ElectraBeaconState>(&["exit_balance_to_consume".into()])
                 .with_path::<ElectraBeaconState>(&["earliest_exit_epoch".into()])
+                .with_path::<ElectraBeaconState>(&["consolidation_balance_to_consume".into()])
+                .with_path::<ElectraBeaconState>(&["earliest_consolidation_epoch".into()])
                 .build(state)
-                .unwrap(),
-            _ => {
-                panic!("Unsupported beacon fork. electra only for now")
-            }
+                .unwrap()
         };
         state_multiproof.verify(&beacon_state_root).unwrap();
         info!("State multiproof finished");
 
-        let validators_root = state.validators().hash_tree_root().unwrap();
+        let validators_root = state.validators.hash_tree_root().unwrap();
 
-        let mut validators = BTreeMap::new();
-        for idx in self.validator_indices.take() {
-            let validator = ValidatorInfo::from(state.validators().get(idx).unwrap());
-            validators.insert(idx, validator);
-        }
+        let validator_indices = self.validator_indices.take();
         info!(
             "Used validators: {}/{}",
-            validators.len(),
-            state.validators().len()
+            validator_indices.len(),
+            state.validators.len()
         );
+
+        let mut validators = BTreeMap::new();
+        for &idx in &validator_indices {
+            if let Some(validator) = state.validators.get(idx) {
+                validators.insert(idx, ValidatorInfo::from(validator));
+            }
+        }
 
         let g_indices = validators.keys().flat_map(|&idx| {
             let public_key_path: &[Path] = &[
@@ -129,7 +136,7 @@ impl TrackingStateReader {
         info!("Building Validator multiproof");
         let validator_multiproof = MultiproofBuilder::new()
             .with_gindices(g_indices)
-            .build(state.validators())
+            .build(&state.validators)
             .unwrap();
         validator_multiproof.verify(&validators_root).unwrap();
         info!("Validator multiproof finished");
@@ -139,7 +146,7 @@ impl TrackingStateReader {
                 let patch = patch_builder
                     .entry(epoch)
                     .or_insert(self.patch_builder(epoch).unwrap());
-                patch.validator_diff(&validators);
+                patch.validator_diff(&validator_indices, &validators);
             }
         }
 

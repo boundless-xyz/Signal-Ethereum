@@ -1,6 +1,6 @@
 use super::StateReader;
 use crate::{
-    BEACON_STATE_TREE_DEPTH, Ctx, Epoch, GuestContext, PublicKey, StatePatch,
+    BEACON_STATE_TREE_DEPTH, Ctx, Epoch, GuestContext, PublicKey, Slot, StatePatch,
     VALIDATOR_LIST_TREE_DEPTH, VALIDATOR_TREE_DEPTH, ValidatorIndex, ValidatorInfo, Version,
 };
 use alloy_primitives::B256;
@@ -9,13 +9,14 @@ use serde::{Deserialize, Serialize};
 use ssz_multiproofs::Multiproof;
 use std::cmp::{max, min};
 use std::collections::BTreeMap;
-use tracing::info;
+use tracing::{debug, info};
 
 #[derive(Clone, Deserialize, Serialize)]
 pub struct StateInput<'a> {
     /// Used fields of the BeaconState plus their inclusion proof against the state root.
     #[serde(borrow)]
     pub beacon_state: Multiproof<'a>,
+    /// Number of included elements of the `randao_mixes` vector.
     pub num_randao: u32,
     /// Used fields of the active validators plus their inclusion proof against the validator root.
     #[serde(borrow)]
@@ -62,8 +63,12 @@ impl StateInput<'_> {
             })
             .collect();
 
+        let (_, deposit_balance_to_consume) = beacon_state.next().unwrap();
         let (_, exit_balance_to_consume) = beacon_state.next().unwrap();
         let (_, earliest_exit_epoch) = beacon_state.next().unwrap();
+        // TODO: handle consolidations
+        let (_, consolidation_balance_to_consume) = beacon_state.next().unwrap();
+        let (_, earliest_consolidation_epoch) = beacon_state.next().unwrap();
 
         self.beacon_state
             .verify(&root)
@@ -72,8 +77,38 @@ impl StateInput<'_> {
 
         let state_epoch = context.compute_epoch_at_slot(u64_from_chunk(slot));
 
+        // deposits can be arbitrarily large
+        let mut deposit_balance_to_consume = u64_from_chunk(deposit_balance_to_consume);
+
         let mut exit_balance_to_consume = u64_from_chunk(exit_balance_to_consume);
         let mut earliest_exit_epoch: Epoch = u64_from_chunk(earliest_exit_epoch);
+
+        let mut consolidation_balance_to_consume = u64_from_chunk(consolidation_balance_to_consume);
+        let mut earliest_consolidation_epoch: Epoch = u64_from_chunk(earliest_consolidation_epoch);
+
+        // perform sanity checks on the churn limits; these bounds are crucial for the security proof
+
+        // As we are only comparing effective balances, so it is perfectly fine to cap the deposit_balance_to_consume
+        // Even though technically deposits can be arbitrarily big.
+        // This means that an attacker cannot fraudulently deposit more than 8 epochs worth of churn
+        if deposit_balance_to_consume > context.max_effective_balance() {
+            deposit_balance_to_consume = context.max_effective_balance();
+        }
+
+        // the earliest new exit can only happen in the first patch epoch
+        // thus, it is fine to reset exit_balance_to_consume
+        // otherwise earliest_exit_epoch will always be less than per_epoch_churn and the bound that at most per_epoch_churn balances exist hold
+        // See https://github.com/ethereum/consensus-specs/blob/dev/specs/electra/beacon-chain.md#new-compute_exit_epoch_and_update_churn
+        if earliest_exit_epoch <= state_epoch {
+            exit_balance_to_consume = 0;
+            earliest_exit_epoch = state_epoch;
+        }
+
+        // See https://github.com/ethereum/consensus-specs/blob/dev/specs/electra/beacon-chain.md#new-compute_consolidation_epoch_and_update_churn
+        if earliest_consolidation_epoch <= state_epoch {
+            consolidation_balance_to_consume = 0;
+            earliest_consolidation_epoch = state_epoch;
+        }
 
         self.active_validators
             .verify(validators_root)
@@ -121,35 +156,56 @@ impl StateInput<'_> {
         assert!(values.next().is_none());
         info!("Active validators verified");
 
-        for (&patch_epoch, patch) in &self.patches {
-            assert!(patch_epoch > state_epoch);
-            info!("Validating patch {}", patch_epoch);
+        let state_reader = SszStateReader {
+            context,
+            genesis_validators_root: genesis_validators_root.into(),
+            fork_current_version: fork_current_version[0..4].try_into().unwrap(),
+            epoch: state_epoch,
+            validators: validator_cache,
+            randao,
+            patches: self.patches,
+        };
+
+        let default_validator = ValidatorInfo::default();
+
+        let final_patch_epoch = state_reader
+            .patches
+            .last_key_value()
+            .map(|(&epoch, _)| epoch)
+            .unwrap_or(state_epoch);
+
+        for patch_epoch in state_epoch + 1..=final_patch_epoch {
+            info!(
+                "Validating patch {} with {} validators",
+                patch_epoch,
+                state_reader
+                    .patches
+                    .get(&patch_epoch)
+                    .map_or(0, |p| p.validators.len())
+            );
+
+            let total_active_balance = state_reader
+                .active_validators(patch_epoch - 1, patch_epoch - 1)
+                .unwrap()
+                .map(|(_, validator)| validator.effective_balance)
+                .try_fold(0u64, |acc, x| acc.checked_add(x))
+                .unwrap();
+
+            // in process_pending_deposits, the churn is updated for each epoch, here churn only accumulates if the churn limit has been hit
+            // We always accumulate which is an acceptable upper bound.
+            // See: https://github.com/ethereum/consensus-specs/blob/dev/specs/electra/beacon-chain.md#new-process_pending_deposits
+            deposit_balance_to_consume +=
+                get_activation_exit_churn_limit(total_active_balance, context);
+
+            // if the state patch is empty there is nothing to validate
+            let Some(patch) = state_reader.patches.get(&patch_epoch) else {
+                continue;
+            };
 
             let is_in_inactivity_leak =
                 (patch_epoch - state_epoch) >= context.min_epochs_to_inactivity_penalty();
             // TODO: add support of inactivity leak penalties
             assert!(!is_in_inactivity_leak);
-
-            // get the validator of the specified epoch
-            let get_validator = |epoch: Epoch, index: ValidatorIndex| -> Option<&ValidatorInfo> {
-                for e in (state_epoch + 1..=epoch).rev() {
-                    if let Some(validator) = &self.patches.get(&e).unwrap().validators.get(&index) {
-                        return Some(*validator);
-                    }
-                }
-                validator_cache.get(&index)
-            };
-
-            // the total active balance in GWEI
-            let last_idx = *validator_cache.last_key_value().unwrap().0;
-            let total_active_balance = validator_cache
-                .iter()
-                .chain(patch.validators.range(last_idx + 1..))
-                .map(|(idx, validator)| patch.validators.get(idx).unwrap_or(validator))
-                .filter(|validator| is_active_validator(validator, patch_epoch))
-                .map(|validator| validator.effective_balance)
-                .try_fold(0u64, |acc, x| acc.checked_add(x))
-                .unwrap();
 
             let base_reward_per_increment = (context.effective_balance_increment()
                 * context.base_reward_factor())
@@ -159,53 +215,77 @@ impl StateInput<'_> {
                 total_active_balance / context.effective_balance_increment();
             let total_base_rewards = total_active_increments * base_reward_per_increment;
 
-            let mut total_deposited: u64 = 0;
-
-            let default = ValidatorInfo::default();
             for (&validator_index, validator) in &patch.validators {
-                let prev_validator =
-                    get_validator(patch_epoch - 1, validator_index).unwrap_or(&default);
+                let prev_validator = state_reader
+                    .validator(patch_epoch - 1, validator_index)
+                    .unwrap_or(&default_validator);
 
                 // pubkey must never change
                 assert_eq!(prev_validator.pubkey, validator.pubkey);
 
+                // validate validator activation
                 if prev_validator.activation_epoch != validator.activation_epoch {
+                    debug!(
+                        "Validator {} changes at epoch {}: activation_epoch={}->{}",
+                        validator_index,
+                        patch_epoch,
+                        prev_validator.activation_epoch,
+                        validator.activation_epoch
+                    );
+
                     // activation_epoch must only change once
                     assert_eq!(prev_validator.activation_epoch, u64::MAX);
                     // effective balance must be at least MIN_ACTIVATION_BALANCE
                     assert!(validator.effective_balance >= context.min_activation_balance());
                     // activation epoch must be in the future
+                    // the only situation where activation_epoch is set is during process_registry_updates, and it is always set to the exact value
+                    // See https://github.com/ethereum/consensus-specs/blob/dev/specs/electra/beacon-chain.md#modified-process_registry_updates
                     assert_eq!(
                         validator.activation_epoch,
-                        compute_activation_exit_epoch(patch_epoch, context)
+                        patch_epoch + context.max_seed_lookahead()
                     );
 
-                    // there is no need to check the balance against some churn limit here, this check happened when the validator was created (deposit)
+                    // there is no need to check the balance against some limits here, this check happened when the validator was created (deposit)
                 }
 
+                // validate validator exit
                 if prev_validator.exit_epoch != validator.exit_epoch {
+                    debug!(
+                        "Validator {} changes at epoch {}: exit_epoch={}->{}",
+                        validator_index,
+                        patch_epoch,
+                        prev_validator.exit_epoch,
+                        validator.exit_epoch
+                    );
+
                     // exit_epoch must only change once
                     assert_eq!(prev_validator.exit_epoch, u64::MAX);
+                    // exit epoch must be in the future
+                    assert!(validator.exit_epoch >= patch_epoch + context.max_seed_lookahead());
 
-                    // assure that not more than churn limit of balance is withdrawn each epoch
+                    // in compute_exit_epoch_and_update_churn the future exit epoch is computed wrt to the churn limit of the current balances
+                    // this happens as soon as initiate_validator_exit is called; there are no pending exits without an exit_epoch
+                    // similar to activations, churn only accumulates if the churn limit has been hit, and we always accumulate which is an acceptable upper bound.
+                    // See https://github.com/ethereum/consensus-specs/blob/dev/specs/electra/beacon-chain.md#new-compute_exit_epoch_and_update_churn
                     for _ in earliest_exit_epoch + 1..=validator.exit_epoch {
                         exit_balance_to_consume +=
                             get_activation_exit_churn_limit(total_active_balance, context);
                     }
+                    earliest_exit_epoch = validator.exit_epoch;
+
                     assert!(exit_balance_to_consume >= validator.effective_balance);
                     exit_balance_to_consume -= validator.effective_balance;
-                    earliest_exit_epoch = max(earliest_exit_epoch, validator.exit_epoch);
                 }
 
+                // validate balance change
                 if prev_validator.effective_balance != validator.effective_balance {
-                    // if the validator has never been active, it cannot gain rewards or penalties
-                    if validator.activation_epoch < patch_epoch {
-                        // it must be a deposit
-                        assert!(prev_validator.effective_balance <= validator.effective_balance);
-                        total_deposited = total_deposited.saturating_add(
-                            validator.effective_balance - prev_validator.effective_balance,
-                        );
-                    }
+                    debug!(
+                        "Validator {} changes at epoch {}: effective_balance={}->{}",
+                        validator_index,
+                        patch_epoch,
+                        prev_validator.effective_balance,
+                        validator.effective_balance
+                    );
 
                     let ebi = context.effective_balance_increment();
 
@@ -292,23 +372,22 @@ impl StateInput<'_> {
                         + max_proposer_reward
                         + max_sync_participant_reward
                         + max_sync_proposer_reward;
-                    // use the Hysteresis parameter
+                    // due to the Hysteresis, even a small reward could lead to an increase of EBI
                     let max_effective_reward = max_reward.next_multiple_of(ebi);
 
                     if prev_validator.effective_balance + max_effective_reward
                         < validator.effective_balance
                     {
-                        // The new effective_balance is higher than what max protocol rewards alone could achieve.
-                        // This difference MUST be explained by deposits.
-
                         // This is the additional *effective balance increase* that deposits need to account for.
                         // It's guaranteed to be a multiple of ebi because both terms are.
-                        let effective_increase_to_be_explained_by_deposits = validator
-                            .effective_balance
+                        let effective_increase = validator.effective_balance
                             - (prev_validator.effective_balance + max_effective_reward);
 
-                        total_deposited = total_deposited
-                            .saturating_add(effective_increase_to_be_explained_by_deposits);
+                        // Only consume the churn if the balance will become active
+                        if validator.exit_epoch < patch_epoch {
+                            assert!(deposit_balance_to_consume >= effective_increase);
+                            deposit_balance_to_consume -= effective_increase;
+                        }
                     }
 
                     //// compute an upper bound for the participation penalty ////
@@ -319,9 +398,10 @@ impl StateInput<'_> {
                     let max_sync_participation_penalty = max_sync_participant_reward;
 
                     let max_penality = max_participation_penalty + max_sync_participation_penalty;
-                    // use the Hysteresis parameter
+                    // due to the Hysteresis, even a small reward could lead to an increase of EBI
                     let max_effective_penality = max_penality.next_multiple_of(ebi);
 
+                    // if the balance change exceeds the maximum penality it must be a full withdrawal
                     if prev_validator
                         .effective_balance
                         .saturating_sub(max_effective_penality)
@@ -338,26 +418,9 @@ impl StateInput<'_> {
                     }
                 }
             }
-
-            // without the actual consolidation requests it is impossible to distinguish between deposit and consolidation so we just sum them up
-            // TODO: This is not correct! We must handle state.consolidation_balance_to_consume and state.deposit_balance_to_consume for pending deposits
-            assert!(
-                total_deposited
-                    <= get_activation_exit_churn_limit(total_active_balance, context)
-                        + get_consolidation_churn_limit(total_active_balance, context)
-            );
         }
-        info!("{} State patches verified", self.patches.len());
 
-        SszStateReader {
-            context,
-            genesis_validators_root: genesis_validators_root.into(),
-            fork_current_version: fork_current_version[0..4].try_into().unwrap(),
-            epoch: state_epoch,
-            validators: validator_cache,
-            randao,
-            patches: self.patches,
-        }
+        state_reader
     }
 }
 
@@ -384,13 +447,9 @@ impl StateReader for SszStateReader<'_> {
     ) -> Result<impl Iterator<Item = (ValidatorIndex, &ValidatorInfo)>, Self::Error> {
         assert!(state_epoch >= epoch, "Only historical epochs supported");
 
-        let patch = self.patches.get(&state_epoch);
-        assert!(
-            state_epoch == self.epoch || patch.is_some(),
-            "Missing state patch"
-        );
-
         let (&last_idx, _) = self.validators.last_key_value().unwrap();
+        let patch = self.patches.get(&state_epoch);
+
         static EMPTY_VALIDATORS: BTreeMap<ValidatorIndex, ValidatorInfo> = BTreeMap::new();
         let patch_val = patch
             .map(|patch| &patch.validators)
@@ -420,6 +479,29 @@ impl StateReader for SszStateReader<'_> {
     }
 }
 
+impl SszStateReader<'_> {
+    /// Returns the validator info for epoch.
+    fn validator(&self, epoch: Epoch, index: ValidatorIndex) -> Option<&ValidatorInfo> {
+        for patch_epoch in (self.epoch + 1..=epoch).rev() {
+            if let Some(validator) = self
+                .patches
+                .get(&patch_epoch)
+                .and_then(|patch| patch.validators.get(&index))
+            {
+                return Some(validator);
+            }
+        }
+        self.validators.get(&index)
+    }
+}
+
+#[derive(Clone, Debug)]
+struct DepositInfo {
+    pubkey: PublicKey,
+    amount: u64,
+    slot: Slot,
+}
+
 /// Extracts an u64 from a 32-byte SSZ chunk.
 fn u64_from_chunk(node: &[u8; 32]) -> u64 {
     assert!(node[8..].iter().all(|&b| b == 0));
@@ -432,7 +514,10 @@ fn is_active_validator(validator: &ValidatorInfo, epoch: Epoch) -> bool {
 }
 
 fn get_balance_churn_limit(total_active_balance: u64, context: &impl Ctx) -> u64 {
-    let churn = max(context.min_per_epoch_churn_limit(), total_active_balance);
+    let churn = max(
+        context.min_per_epoch_churn_limit(),
+        total_active_balance / context.churn_limit_quotient(),
+    );
     churn - churn % context.effective_balance_increment()
 }
 
@@ -441,13 +526,4 @@ fn get_activation_exit_churn_limit(total_active_balance: u64, context: &impl Ctx
         context.max_per_epoch_activation_exit_churn_limit(),
         get_balance_churn_limit(total_active_balance, context),
     )
-}
-
-fn get_consolidation_churn_limit(total_active_balance: u64, context: &impl Ctx) -> u64 {
-    get_balance_churn_limit(total_active_balance, context)
-        - get_activation_exit_churn_limit(total_active_balance, context)
-}
-
-fn compute_activation_exit_epoch(state_epoch: Epoch, context: &impl Ctx) -> Epoch {
-    state_epoch + 1 + context.max_seed_lookahead()
 }

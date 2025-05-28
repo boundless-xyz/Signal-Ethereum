@@ -17,8 +17,7 @@ pub use host::StatePatchBuilder;
 mod host {
     use super::*;
     use crate::beacon_state::mainnet::BeaconState;
-    use crate::{Epoch, HostContext, ValidatorIndex, ValidatorInfo};
-    use ethereum_consensus::altair::Validator;
+    use crate::{HostContext, ValidatorIndex, ValidatorInfo};
     use tracing::debug;
 
     pub struct StatePatchBuilder<'a> {
@@ -43,21 +42,22 @@ mod host {
                 .insert(idx, B256::from_slice(randao.as_slice()));
         }
 
-        pub fn validator_diff(&mut self, val: &BTreeMap<ValidatorIndex, ValidatorInfo>) {
-            let epoch = self.context.compute_epoch_at_slot(self.state.slot());
-            for (idx, validator) in self.state.validators().iter().enumerate() {
-                if !is_active_validator(validator, epoch) {
-                    continue;
-                }
-
-                let validator = ValidatorInfo::from(validator);
-                match val.get(&idx) {
-                    None => {
-                        self.patch.validators.insert(idx, validator);
-                    }
-                    Some(b) => {
-                        if b != &validator {
+        pub fn validator_diff(
+            &mut self,
+            indices: impl IntoIterator<Item = &'a ValidatorIndex>,
+            validators: &BTreeMap<ValidatorIndex, ValidatorInfo>,
+        ) {
+            for &idx in indices {
+                if let Some(validator) = self.state.validators().get(idx) {
+                    let validator = ValidatorInfo::from(validator);
+                    match validators.get(&idx) {
+                        None => {
                             self.patch.validators.insert(idx, validator);
+                        }
+                        Some(b) => {
+                            if b != &validator {
+                                self.patch.validators.insert(idx, validator);
+                            }
                         }
                     }
                 }
@@ -73,10 +73,5 @@ mod host {
             );
             self.patch
         }
-    }
-
-    /// Check if `validator` is active.
-    fn is_active_validator(validator: &Validator, epoch: Epoch) -> bool {
-        validator.activation_epoch <= epoch && epoch < validator.exit_epoch
     }
 }

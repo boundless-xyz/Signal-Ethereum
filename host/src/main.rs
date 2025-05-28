@@ -162,6 +162,7 @@ async fn main() -> anyhow::Result<()> {
                     )
                     .await?;
 
+                    // TODO(ec2): We should check if the state corresponds to the trusted epoch
                     reader
                         .get_beacon_state_by_epoch(args.trusted_epoch)
                         .expect("Failed to establish trusted state")

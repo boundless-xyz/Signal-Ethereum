@@ -135,10 +135,10 @@ where
                 .block_at_slot(slot.into(), WhenSlotSkipped::None)
                 .map_err(|_| anyhow::anyhow!("Failed to get block"))?
                 .ok_or(anyhow::anyhow!("Block not found at slot"))?
-        } else if let Ok(hash) = Hash256::from_str(block_id.to_string().as_str()) {
+        } else if let Ok(root) = Hash256::from_str(block_id.to_string().as_str()) {
             self.inner
                 .chain
-                .get_blinded_block(&hash)
+                .get_blinded_block(&root)
                 .map_err(|_| anyhow::anyhow!("Failed to get block"))?
                 .ok_or(anyhow::anyhow!("Block not found at slot"))?
         } else {
@@ -148,8 +148,8 @@ where
         }
         .signed_block_header();
 
-        let header_json = serde_json::to_string(&header)?;
-        Ok(serde_json::from_str(&header_json)?)
+        let header_json = serde_json::to_value(&header)?;
+        Ok(serde_json::from_value(header_json)?)
     }
 
     async fn get_block(
@@ -170,10 +170,10 @@ where
                 .await
                 .map_err(|_| anyhow::anyhow!("Failed to get block"))?
                 .ok_or(anyhow::anyhow!("Block not found at slot"))?
-        } else if let Ok(hash) = Hash256::from_str(block_id.to_string().as_str()) {
+        } else if let Ok(root) = Hash256::from_str(block_id.to_string().as_str()) {
             self.inner
                 .chain
-                .get_block(&hash)
+                .get_block(&root)
                 .await
                 .map_err(|_| anyhow::anyhow!("Failed to get block"))?
                 .ok_or(anyhow::anyhow!("Block not found at slot"))?
@@ -190,5 +190,32 @@ where
         Ok(ethereum_consensus::types::mainnet::BeaconBlock::Electra(
             res,
         ))
+    }
+
+    async fn get_consensus_state(
+        &self,
+        state_id: impl std::fmt::Display,
+    ) -> Result<crate::ConsensusState, anyhow::Error> {
+        println!("get_consensus_state: {}", state_id);
+        let state = if let Ok(slot) = u64::from_str_radix(state_id.to_string().as_str(), 10) {
+            self.inner
+                .chain
+                .state_at_slot(slot.into(), StateSkipConfig::WithStateRoots)
+                .expect("failed to get state")
+            // .map_err(|_| anyhow::anyhow!("Failed to get state"))?
+        } else if let Ok(root) = Hash256::from_str(state_id.to_string().as_str()) {
+            self.inner
+                .chain
+                .get_state(&root, None, true)
+                .map_err(|_| anyhow::anyhow!("Failed to get state"))?
+                .ok_or(anyhow::anyhow!("state not found"))?
+        } else {
+            return Err(anyhow::anyhow!(
+                "Invalid state ID format. Must be parsable as a slot integer or a 0x prefix hash"
+            ));
+        };
+
+        let json = serde_json::to_value(&state)?;
+        Ok(serde_json::from_value(json)?)
     }
 }

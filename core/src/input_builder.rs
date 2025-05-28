@@ -1,10 +1,12 @@
 use crate::{Attestation, Checkpoint, ConsensusState, Epoch, Input, Link, Root, Slot};
 use ethereum_consensus::{
-    electra::mainnet::{MAX_VALIDATORS_PER_SLOT, SignedBeaconBlockHeader},
+    electra::mainnet::{BeaconBlockHeader, MAX_VALIDATORS_PER_SLOT, SignedBeaconBlockHeader},
     phase0::mainnet::{MAX_COMMITTEES_PER_SLOT, SLOTS_PER_EPOCH},
     types::mainnet::BeaconBlock,
 };
+use futures::stream::{self, StreamExt};
 use std::{collections::BTreeMap, fmt::Display, ops::Range};
+use tracing::{debug, info};
 
 /// A trait to abstract reading data from an instance of a beacon chain
 /// This could be an RPC to a node or something else (e.g. test harness)
@@ -17,6 +19,12 @@ pub trait ChainReader {
 
     #[allow(async_fn_in_trait)]
     async fn get_block(&self, block_id: impl Display) -> Result<BeaconBlock, anyhow::Error>;
+
+    #[allow(async_fn_in_trait)]
+    async fn get_consensus_state(
+        &self,
+        state_id: impl Display,
+    ) -> Result<ConsensusState, anyhow::Error>;
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -39,12 +47,25 @@ pub async fn build_input<CR: ChainReader>(
     let trusted_block_header = chain_reader.get_block_header(trusted_block_root).await?;
     let trusted_state_root = trusted_block_header.message.state_root;
 
-    let (link, attestations) = find_next_supermajoriy_link(
+    let (states, start_slot, end_slot) = get_next_finalization(
         chain_reader,
+        &trusted_block_header.message,
         &consensus_state,
-        0, // We require 32 blocks worth of attestations most likely..
     )
     .await?;
+
+    // We now have a list of at least 2 consensus states (one being the initial one).
+    // We now need to compute the links that take us from the first state to the finalized one.
+    let links = generate_links(&states)?;
+
+    let links_and_attestations =
+        collect_attestations_for_links(chain_reader, &links, start_slot, end_slot).await?;
+    for (link, attestations) in links_and_attestations.iter() {
+        debug!("Link: {:?}, Attestations: {}", link, attestations.len());
+    }
+
+    // TODO(ec2): Make this work for when we have multiple links
+    let (link, attestations) = links_and_attestations[0].clone();
 
     Ok(Input {
         consensus_state,
@@ -54,126 +75,79 @@ pub async fn build_input<CR: ChainReader>(
     })
 }
 
-/// Search for a supermajority link that can be used to evolve the consensus state.
-/// This is trivial most of the time but also must be able to handle tricky edge cases.
-///
-/// The most basic case will be to find enough attestations to support a link from the
-/// state current_justified_checkpoint to a checkpoint in the very next epoch (1-finality).
-///
-/// Failing this it should look for one from `previous_justified_checkpoint` to `current_justified_checkpoint.epoch` + 1 (2-finality)
-///
-/// Failing this there are some other non-finalizing cases. CURRENTLY NOT IMPLEMENTED
-async fn find_next_supermajoriy_link<CR: ChainReader>(
+/// Starting at the trusted block header and the consensus state in which it is finalized,
+/// find the chain of consensus states that lead to the next finalized state. Also returns
+/// a start and end slot hints of where to find their attestations.
+async fn get_next_finalization<CR: ChainReader>(
     chain_reader: &CR,
+    trusted_block_header: &BeaconBlockHeader,
     consensus_state: &ConsensusState,
-    min_attestations: usize,
-) -> Result<
-    (
-        Link,
-        Vec<Attestation<MAX_VALIDATORS_PER_SLOT, MAX_COMMITTEES_PER_SLOT>>,
-    ),
-    InputBuilderError,
-> {
-    // 1-finality case
-    let source = consensus_state.current_justified_checkpoint;
-    let target_epoch = source.epoch + 1;
+) -> Result<(Vec<ConsensusState>, Slot, Slot), InputBuilderError> {
+    let start_slot = trusted_block_header.slot;
+    let mut states = vec![consensus_state.clone()];
 
-    if let Some(res) = find_supermajority_link(
-        chain_reader,
-        source,
-        target_epoch,
-        (target_epoch * SLOTS_PER_EPOCH)..((target_epoch + 3) * SLOTS_PER_EPOCH), // Check the next 2 epochs from the target
-        min_attestations,
-    )
-    .await?
-    {
-        tracing::info!("Found a 1-finality link: {:?}", res.0);
-        return Ok(res);
+    // I think technically we can start from a later slot, but its ok this should still work.
+    // We might just be doing more work than necessary, but this is the host.
+    let mut slot = start_slot;
+
+    // Iterate over the chain from the trusted slot to find where the consensus state changes saving each one until
+    // we find a new finality event.
+    // TODO(ec2): Should limit this maybe... Theoretically can go for a long time if chain is inactive
+    loop {
+        slot += 1;
+        let curr_consensus_state = states.last().unwrap().clone();
+
+        let next_consensus_state = chain_reader
+            .get_consensus_state(slot)
+            .await
+            .map_err(InputBuilderError::ChainReader)?;
+
+        // Found the next consensus state
+        if curr_consensus_state != next_consensus_state
+            && curr_consensus_state.previous_justified_checkpoint.epoch
+                < next_consensus_state.previous_justified_checkpoint.epoch
+        {
+            states.push(next_consensus_state.clone());
+            // New finality event
+            if curr_consensus_state.finalized_checkpoint
+                != next_consensus_state.finalized_checkpoint
+            {
+                break;
+            }
+        }
     }
 
-    // 2-finality case
-    let source = consensus_state.previous_justified_checkpoint;
-    let target_epoch = source.epoch + 2;
-
-    if let Some(res) = find_supermajority_link(
-        chain_reader,
-        source,
-        target_epoch,
-        (target_epoch * SLOTS_PER_EPOCH)..((target_epoch + 3) * SLOTS_PER_EPOCH), // Check the next 2 epochs from the target
-        min_attestations,
-    )
-    .await?
-    {
-        tracing::info!("Found a 2-finality link: {:?}", res.0);
-        return Ok(res);
-    }
-
-    Err(InputBuilderError::FailedToFindLink)
+    Ok((states, start_slot, slot))
 }
 
-/// Find a supermajorty link and its attestations with the given source checkpoint and target epoch.
-/// Returns `None` if not enough attestations are found.
-async fn find_supermajority_link<CR: ChainReader>(
-    chain_reader: &CR,
-    source: Checkpoint,
-    target_epoch: Epoch,
-    slots: Range<Slot>,
-    min_attestations: usize,
+/// Gathers the attestations for links, looking at block in the range [start_slot, end_slot].
+async fn collect_attestations_for_links(
+    chain_reader: &impl ChainReader,
+    links: &[Link],
+    start_slot: Slot,
+    end_slot: Slot,
 ) -> Result<
-    Option<(
+    Vec<(
         Link,
         Vec<Attestation<MAX_VALIDATORS_PER_SLOT, MAX_COMMITTEES_PER_SLOT>>,
     )>,
     InputBuilderError,
 > {
-    tracing::debug!(
-        "Searching for a supermajority link from {:?} to epoch {}",
-        source,
-        target_epoch
-    );
+    let blocks = stream::iter(start_slot..=end_slot)
+        .filter_map(async |slot| {
+            let block = chain_reader.get_block(slot).await;
+            match block {
+                Ok(block) => Some(block),
+                Err(e) => {
+                    tracing::warn!("Failed to get block (maybe a missed slot?) {}: {}", slot, e);
+                    None
+                }
+            }
+        })
+        .collect::<Vec<_>>()
+        .await;
 
-    // Get attestations for the next epoch
-    let attestations = get_grouped_attestations(chain_reader, slots, source, target_epoch).await?;
-
-    Ok(attestations.iter().find_map(|(_, attestations)| {
-        if attestations.len() < min_attestations as usize {
-            None
-        } else {
-            let a = attestations[0].clone();
-            Some((
-                Link {
-                    source: a.data.source.into(),
-                    target: a.data.target.into(),
-                },
-                attestations.clone(),
-            ))
-        }
-    }))
-}
-
-/// Over a range of slots, query a beacon node for attestations with
-///  - The given source checkpoint (root and epoch)
-///  - The given target epoch (root is not yet known)
-/// and return them grouped by their target root.
-async fn get_grouped_attestations<CR: ChainReader>(
-    chain_reader: &CR,
-    slots: Range<Slot>,
-    source: Checkpoint,
-    target_epoch: Epoch,
-) -> Result<
-    BTreeMap<Root, Vec<Attestation<MAX_VALIDATORS_PER_SLOT, MAX_COMMITTEES_PER_SLOT>>>,
-    InputBuilderError,
-> {
-    let mut blocks = Vec::new();
-    for slot in slots {
-        let block = chain_reader.get_block(slot).await;
-        match block {
-            Ok(block) => blocks.push(block),
-            Err(e) => tracing::warn!("Failed to get block (maybe a missed slot?) {}: {}", slot, e),
-        }
-    }
-
-    let attestations = blocks
+    let all_attestations = blocks
         .iter()
         .flat_map(|b| match b.body() {
             ethereum_consensus::types::BeaconBlockBodyRef::Electra(body) => {
@@ -181,15 +155,61 @@ async fn get_grouped_attestations<CR: ChainReader>(
             }
             _ => unimplemented!("Electra Only!"),
         })
-        .filter(|a| a.data.source.epoch == source.epoch && a.data.source.root == source.root)
-        .filter(|a| a.data.target.epoch == target_epoch)
-        // group remaining attestations by their target root
-        .fold(BTreeMap::new(), |mut acc, a| {
-            acc.entry(a.data.target.root)
-                .or_insert_with(Vec::new)
-                .push(a.into());
-            acc
-        });
+        .collect::<Vec<_>>();
 
-    Ok(attestations)
+    let mut result = Vec::new();
+
+    // group attestations with their links
+    for link in links {
+        let matching_attestations = all_attestations
+            .iter()
+            .filter(|attestation| {
+                attestation.data.source.root == link.source.root
+                    && attestation.data.target.epoch == link.target.epoch
+            })
+            .cloned()
+            .map(Into::into)
+            .collect::<Vec<_>>();
+
+        result.push((link.clone(), matching_attestations));
+    }
+    Ok(result)
+}
+
+// Given a list of consensus states, generate the links that can be used to evolve the state
+// to the next finalized state.
+fn generate_links(states: &[ConsensusState]) -> Result<Vec<Link>, InputBuilderError> {
+    let mut links = Vec::new();
+
+    assert!(
+        states.len() >= 2,
+        "Must have at least 2 states to create links"
+    );
+    // check that all except the last state have the same finalized checkpoint
+    let finalized_checkpoint = &states[0].finalized_checkpoint;
+    for state in &states[1..states.len() - 1] {
+        if state.finalized_checkpoint != *finalized_checkpoint {
+            return Err(InputBuilderError::FailedToFindLink);
+        }
+    }
+
+    // TODO(ec2): This is still not exactly correct. Only for 1 finality right now. Will fix.
+    for i in 0..states.len() - 1 {
+        let prev_state = &states[i];
+        let curr_state = &states[i + 1];
+        // We've reached the end
+        if curr_state.finalized_checkpoint == prev_state.current_justified_checkpoint {
+            assert!(
+                i == states.len() - 2,
+                "Last state must be the finalized one"
+            );
+            links.push(Link {
+                source: curr_state.finalized_checkpoint.into(),
+                target: curr_state.current_justified_checkpoint.into(),
+            });
+            break;
+        }
+    }
+
+    Ok(links)
 }

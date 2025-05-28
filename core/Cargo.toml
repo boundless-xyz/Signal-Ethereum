@@ -7,6 +7,7 @@ edition = "2024"
 alloy-primitives = { workspace = true, default-features = false }
 ssz_rs = { workspace = true, default-features = true, features = ["serde"] }
 ethereum-consensus = { workspace = true, default-features = false, optional = true }
+futures = { version = "0.3", optional = true}
 serde = { workspace = true }
 tracing = "0.1.41"
 serde_json = "1.0.133"
@@ -31,5 +32,5 @@ test_utils = { path = "test_utils" }
 [features]
 default = ["host"]
 host = [
-    "dep:ethereum-consensus", "ssz-multiproofs/builder", "blst/default", "ssz-multiproofs/progress-bar", "dep:elsa", "dep:beacon_chain", "dep:beacon_types"
+    "dep:ethereum-consensus", "ssz-multiproofs/builder", "blst/default", "ssz-multiproofs/progress-bar", "dep:elsa", "dep:futures", "dep:beacon_chain", "dep:beacon_types"
 ]

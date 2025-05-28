@@ -4,12 +4,11 @@ use ethereum_consensus::{
     electra::{Checkpoint, Context, Epoch},
     phase0::mainnet::SLOTS_PER_EPOCH,
 };
-use futures::StreamExt;
 use methods::BEACON_GUEST_ELF;
 use risc0_zkvm::{default_executor, ExecutorEnv};
 use ssz_rs::prelude::*;
 use std::{fmt, fs, path::PathBuf};
-use tracing::{debug, error, info, trace, warn};
+use tracing::{debug, info, trace, warn};
 use url::Url;
 use z_core::{
     build_input, mainnet::BeaconState, verify, AssertStateReader, ConsensusState, Ctx,
@@ -18,7 +17,7 @@ use z_core::{
 
 pub mod beacon_client;
 
-use crate::beacon_client::{BeaconClient, EventKind, EventTopic};
+use crate::beacon_client::BeaconClient;
 
 /// CLI for generating and submitting ZKasper proofs
 #[derive(Parser, Debug)]

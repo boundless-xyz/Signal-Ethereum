@@ -1,13 +1,20 @@
+use std::str::FromStr;
+
 ///
 /// A test harness that allows us to write tests using the BeaconChainHarness from sigp/lighthouse
 /// and have its data read directly by the verify function
 ///
-use crate::{Epoch, GuestContext, StateReader, ValidatorIndex, ValidatorInfo, Version};
-use beacon_chain::{
-    BeaconChainError, BeaconChainTypes, StateSkipConfig, test_utils::BeaconChainHarness,
+use crate::{
+    ChainReader, Epoch, GuestContext, StateReader, ValidatorIndex, ValidatorInfo, Version,
 };
-use beacon_types::{BeaconState, EthSpec, Validator};
+use alloy_primitives::ruint::aliases::B256;
+use beacon_chain::{
+    BeaconChainError, BeaconChainTypes, StateSkipConfig, WhenSlotSkipped,
+    test_utils::BeaconChainHarness,
+};
+use beacon_types::{BeaconState, EthSpec, Hash256, Validator};
 use elsa::FrozenMap;
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 pub struct HarnessStateReader<T: BeaconChainTypes> {
@@ -114,4 +121,62 @@ where
 /// Check if `validator` is active.
 fn is_active_validator(validator: &Validator, epoch: Epoch) -> bool {
     validator.activation_epoch <= epoch && epoch < validator.exit_epoch.into()
+}
+
+impl<T> ChainReader for HarnessStateReader<T>
+where
+    T: BeaconChainTypes,
+{
+    async fn get_block_header(
+        &self,
+        block_id: impl std::fmt::Display,
+    ) -> Result<ethereum_consensus::deneb::SignedBeaconBlockHeader, anyhow::Error> {
+        let header = if let Ok(slot) = u64::from_str_radix(block_id.to_string().as_str(), 10) {
+            self.inner
+                .chain
+                .block_at_slot(slot.into(), WhenSlotSkipped::None)
+                .map_err(|_| anyhow::anyhow!("Failed to get block"))?
+                .ok_or(anyhow::anyhow!("Block not found at slot"))?
+        } else if let Ok(hash) = Hash256::from_str(block_id.to_string().as_str()) {
+            self.inner
+                .chain
+                .get_blinded_block(&hash)
+                .map_err(|_| anyhow::anyhow!("Failed to get block"))?
+                .ok_or(anyhow::anyhow!("Block not found at slot"))?
+        } else {
+            return Err(anyhow::anyhow!(
+                "Invalid block ID format. Must be parsable as a slot integer or a 0x prefix hash"
+            ));
+        }
+        .signed_block_header();
+
+        let header_json = serde_json::to_string(&header)?;
+        Ok(serde_json::from_str(&header_json)?)
+    }
+
+    async fn get_block(
+        &self,
+        block_id: impl std::fmt::Display,
+    ) -> Result<ethereum_consensus::types::mainnet::BeaconBlock, anyhow::Error> {
+        let block = if let Ok(slot) = u64::from_str_radix(block_id.to_string().as_str(), 10) {
+            self.inner
+                .chain
+                .block_at_slot(slot.into(), WhenSlotSkipped::None)
+                .map_err(|_| anyhow::anyhow!("Failed to get block"))?
+                .ok_or(anyhow::anyhow!("Block not found at slot"))?
+        } else if let Ok(hash) = Hash256::from_str(block_id.to_string().as_str()) {
+            self.inner
+                .chain
+                .get_blinded_block(&hash)
+                .map_err(|_| anyhow::anyhow!("Failed to get block"))?
+                .ok_or(anyhow::anyhow!("Block not found at slot"))?
+        } else {
+            return Err(anyhow::anyhow!(
+                "Invalid block ID format. Must be parsable as a slot integer or a 0x prefix hash"
+            ));
+        };
+
+        let block_json = serde_json::to_string(&block)?;
+        Ok(serde_json::from_str(&block_json)?)
+    }
 }

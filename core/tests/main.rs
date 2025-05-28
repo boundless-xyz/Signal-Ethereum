@@ -5,7 +5,7 @@ use beacon_chain::{
     test_utils::{AttestationStrategy, BeaconChainHarness, BlockStrategy},
 };
 use beacon_types::{EthSpec, Keypair, MainnetEthSpec};
-use z_core::HarnessStateReader;
+use z_core::{ConsensusState, HarnessStateReader, build_input};
 
 pub const VALIDATOR_COUNT: usize = 16;
 
@@ -52,4 +52,9 @@ async fn simple_finalize_epoch() {
             );
         }
     }
+
+    let state_reader = HarnessStateReader::from(harness);
+    let input = build_input(&state_reader, ConsensusState::default())
+        .await
+        .expect("should build input");
 }

@@ -125,6 +125,7 @@ pub struct Attestation<const MAX_VALIDATORS_PER_SLOT: usize, const MAX_COMMITTEE
     SimpleSerialize,
     serde::Serialize,
     serde::Deserialize,
+    Default,
 )]
 pub struct Checkpoint {
     pub epoch: Epoch,

@@ -11,7 +11,7 @@ use std::{fmt, fs, path::PathBuf};
 use tracing::{debug, info, trace, warn};
 use url::Url;
 use z_core::{
-    build_input, mainnet::BeaconState, verify, AssertStateReader, ConsensusState, Ctx,
+    build_input, mainnet::BeaconState, verify, AssertStateReader, ChainReader, ConsensusState, Ctx,
     GuestContext, HostContext, HostStateReader, Input, Link, Root, StateInput, StateReader,
 };
 
@@ -396,17 +396,18 @@ async fn compute_next_candidate(
 
     // TODO(willem): This is hard-coded for one-finality. Need to add extra conditions for building inputs for the other cases
     // TODO(ec2): I think i've covered the other cases, pls confirm
-    Input {
-        consensus_state: ConsensusState {
-            finalized_checkpoint: next_state.finalized_checkpoint().clone().into(),
-            current_justified_checkpoint: next_state.current_justified_checkpoint().clone().into(),
-            previous_justified_checkpoint: next_state
-                .previous_justified_checkpoint()
-                .clone()
-                .into(),
-        },
-        link,
-        attestations: attestations.into_iter().map(Into::into).collect(),
-        trusted_checkpoint_state_root: trusted_state.hash_tree_root().unwrap(),
-    }
+    // Input {
+    //     consensus_state: ConsensusState {
+    //         finalized_checkpoint: next_state.finalized_checkpoint().clone().into(),
+    //         current_justified_checkpoint: next_state.current_justified_checkpoint().clone().into(),
+    //         previous_justified_checkpoint: next_state
+    //             .previous_justified_checkpoint()
+    //             .clone()
+    //             .into(),
+    //     },
+    //     link,
+    //     attestations: attestations.into_iter().map(Into::into).collect(),
+    //     trusted_checkpoint_state_root: trusted_state.hash_tree_root().unwrap(),
+    // }
+    todo!()
 }

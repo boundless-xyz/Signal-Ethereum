@@ -81,12 +81,11 @@ pub async fn build_input<CR: ChainReader>(
         "Building input complete with {} links",
         links_and_attestations.len()
     );
-    // TODO(ec2): Make this work for when we have multiple links
-    let (link, attestations) = links_and_attestations[0].clone();
+    let (links, attestations) = links_and_attestations.into_iter().unzip();
 
     Ok(Input {
         consensus_state,
-        link,
+        link: links,
         attestations,
         trusted_checkpoint_state_root: trusted_state_root,
     })

@@ -52,12 +52,14 @@ pub const BEACON_STATE_TREE_DEPTH: u32 = 6;
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Input {
     pub consensus_state: ConsensusState,
-    pub link: Link,
+    pub link: Vec<Link>,
 
     pub attestations: Vec<
-        Attestation<
-            { MAX_VALIDATORS_PER_COMMITTEE * MAX_COMMITTEES_PER_SLOT },
-            MAX_COMMITTEES_PER_SLOT,
+        Vec<
+            Attestation<
+                { MAX_VALIDATORS_PER_COMMITTEE * MAX_COMMITTEES_PER_SLOT },
+                MAX_COMMITTEES_PER_SLOT,
+            >,
         >,
     >,
 

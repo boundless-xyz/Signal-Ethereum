@@ -103,16 +103,19 @@ async fn get_next_finalization<CR: ChainReader>(
             .map_err(InputBuilderError::ChainReader)?;
 
         // Found the next consensus state
-        if curr_consensus_state != next_consensus_state
-            && curr_consensus_state.previous_justified_checkpoint.epoch
+        if curr_consensus_state != next_consensus_state {
+            // There can be the case where the the consensus state changes, but there is no new justification or finalization,
+            // so we can skip it.
+            if curr_consensus_state.previous_justified_checkpoint.epoch
                 < next_consensus_state.previous_justified_checkpoint.epoch
-        {
-            states.push(next_consensus_state.clone());
-            // New finality event
-            if curr_consensus_state.finalized_checkpoint
-                != next_consensus_state.finalized_checkpoint
             {
-                break;
+                states.push(next_consensus_state.clone());
+                // New finality event
+                if curr_consensus_state.finalized_checkpoint
+                    != next_consensus_state.finalized_checkpoint
+                {
+                    break;
+                }
             }
         }
     }
@@ -177,7 +180,7 @@ async fn collect_attestations_for_links(
 }
 
 // Given a list of consensus states, generate the links that can be used to evolve the state
-// to the next finalized state.
+// to the next finalized state. This assumes the states are sorted
 fn generate_links(states: &[ConsensusState]) -> Result<Vec<Link>, InputBuilderError> {
     let mut links = Vec::new();
 
@@ -194,11 +197,14 @@ fn generate_links(states: &[ConsensusState]) -> Result<Vec<Link>, InputBuilderEr
     }
 
     // TODO(ec2): This is still not exactly correct. Only for 1 finality right now. Will fix.
-    for i in 0..states.len() - 1 {
+    for i in 0..states.len() {
         let prev_state = &states[i];
         let curr_state = &states[i + 1];
-        // We've reached the end
-        if curr_state.finalized_checkpoint == prev_state.current_justified_checkpoint {
+
+        // This is the end case
+        if curr_state.finalized_checkpoint == prev_state.current_justified_checkpoint
+            || curr_state.finalized_checkpoint == prev_state.previous_justified_checkpoint
+        {
             assert!(
                 i == states.len() - 2,
                 "Last state must be the finalized one"
@@ -209,7 +215,23 @@ fn generate_links(states: &[ConsensusState]) -> Result<Vec<Link>, InputBuilderEr
             });
             break;
         }
+
+        // This is the case where we dont have any justification
+        if curr_state.current_justified_checkpoint == prev_state.current_justified_checkpoint
+            || curr_state.current_justified_checkpoint == prev_state.previous_justified_checkpoint
+        {
+            continue;
+        }
+
+        links.push(Link {
+            source: prev_state.current_justified_checkpoint.into(),
+            target: curr_state.current_justified_checkpoint.into(),
+        });
     }
 
+    assert!(
+        !links.is_empty(),
+        "Must have at least one link to evolve the state"
+    );
     Ok(links)
 }

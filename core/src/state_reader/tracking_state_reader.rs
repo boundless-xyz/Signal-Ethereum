@@ -54,11 +54,13 @@ impl TrackingStateReader {
         let mut patch_builder: BTreeMap<Epoch, StatePatchBuilder> = BTreeMap::new();
         let mut proof_builder: MultiproofBuilder = MultiproofBuilder::new();
 
+        let mut num_randao: u32 = 0;
         for (epoch, indices) in self.mix_epochs.take() {
             if epoch == self.trusted_epoch {
                 for idx in indices {
                     let path = ["randao_mixes".into(), idx.into()];
                     proof_builder = proof_builder.with_path::<ElectraBeaconState>(&path);
+                    num_randao += 1;
                 }
             } else {
                 let patch = patch_builder
@@ -77,6 +79,8 @@ impl TrackingStateReader {
                 .with_path::<ElectraBeaconState>(&["slot".into()])
                 .with_path::<ElectraBeaconState>(&["fork".into(), "current_version".into()])
                 .with_path::<ElectraBeaconState>(&["validators".into()])
+                .with_path::<ElectraBeaconState>(&["exit_balance_to_consume".into()])
+                .with_path::<ElectraBeaconState>(&["earliest_exit_epoch".into()])
                 .build(state)
                 .unwrap(),
             _ => {
@@ -151,6 +155,7 @@ impl TrackingStateReader {
 
         StateInput {
             beacon_state: state_multiproof,
+            num_randao,
             active_validators: validator_multiproof,
             public_keys,
             patches,

@@ -16,6 +16,7 @@ pub struct StateInput<'a> {
     /// Used fields of the BeaconState plus their inclusion proof against the state root.
     #[serde(borrow)]
     pub beacon_state: Multiproof<'a>,
+    pub num_randao: u32,
     /// Used fields of the active validators plus their inclusion proof against the validator root.
     #[serde(borrow)]
     pub active_validators: Multiproof<'a>,
@@ -49,7 +50,8 @@ impl StateInput<'_> {
         // the remaining values of the beacon state correspond to RANDAO
         let randao_gindex_base: u64 = ((1 << BEACON_STATE_TREE_DEPTH) + 13)
             * context.epochs_per_historical_vector().next_power_of_two();
-        let randao = beacon_state
+        let randao = (0..self.num_randao)
+            .map(|_| beacon_state.next().unwrap())
             .map(|(gindex, randao)| {
                 // 0 <= index <= EPOCHS_PER_HISTORICAL_VECTOR
                 assert!(gindex >= randao_gindex_base);
@@ -60,12 +62,18 @@ impl StateInput<'_> {
             })
             .collect();
 
+        let (_, exit_balance_to_consume) = beacon_state.next().unwrap();
+        let (_, earliest_exit_epoch) = beacon_state.next().unwrap();
+
         self.beacon_state
             .verify(&root)
             .expect("Beacon state root mismatch");
         info!("Beacon state root verified");
 
         let state_epoch = context.compute_epoch_at_slot(u64_from_chunk(slot));
+
+        let mut exit_balance_to_consume = u64_from_chunk(exit_balance_to_consume);
+        let mut earliest_exit_epoch: Epoch = u64_from_chunk(earliest_exit_epoch);
 
         self.active_validators
             .verify(validators_root)
@@ -125,11 +133,8 @@ impl StateInput<'_> {
             // get the validator of the specified epoch
             let get_validator = |epoch: Epoch, index: ValidatorIndex| -> Option<&ValidatorInfo> {
                 for e in (state_epoch + 1..=epoch).rev() {
-                    match &self.patches.get(&e).unwrap().validators.get(&index) {
-                        Some(validator) => {
-                            return Some(*validator);
-                        }
-                        None => {}
+                    if let Some(validator) = &self.patches.get(&e).unwrap().validators.get(&index) {
+                        return Some(*validator);
                     }
                 }
                 validator_cache.get(&index)
@@ -182,15 +187,14 @@ impl StateInput<'_> {
                     // exit_epoch must only change once
                     assert_eq!(prev_validator.exit_epoch, u64::MAX);
 
-                    let earliest_exit_epoch = compute_activation_exit_epoch(patch_epoch, context);
-                    // TODO: this is not correct we need to handle state.exit_balance_to_consume as well as multiple validators existing in this epoch
-                    let exit_epoch =
-                        earliest_exit_epoch
-                            + validator.effective_balance.div_ceil(
-                                get_activation_exit_churn_limit(total_active_balance, context),
-                            );
-
-                    assert!(validator.exit_epoch >= exit_epoch);
+                    // assure that not more than churn limit of balance is withdrawn each epoch
+                    for _ in earliest_exit_epoch + 1..=validator.exit_epoch {
+                        exit_balance_to_consume +=
+                            get_activation_exit_churn_limit(total_active_balance, context);
+                    }
+                    assert!(exit_balance_to_consume >= validator.effective_balance);
+                    exit_balance_to_consume -= validator.effective_balance;
+                    earliest_exit_epoch = max(earliest_exit_epoch, validator.exit_epoch);
                 }
 
                 if prev_validator.effective_balance != validator.effective_balance {

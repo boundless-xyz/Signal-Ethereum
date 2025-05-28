@@ -94,7 +94,7 @@ impl Ctx for GuestContext {
     }
 
     fn max_effective_balance(&self) -> u64 {
-        2048_000_000_000
+        2_048_000_000_000
     }
 
     fn ejection_balance(&self) -> u64 {

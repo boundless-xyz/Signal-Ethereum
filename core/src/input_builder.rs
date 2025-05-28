@@ -53,16 +53,13 @@ pub async fn build_input<CR: ChainReader>(
         &consensus_state,
     )
     .await?;
-    info!("Consensus States: {:#?}", states);
 
     // We now have a list of at least 2 consensus states (one being the initial one).
     // We now need to compute the links that take us from the first state to the finalized one.
     let links = generate_links(&states)?;
-    info!("Links: {:#?}", links);
 
     let links_and_attestations =
         collect_attestations_for_links(chain_reader, &links, start_slot, end_slot).await?;
-    panic!("PANIC");
 
     for (link, attestations) in links_and_attestations.iter() {
         debug!("Link: {:?}, Attestations: {}", link, attestations.len());
@@ -203,36 +200,28 @@ fn generate_links(states: &[ConsensusState]) -> Result<Vec<Link>, InputBuilderEr
     }
 
     // TODO(ec2): This is still not exactly correct. Only for 1 finality right now. Will fix.
-    for i in 0..states.len() {
+    for i in 0..(states.len() - 1) {
         let prev_state = &states[i];
         let curr_state = &states[i + 1];
 
-        // This is the end case
         if curr_state.finalized_checkpoint == prev_state.current_justified_checkpoint
             || curr_state.finalized_checkpoint == prev_state.previous_justified_checkpoint
         {
-            assert!(
-                i == states.len() - 1,
-                "Last state must be the finalized one"
-            );
             links.push(Link {
                 source: curr_state.finalized_checkpoint.into(),
                 target: curr_state.current_justified_checkpoint.into(),
             });
-            break;
-        }
-
-        // This is the case where we dont have any justification
-        if curr_state.current_justified_checkpoint == prev_state.current_justified_checkpoint
+        } else if curr_state.current_justified_checkpoint == prev_state.current_justified_checkpoint
             || curr_state.current_justified_checkpoint == prev_state.previous_justified_checkpoint
         {
+            // This is the case where we dont have any justification
             continue;
+        } else {
+            links.push(Link {
+                source: prev_state.current_justified_checkpoint.into(),
+                target: curr_state.current_justified_checkpoint.into(),
+            });
         }
-
-        links.push(Link {
-            source: prev_state.current_justified_checkpoint.into(),
-            target: curr_state.current_justified_checkpoint.into(),
-        });
     }
 
     assert!(

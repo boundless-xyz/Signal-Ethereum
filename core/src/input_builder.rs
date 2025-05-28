@@ -53,11 +53,12 @@ pub async fn build_input<CR: ChainReader>(
         &consensus_state,
     )
     .await?;
+    debug!("Consensus States: {:#?}", states);
 
     // We now have a list of at least 2 consensus states (one being the initial one).
     // We now need to compute the links that take us from the first state to the finalized one.
     let links = generate_links(&states)?;
-
+    debug!("Links: {:#?}", links);
     let links_and_attestations =
         collect_attestations_for_links(chain_reader, &links, start_slot, end_slot).await?;
 
@@ -104,21 +105,19 @@ async fn get_next_finalization<CR: ChainReader>(
             .map_err(InputBuilderError::ChainReader)?;
 
         // Found the next consensus state
-        if curr_consensus_state != next_consensus_state {
+        if curr_consensus_state != next_consensus_state
+            && curr_consensus_state.current_justified_checkpoint.epoch
+                < next_consensus_state.current_justified_checkpoint.epoch
+        {
             // There can be the case where the the consensus state changes, but there is no new justification or finalization,
             // so we can skip it.
-            if curr_consensus_state.previous_justified_checkpoint.epoch
-                < next_consensus_state.previous_justified_checkpoint.epoch
-                || curr_consensus_state.current_justified_checkpoint.epoch
-                    < next_consensus_state.current_justified_checkpoint.epoch
+
+            states.push(next_consensus_state.clone());
+            // New finality event
+            if curr_consensus_state.finalized_checkpoint
+                != next_consensus_state.finalized_checkpoint
             {
-                states.push(next_consensus_state.clone());
-                // New finality event
-                if curr_consensus_state.finalized_checkpoint
-                    != next_consensus_state.finalized_checkpoint
-                {
-                    break;
-                }
+                break;
             }
         }
     }
@@ -208,7 +207,7 @@ fn generate_links(states: &[ConsensusState]) -> Result<Vec<Link>, InputBuilderEr
             || curr_state.finalized_checkpoint == prev_state.previous_justified_checkpoint
         {
             links.push(Link {
-                source: curr_state.finalized_checkpoint.into(),
+                source: prev_state.current_justified_checkpoint.into(),
                 target: curr_state.current_justified_checkpoint.into(),
             });
         } else if curr_state.current_justified_checkpoint == prev_state.current_justified_checkpoint

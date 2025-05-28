@@ -8,6 +8,8 @@ mod bls;
 mod committee_cache;
 mod consensus_state;
 mod context;
+#[cfg(feature = "host")]
+mod input_builder;
 mod shuffle_list;
 mod state_patch;
 mod state_reader;
@@ -19,6 +21,8 @@ pub use bls::*;
 pub use committee_cache::*;
 pub use consensus_state::*;
 pub use context::*;
+#[cfg(feature = "host")]
+pub use input_builder::*;
 pub use state_patch::*;
 pub use state_reader::*;
 pub use verify::*;

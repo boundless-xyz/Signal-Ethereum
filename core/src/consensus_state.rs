@@ -236,6 +236,58 @@ mod tests {
                 previous_justified_checkpoint: cp(1),
             }),
         ),
+        // Mainnet inactivity leak: supermajority first lost - no justification or finalization
+        // TODO(ec2): Do we want to fail these? It is "technically" a valid state transition
+        // (
+        //     ConsensusState {
+        //         previous_justified_checkpoint: cp(200748),
+        //         current_justified_checkpoint: cp(200749),
+        //         finalized_checkpoint: cp(200748),
+        //     },
+        //     Link {
+        //         source: cp(200748),
+        //         target: cp(200749),
+        //     },
+        //     Ok(ConsensusState {
+        //         previous_justified_checkpoint: cp(200749),
+        //         current_justified_checkpoint: cp(200749),
+        //         finalized_checkpoint: cp(200748),
+        //     }),
+        // ),
+        // Mainnet inactivity leak: supermajority first recovered - justification but no finalization
+        (
+            ConsensusState {
+                previous_justified_checkpoint: cp(200749),
+                current_justified_checkpoint: cp(200749),
+                finalized_checkpoint: cp(200748),
+            },
+            Link {
+                source: cp(200749),
+                target: cp(200759),
+            },
+            Ok(ConsensusState {
+                previous_justified_checkpoint: cp(200749),
+                current_justified_checkpoint: cp(200759),
+                finalized_checkpoint: cp(200748),
+            }),
+        ),
+        // Mainnet inactivity leak: supermajority  - justification and finalization
+        (
+            ConsensusState {
+                previous_justified_checkpoint: cp(200749),
+                current_justified_checkpoint: cp(200759),
+                finalized_checkpoint: cp(200748),
+            },
+            Link {
+                source: cp(200759),
+                target: cp(200760),
+            },
+            Ok(ConsensusState {
+                previous_justified_checkpoint: cp(200759),
+                current_justified_checkpoint: cp(200760),
+                finalized_checkpoint: cp(200759),
+            }),
+        ),
         //
         // FAILURE CASES
 

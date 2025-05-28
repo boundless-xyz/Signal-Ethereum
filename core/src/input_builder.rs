@@ -1,11 +1,11 @@
-use crate::{Attestation, Checkpoint, ConsensusState, Epoch, Input, Link, Root, Slot};
+use crate::{Attestation, ConsensusState, Input, Link, Slot};
 use ethereum_consensus::{
     electra::mainnet::{BeaconBlockHeader, MAX_VALIDATORS_PER_SLOT, SignedBeaconBlockHeader},
-    phase0::mainnet::{MAX_COMMITTEES_PER_SLOT, SLOTS_PER_EPOCH},
+    phase0::mainnet::MAX_COMMITTEES_PER_SLOT,
     types::mainnet::BeaconBlock,
 };
 use futures::stream::{self, StreamExt};
-use std::{collections::BTreeMap, fmt::Display, ops::Range};
+use std::fmt::Display;
 use tracing::{debug, info};
 
 /// A trait to abstract reading data from an instance of a beacon chain
@@ -53,13 +53,17 @@ pub async fn build_input<CR: ChainReader>(
         &consensus_state,
     )
     .await?;
+    info!("Consensus States: {:#?}", states);
 
     // We now have a list of at least 2 consensus states (one being the initial one).
     // We now need to compute the links that take us from the first state to the finalized one.
     let links = generate_links(&states)?;
+    info!("Links: {:#?}", links);
 
     let links_and_attestations =
         collect_attestations_for_links(chain_reader, &links, start_slot, end_slot).await?;
+    panic!("PANIC");
+
     for (link, attestations) in links_and_attestations.iter() {
         debug!("Link: {:?}, Attestations: {}", link, attestations.len());
     }
@@ -108,6 +112,8 @@ async fn get_next_finalization<CR: ChainReader>(
             // so we can skip it.
             if curr_consensus_state.previous_justified_checkpoint.epoch
                 < next_consensus_state.previous_justified_checkpoint.epoch
+                || curr_consensus_state.current_justified_checkpoint.epoch
+                    < next_consensus_state.current_justified_checkpoint.epoch
             {
                 states.push(next_consensus_state.clone());
                 // New finality event
@@ -206,7 +212,7 @@ fn generate_links(states: &[ConsensusState]) -> Result<Vec<Link>, InputBuilderEr
             || curr_state.finalized_checkpoint == prev_state.previous_justified_checkpoint
         {
             assert!(
-                i == states.len() - 2,
+                i == states.len() - 1,
                 "Last state must be the finalized one"
             );
             links.push(Link {

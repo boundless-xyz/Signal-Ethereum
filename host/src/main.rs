@@ -5,7 +5,6 @@ use ethereum_consensus::{
     phase0::mainnet::SLOTS_PER_EPOCH,
 };
 use futures::StreamExt;
-use input_builder::build_input;
 use methods::BEACON_GUEST_ELF;
 use risc0_zkvm::{default_executor, ExecutorEnv};
 use ssz_rs::prelude::*;
@@ -13,12 +12,11 @@ use std::{fmt, fs, path::PathBuf};
 use tracing::{debug, error, info, trace, warn};
 use url::Url;
 use z_core::{
-    mainnet::BeaconState, verify, AssertStateReader, ConsensusState, Ctx, GuestContext,
-    HostContext, HostStateReader, Input, Link, Root, StateInput, StateReader,
+    build_input, mainnet::BeaconState, verify, AssertStateReader, ConsensusState, Ctx,
+    GuestContext, HostContext, HostStateReader, Input, Link, Root, StateInput, StateReader,
 };
 
 pub mod beacon_client;
-pub mod input_builder;
 
 use crate::beacon_client::{BeaconClient, EventKind, EventTopic};
 

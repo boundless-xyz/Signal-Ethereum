@@ -1,34 +1,46 @@
+use crate::{Attestation, Checkpoint, ConsensusState, Epoch, Input, Link, Root, Slot};
 use ethereum_consensus::{
-    electra::mainnet::MAX_VALIDATORS_PER_SLOT,
+    electra::mainnet::{MAX_VALIDATORS_PER_SLOT, SignedBeaconBlockHeader},
     phase0::mainnet::{MAX_COMMITTEES_PER_SLOT, SLOTS_PER_EPOCH},
+    types::mainnet::BeaconBlock,
 };
-use std::{collections::BTreeMap, ops::Range};
-use z_core::{Attestation, Checkpoint, ConsensusState, Epoch, Input, Link, Root, Slot};
+use std::{collections::BTreeMap, fmt::Display, ops::Range};
 
-use crate::beacon_client::{BeaconClient, Error as BeaconNodeError};
+/// A trait to abstract reading data from an instance of a beacon chain
+/// This could be an RPC to a node or something else (e.g. test harness)
+pub trait ChainReader {
+    #[allow(async_fn_in_trait)]
+    async fn get_block_header(
+        &self,
+        block_id: impl Display,
+    ) -> Result<SignedBeaconBlockHeader, anyhow::Error>;
+
+    #[allow(async_fn_in_trait)]
+    async fn get_block(&self, block_id: impl Display) -> Result<BeaconBlock, anyhow::Error>;
+}
 
 #[derive(thiserror::Error, Debug)]
 pub enum InputBuilderError {
-    #[error("Failed calling beacon API: {0}")]
-    BeaconNodeError(#[from] BeaconNodeError),
     #[error("Failed to find enough attestations. Required: {required}")]
     InsufficientAttestations { required: usize },
     #[error("Failed to find a supermajority link")]
     FailedToFindLink,
+    #[error("Chain reader error: {0}")]
+    ChainReader(#[from] anyhow::Error),
 }
 
 /// Given the current ConsensusState, query a beacon node to build an input that can be
 /// used to evolve this state to a new state in the "best" way possible
-pub async fn build_input(
-    beacon_client: &BeaconClient,
+pub async fn build_input<CR: ChainReader>(
+    chain_reader: &CR,
     consensus_state: ConsensusState,
 ) -> Result<Input, InputBuilderError> {
     let trusted_block_root = consensus_state.finalized_checkpoint.root;
-    let trusted_block_header = beacon_client.get_block_header(trusted_block_root).await?;
+    let trusted_block_header = chain_reader.get_block_header(trusted_block_root).await?;
     let trusted_state_root = trusted_block_header.message.state_root;
 
     let (link, attestations) = find_next_supermajoriy_link(
-        beacon_client,
+        chain_reader,
         &consensus_state,
         32, // We require 32 blocks worth of attestations most likely..
     )
@@ -51,8 +63,8 @@ pub async fn build_input(
 /// Failing this it should look for one from `previous_justified_checkpoint` to `current_justified_checkpoint.epoch` + 1 (2-finality)
 ///
 /// Failing this there are some other non-finalizing cases. CURRENTLY NOT IMPLEMENTED
-async fn find_next_supermajoriy_link(
-    beacon_client: &BeaconClient,
+async fn find_next_supermajoriy_link<CR: ChainReader>(
+    chain_reader: &CR,
     consensus_state: &ConsensusState,
     min_attestations: usize,
 ) -> Result<
@@ -67,7 +79,7 @@ async fn find_next_supermajoriy_link(
     let target_epoch = source.epoch + 1;
 
     if let Some(res) = find_supermajority_link(
-        beacon_client,
+        chain_reader,
         source,
         target_epoch,
         (target_epoch * SLOTS_PER_EPOCH)..((target_epoch + 3) * SLOTS_PER_EPOCH), // Check the next 2 epochs from the target
@@ -84,7 +96,7 @@ async fn find_next_supermajoriy_link(
     let target_epoch = source.epoch + 2;
 
     if let Some(res) = find_supermajority_link(
-        beacon_client,
+        chain_reader,
         source,
         target_epoch,
         (target_epoch * SLOTS_PER_EPOCH)..((target_epoch + 3) * SLOTS_PER_EPOCH), // Check the next 2 epochs from the target
@@ -101,8 +113,8 @@ async fn find_next_supermajoriy_link(
 
 /// Find a supermajorty link and its attestations with the given source checkpoint and target epoch.
 /// Returns `None` if not enough attestations are found.
-async fn find_supermajority_link(
-    beacon_client: &BeaconClient,
+async fn find_supermajority_link<CR: ChainReader>(
+    chain_reader: &CR,
     source: Checkpoint,
     target_epoch: Epoch,
     slots: Range<Slot>,
@@ -115,7 +127,7 @@ async fn find_supermajority_link(
     InputBuilderError,
 > {
     // Get attestations for the next epoch
-    let attestations = get_grouped_attestations(beacon_client, slots, source, target_epoch).await?;
+    let attestations = get_grouped_attestations(chain_reader, slots, source, target_epoch).await?;
 
     Ok(attestations.iter().find_map(|(_, attestations)| {
         if attestations.len() < min_attestations as usize {
@@ -137,8 +149,8 @@ async fn find_supermajority_link(
 ///  - The given source checkpoint (root and epoch)
 ///  - The given target epoch (root is not yet known)
 /// and return them grouped by their target root.
-async fn get_grouped_attestations(
-    beacon_client: &BeaconClient,
+async fn get_grouped_attestations<CR: ChainReader>(
+    chain_reader: &CR,
     slots: Range<Slot>,
     source: Checkpoint,
     target_epoch: Epoch,
@@ -148,7 +160,7 @@ async fn get_grouped_attestations(
 > {
     let mut blocks = Vec::new();
     for slot in slots {
-        let block = beacon_client.get_block(slot).await;
+        let block = chain_reader.get_block(slot).await;
         match block {
             Ok(block) => blocks.push(block),
             Err(e) => tracing::warn!("Failed to get block (maybe a missed slot?) {}: {}", slot, e),

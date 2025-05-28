@@ -1,7 +1,7 @@
 use crate::{Checkpoint, Link};
 use thiserror::Error;
 
-#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct ConsensusState {
     pub finalized_checkpoint: Checkpoint,
     pub current_justified_checkpoint: Checkpoint,

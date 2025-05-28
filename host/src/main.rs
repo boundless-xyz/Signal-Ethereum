@@ -10,11 +10,11 @@ use methods::BEACON_GUEST_ELF;
 use risc0_zkvm::{default_executor, ExecutorEnv};
 use ssz_rs::prelude::*;
 use std::{fmt, fs, path::PathBuf};
-use tracing::{debug, info, trace, warn};
+use tracing::{debug, error, info, trace, warn};
 use url::Url;
 use z_core::{
     mainnet::BeaconState, verify, AssertStateReader, ConsensusState, Ctx, GuestContext,
-    HostStateReader, Input, Link, StateInput, StateReader,
+    HostContext, HostStateReader, Input, Link, Root, StateInput, StateReader,
 };
 
 pub mod beacon_client;
@@ -64,6 +64,8 @@ enum Command {
         /// Number of iterations to run
         #[clap(short('i'), long, default_value_t = 1)]
         iterations: u64, // Number of iterations to run
+        #[clap(long)]
+        trusted_block_root: Option<Root>, // If there is no epoch boundary state saved, we use this block root to find the state
     },
 }
 
@@ -103,9 +105,10 @@ async fn main() -> anyhow::Result<()> {
     let state_dir = args.data_dir.join(args.network.to_string()).join("states");
     fs::create_dir_all(&state_dir)?;
 
+    let reader = HostStateReader::new_with_dir(&state_dir, context.clone().into())?;
+
     match args.command {
         Command::Verify { r0vm } => {
-            let reader = HostStateReader::new_with_dir(&state_dir, context.into())?;
             let trusted_epoch = args.trusted_epoch;
             let trusted_checkpoint = Checkpoint {
                 epoch: trusted_epoch,
@@ -130,17 +133,60 @@ async fn main() -> anyhow::Result<()> {
                 info!("Journal: {:?}", journal);
             }
         }
-        Command::RunLocal { iterations } => {
-            let s = beacon_client
-                .get_beacon_state(args.trusted_epoch * SLOTS_PER_EPOCH)
-                .await?;
+        Command::RunLocal {
+            iterations,
+            trusted_block_root,
+            ..
+        } => {
+            let trusted_state = match reader.get_beacon_state_by_epoch(args.trusted_epoch) {
+                Ok(state) => state,
+                Err(_) => {
+                    let block = if let Some(root) = trusted_block_root {
+                        warn!(
+                            "No state found for epoch {}, trying to fetch via trusted block root: {}",
+                            args.trusted_epoch, root
+                        );
+
+                        beacon_client.get_block(BlockId::Root(root)).await?
+                    } else {
+                        return Err(anyhow::anyhow!(
+                            "No state found for epoch {}, and no trusted block root provided",
+                            args.trusted_epoch
+                        ));
+                    };
+                    cache_beacon_state_root::<HostContext>(
+                        context.into(),
+                        &beacon_client,
+                        StateId::Root(block.state_root()),
+                        &state_dir,
+                    )
+                    .await?;
+
+                    reader
+                        .get_beacon_state_by_epoch(args.trusted_epoch)
+                        .expect("Failed to establish trusted state")
+                }
+            };
+
+            info!(
+                "Trusted Beacon State slot: {}, root: {}",
+                trusted_state.slot(),
+                trusted_state.hash_tree_root().unwrap()
+            );
 
             // set the initial consensus state from the beacon state at `from_epoch`
             let mut consensus_state = ConsensusState {
-                finalized_checkpoint: s.finalized_checkpoint().clone().into(),
-                current_justified_checkpoint: s.current_justified_checkpoint().clone().into(),
-                previous_justified_checkpoint: s.previous_justified_checkpoint().clone().into(),
+                finalized_checkpoint: trusted_state.finalized_checkpoint().clone().into(),
+                current_justified_checkpoint: trusted_state
+                    .current_justified_checkpoint()
+                    .clone()
+                    .into(),
+                previous_justified_checkpoint: trusted_state
+                    .previous_justified_checkpoint()
+                    .clone()
+                    .into(),
             };
+
             tracing::info!("Initial consensus state: {:#?}", consensus_state);
 
             for i in 0..iterations {
@@ -175,6 +221,20 @@ async fn cache_beacon_state(
     let s = beacon_client
         .get_beacon_state(epoch * SLOTS_PER_EPOCH)
         .await?;
+    let file_name = cache_dir.join(format!("{}_beacon_state.ssz", epoch));
+    tracing::debug!("Writing state to: {}", file_name.display());
+    fs::write(file_name, &ssz_rs::serialize(&s)?)?;
+    Ok(())
+}
+
+async fn cache_beacon_state_root<C: Ctx>(
+    c: C,
+    beacon_client: &BeaconClient,
+    id: StateId,
+    cache_dir: &std::path::Path,
+) -> anyhow::Result<()> {
+    let s = beacon_client.get_beacon_state(id).await?;
+    let epoch = c.compute_epoch_at_slot(s.slot());
     let file_name = cache_dir.join(format!("{}_beacon_state.ssz", epoch));
     tracing::debug!("Writing state to: {}", file_name.display());
     fs::write(file_name, &ssz_rs::serialize(&s)?)?;

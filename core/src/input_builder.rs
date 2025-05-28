@@ -42,7 +42,7 @@ pub async fn build_input<CR: ChainReader>(
     let (link, attestations) = find_next_supermajoriy_link(
         chain_reader,
         &consensus_state,
-        32, // We require 32 blocks worth of attestations most likely..
+        0, // We require 32 blocks worth of attestations most likely..
     )
     .await?;
 
@@ -126,6 +126,12 @@ async fn find_supermajority_link<CR: ChainReader>(
     )>,
     InputBuilderError,
 > {
+    tracing::debug!(
+        "Searching for a supermajority link from {:?} to epoch {}",
+        source,
+        target_epoch
+    );
+
     // Get attestations for the next epoch
     let attestations = get_grouped_attestations(chain_reader, slots, source, target_epoch).await?;
 

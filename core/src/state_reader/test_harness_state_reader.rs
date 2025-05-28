@@ -30,7 +30,7 @@ where
         let slot = epoch * T::EthSpec::slots_per_epoch();
         self.inner
             .chain
-            .state_at_slot(slot.into(), StateSkipConfig::WithoutStateRoots)
+            .state_at_slot(slot.into(), StateSkipConfig::WithStateRoots)
     }
 }
 
@@ -158,16 +158,25 @@ where
         &self,
         block_id: impl std::fmt::Display,
     ) -> Result<ethereum_consensus::types::mainnet::BeaconBlock, anyhow::Error> {
-        let block = if let Ok(slot) = u64::from_str_radix(block_id.to_string().as_str(), 10) {
+        let signed_block = if let Ok(slot) = u64::from_str_radix(block_id.to_string().as_str(), 10)
+        {
+            let root = self
+                .inner
+                .chain
+                .block_root_at_slot(slot.into(), WhenSlotSkipped::None)
+                .map_err(|_| anyhow::anyhow!("Failed to get block"))?
+                .unwrap();
             self.inner
                 .chain
-                .block_at_slot(slot.into(), WhenSlotSkipped::None)
+                .get_block(&root)
+                .await
                 .map_err(|_| anyhow::anyhow!("Failed to get block"))?
                 .ok_or(anyhow::anyhow!("Block not found at slot"))?
         } else if let Ok(hash) = Hash256::from_str(block_id.to_string().as_str()) {
             self.inner
                 .chain
-                .get_blinded_block(&hash)
+                .get_block(&hash)
+                .await
                 .map_err(|_| anyhow::anyhow!("Failed to get block"))?
                 .ok_or(anyhow::anyhow!("Block not found at slot"))?
         } else {
@@ -175,8 +184,13 @@ where
                 "Invalid block ID format. Must be parsable as a slot integer or a 0x prefix hash"
             ));
         };
+        let (block, _) = signed_block.deconstruct();
+        let block_json = serde_json::to_value(&block.as_electra().unwrap())?;
 
-        let block_json = serde_json::to_string(&block)?;
-        Ok(serde_json::from_str(&block_json)?)
+        let res: ethereum_consensus::electra::mainnet::BeaconBlock =
+            serde_json::from_value(block_json)?;
+        Ok(ethereum_consensus::types::mainnet::BeaconBlock::Electra(
+            res,
+        ))
     }
 }

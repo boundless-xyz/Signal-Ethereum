@@ -1,11 +1,22 @@
-use std::sync::LazyLock;
+use std::{
+    num::NonZeroUsize,
+    sync::{Arc, LazyLock},
+};
 
 use beacon_chain::{
-    StateSkipConfig,
-    test_utils::{AttestationStrategy, BeaconChainHarness, BlockStrategy},
+    store::{self, StoreConfig, database::interface::BeaconNodeBackend},
+    test_utils::{
+        AttestationStrategy, BeaconChainHarness, BlockStrategy, DiskHarnessType, test_spec,
+    },
 };
-use beacon_types::{EthSpec, Keypair, MainnetEthSpec};
-use z_core::{ConsensusState, HarnessStateReader, build_input};
+use beacon_types::{ChainSpec, Epoch, EthSpec, Keypair, MainnetEthSpec};
+use sloggers::{Build, null::NullLoggerBuilder};
+use tempfile::TempDir;
+use z_core::{ConsensusState, HarnessStateReader, build_input, verify};
+
+type E = MainnetEthSpec;
+type TestHarness = BeaconChainHarness<DiskHarnessType<E>>;
+type HotColdDB = store::HotColdDB<E, BeaconNodeBackend<E>, BeaconNodeBackend<E>>;
 
 pub const VALIDATOR_COUNT: usize = 16;
 
@@ -13,48 +24,122 @@ pub const VALIDATOR_COUNT: usize = 16;
 static KEYPAIRS: LazyLock<Vec<Keypair>> =
     LazyLock::new(|| beacon_types::test_utils::generate_deterministic_keypairs(VALIDATOR_COUNT));
 
-/// This test builds a chain that is just long enough to finalize an epoch (epoch 2)
-/// 100% validator participation
-#[tokio::test]
-async fn simple_finalize_epoch() {
-    let num_blocks_produced = MainnetEthSpec::slots_per_epoch() * 4;
+fn get_spec() -> Arc<ChainSpec> {
+    let altair_fork_epoch = Epoch::new(0);
+    let bellatrix_fork_epoch = Epoch::new(1);
+    let capella_fork_epoch = Epoch::new(2);
+    let deneb_fork_epoch = Epoch::new(3);
+    let electra_fork_epoch = Epoch::new(4);
 
+    let mut spec = E::default_spec();
+    spec.altair_fork_epoch = Some(altair_fork_epoch);
+    spec.bellatrix_fork_epoch = Some(bellatrix_fork_epoch);
+    spec.capella_fork_epoch = Some(capella_fork_epoch);
+    spec.deneb_fork_epoch = Some(deneb_fork_epoch);
+    spec.electra_fork_epoch = Some(electra_fork_epoch);
+    Arc::new(spec)
+}
+
+fn get_store(db_path: &TempDir, spec: Arc<ChainSpec>) -> Arc<HotColdDB> {
+    let hot_path = db_path.path().join("hot_db");
+    let cold_path = db_path.path().join("cold_db");
+    let blobs_path = db_path.path().join("blobs_db");
+    let config = StoreConfig {
+        state_cache_size: NonZeroUsize::new(9999).unwrap(),
+        historic_state_cache_size: NonZeroUsize::new(9999).unwrap(),
+        block_cache_size: NonZeroUsize::new(9999).unwrap(),
+        ..Default::default()
+    };
+    let log = NullLoggerBuilder.build().expect("logger should build");
+    HotColdDB::open(
+        &hot_path,
+        &cold_path,
+        &blobs_path,
+        |_, _, _| Ok(()),
+        config,
+        spec,
+        log,
+    )
+    .expect("disk store should initialize")
+}
+
+async fn get_harness(store: Arc<HotColdDB>, spec: Arc<ChainSpec>) -> TestHarness {
     let harness = BeaconChainHarness::builder(MainnetEthSpec)
-        .default_spec()
+        .spec(spec.clone())
         .keypairs(KEYPAIRS[..].to_vec())
-        .fresh_ephemeral_store()
+        .fresh_disk_store(store)
         .mock_execution_layer()
         .build();
 
-    let chain = &harness.chain;
+    let bellatrix_fork_slot = spec
+        .bellatrix_fork_epoch
+        .unwrap()
+        .start_slot(harness.slots_per_epoch());
+    let electra_fork_slot = spec
+        .electra_fork_epoch
+        .unwrap()
+        .start_slot(harness.slots_per_epoch());
 
-    for slot in 0..=num_blocks_produced {
-        if slot > 0 && slot <= num_blocks_produced {
-            harness.advance_slot();
+    harness.extend_to_slot(bellatrix_fork_slot).await;
+    // write the terminal EL block to complete Capella upgrade
+    harness
+        .execution_block_generator()
+        .move_to_terminal_block()
+        .unwrap();
+    // grow the chain past the Electra fork upgrade by 3 epochs so we don't accidentally
+    // read prior to the fork
+    harness
+        .extend_to_slot(electra_fork_slot + harness.slots_per_epoch() * 3)
+        .await;
+    harness
+}
 
-            harness
-                .extend_chain(
-                    1,
-                    BlockStrategy::OnCanonicalHead,
-                    AttestationStrategy::AllValidators,
-                )
-                .await;
+/// This test builds a chain that is just long enough to finalize an epoch
+/// given 100% validator participation
+#[tokio::test]
+async fn simple_finalize_epoch() {
+    let spec = get_spec();
+    let temp_dir = TempDir::new().expect("temp dir should create");
+    let store = get_store(&temp_dir, spec.clone());
+    let harness = get_harness(store, spec).await;
 
-            let state = chain
-                .state_at_slot(slot.into(), StateSkipConfig::WithStateRoots)
-                .expect("should get state");
-            println!(
-                "Slot: {}\nF: {:?}\nCJ: {:?}\nPJ: {:?}\n",
-                state.slot(),
-                state.finalized_checkpoint(),
-                state.current_justified_checkpoint(),
-                state.previous_justified_checkpoint()
-            );
-        }
-    }
+    // Grab our bootstrap consensus state from there
+    let head_state = harness.chain.head_beacon_state_cloned();
+    let consensus_state = consensus_state_from_state(&head_state);
+    println!("Current slot: {}", head_state.slot());
+    println!("Consensus state: {:?}", consensus_state);
+
+    // progress the chain 3 epochs past our last state so there are attestations to process
+    harness.advance_slot();
+    harness
+        .extend_chain(
+            (harness.slots_per_epoch() * 4) as usize,
+            BlockStrategy::OnCanonicalHead,
+            AttestationStrategy::AllValidators,
+        )
+        .await;
 
     let state_reader = HarnessStateReader::from(harness);
-    let input = build_input(&state_reader, ConsensusState::default())
+    let input = build_input(&state_reader, consensus_state)
         .await
         .expect("should build input");
+
+    let next_state = verify(&state_reader, input);
+}
+
+fn consensus_state_from_state(state: &beacon_types::BeaconState<MainnetEthSpec>) -> ConsensusState {
+    ConsensusState {
+        finalized_checkpoint: z_core::Checkpoint {
+            epoch: state.finalized_checkpoint().epoch.into(),
+            root: state.finalized_checkpoint().root.clone(),
+        },
+        current_justified_checkpoint: z_core::Checkpoint {
+            epoch: state.current_justified_checkpoint().epoch.into(),
+            root: state.current_justified_checkpoint().root.clone(),
+        },
+        previous_justified_checkpoint: z_core::Checkpoint {
+            epoch: state.previous_justified_checkpoint().epoch.into(),
+            root: state.previous_justified_checkpoint().root.clone(),
+        },
+    }
 }

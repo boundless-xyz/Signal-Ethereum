@@ -22,7 +22,10 @@ beacon_chain = { git = "https://github.com/sigp/lighthouse.git", rev = "7759cb8f
 beacon_types = { package = "types", git = "https://github.com/sigp/lighthouse.git", rev = "7759cb8f91c01a7d335469d317b5787368656064", optional = true } 
 
 [dev-dependencies]
+sloggers = "2.2.0"
+tempfile = "3.20.0"
 tokio = { workspace = true }
+tracing-test = { version = "0.2.5", features = ["no-env-filter"] }
 
 [features]
 default = ["host"]

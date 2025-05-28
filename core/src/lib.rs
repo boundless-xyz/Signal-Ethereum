@@ -1,5 +1,7 @@
 extern crate alloc;
 
+use core::fmt;
+
 use alloy_primitives::B256;
 use ssz_rs::prelude::*;
 #[cfg(feature = "host")]
@@ -49,7 +51,7 @@ pub const VALIDATOR_TREE_DEPTH: u32 = 3;
 /// The depth of the Merkle tree of the BeaconState container.
 pub const BEACON_STATE_TREE_DEPTH: u32 = 6;
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct Input {
     pub consensus_state: ConsensusState,
     pub link: Vec<Link>,
@@ -64,6 +66,26 @@ pub struct Input {
     >,
 
     pub trusted_checkpoint_state_root: Root, // The state root at trusted_checkpoint
+}
+impl fmt::Debug for Input {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Input")
+            .field("consensus_state", &self.consensus_state)
+            .field("link", &self.link)
+            .field(
+                "attestations",
+                &self
+                    .attestations
+                    .iter()
+                    .map(|a| a.len())
+                    .collect::<Vec<usize>>(),
+            )
+            .field(
+                "trusted_checkpoint_state_root",
+                &self.trusted_checkpoint_state_root,
+            )
+            .finish()
+    }
 }
 
 #[derive(Eq, PartialEq, Clone, Debug, serde::Serialize, serde::Deserialize)]

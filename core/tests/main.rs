@@ -4,6 +4,7 @@ use std::{
 };
 
 use beacon_chain::{
+    StateSkipConfig,
     store::{self, StoreConfig, database::interface::BeaconNodeBackend},
     test_utils::{
         AttestationStrategy, BeaconChainHarness, BlockStrategy, DiskHarnessType, test_spec,
@@ -98,6 +99,7 @@ async fn get_harness(store: Arc<HotColdDB>, spec: Arc<ChainSpec>) -> TestHarness
 /// given 100% validator participation
 #[tokio::test]
 async fn simple_finalize_epoch() {
+    // If you drop the temp_dir or store then the harness will break FYI
     let spec = get_spec();
     let temp_dir = TempDir::new().expect("temp dir should create");
     let store = get_store(&temp_dir, spec.clone());
@@ -107,15 +109,18 @@ async fn simple_finalize_epoch() {
     let head_state = harness.chain.head_beacon_state_cloned();
     let consensus_state = consensus_state_from_state(&head_state);
     println!("Current slot: {}", head_state.slot());
-    println!("Consensus state: {:?}", consensus_state);
+    println!("Pre consensus state: {:?}", consensus_state);
 
     // progress the chain 3 epochs past our last state so there are attestations to process
+    // WILLEM: For some reason progressing 3 epochs makes the historical state unavailable
+    // even though I have set the cache to be very large ...
+    // The -1 is a workaround which seems to make it work just fine
     harness.advance_slot();
     harness
         .extend_chain(
-            (harness.slots_per_epoch() * 4) as usize,
+            (harness.slots_per_epoch() * 3 - 1) as usize,
             BlockStrategy::OnCanonicalHead,
-            AttestationStrategy::AllValidators,
+            AttestationStrategy::AllValidators, // this is where we can mess around with partial validator participation, forks etc
         )
         .await;
 
@@ -125,6 +130,7 @@ async fn simple_finalize_epoch() {
         .expect("should build input");
 
     let next_state = verify(&state_reader, input);
+    println!("Post consensus state: {:?}", next_state);
 }
 
 fn consensus_state_from_state(state: &beacon_types::BeaconState<MainnetEthSpec>) -> ConsensusState {

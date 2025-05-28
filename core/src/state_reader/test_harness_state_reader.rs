@@ -4,13 +4,14 @@
 //!
 //!
 use crate::{
-    ChainReader, Epoch, GuestContext, StateReader, ValidatorIndex, ValidatorInfo, Version,
+    ChainReader, ConsensusState, Epoch, GuestContext, StateReader, ValidatorIndex, ValidatorInfo,
+    Version,
 };
 use beacon_chain::{
     BeaconChainError, BeaconChainTypes, StateSkipConfig, WhenSlotSkipped,
     test_utils::BeaconChainHarness,
 };
-use beacon_types::{BeaconState, EthSpec, Hash256, Validator};
+use beacon_types::{BeaconState, EthSpec, Hash256, MainnetEthSpec, Validator};
 use elsa::FrozenMap;
 use std::str::FromStr;
 use thiserror::Error;
@@ -129,93 +130,113 @@ where
         &self,
         block_id: impl std::fmt::Display,
     ) -> Result<ethereum_consensus::deneb::SignedBeaconBlockHeader, anyhow::Error> {
-        let header = if let Ok(slot) = u64::from_str_radix(block_id.to_string().as_str(), 10) {
-            self.inner
+        let header = match SlotOrRoot::from_str(&block_id.to_string()) {
+            Ok(SlotOrRoot::Slot(slot)) => self
+                .inner
                 .chain
-                .block_at_slot(slot.into(), WhenSlotSkipped::None)
-                .map_err(|_| anyhow::anyhow!("Failed to get block"))?
-                .ok_or(anyhow::anyhow!("Block not found at slot"))?
-        } else if let Ok(root) = Hash256::from_str(block_id.to_string().as_str()) {
-            self.inner
-                .chain
-                .get_blinded_block(&root)
-                .map_err(|_| anyhow::anyhow!("Failed to get block"))?
-                .ok_or(anyhow::anyhow!("Block not found at slot"))?
-        } else {
-            return Err(anyhow::anyhow!(
-                "Invalid block ID format. Must be parsable as a slot integer or a 0x prefix hash"
-            ));
+                .block_at_slot(slot.into(), WhenSlotSkipped::None),
+            Ok(SlotOrRoot::Root(root)) => self.inner.chain.get_blinded_block(&root),
+            Err(e) => return Err(e),
         }
+        .unwrap()
+        .unwrap()
         .signed_block_header();
 
-        let header_json = serde_json::to_value(&header)?;
-        Ok(serde_json::from_value(header_json)?)
+        Ok(convert_via_json(header)?)
     }
 
     async fn get_block(
         &self,
         block_id: impl std::fmt::Display,
     ) -> Result<ethereum_consensus::types::mainnet::BeaconBlock, anyhow::Error> {
-        let signed_block = if let Ok(slot) = u64::from_str_radix(block_id.to_string().as_str(), 10)
-        {
-            let root = self
-                .inner
-                .chain
-                .block_root_at_slot(slot.into(), WhenSlotSkipped::None)
-                .map_err(|_| anyhow::anyhow!("Failed to get block"))?
-                .unwrap();
-            self.inner
-                .chain
-                .get_block(&root)
-                .await
-                .map_err(|_| anyhow::anyhow!("Failed to get block"))?
-                .ok_or(anyhow::anyhow!("Block not found at slot"))?
-        } else if let Ok(root) = Hash256::from_str(block_id.to_string().as_str()) {
-            self.inner
-                .chain
-                .get_block(&root)
-                .await
-                .map_err(|_| anyhow::anyhow!("Failed to get block"))?
-                .ok_or(anyhow::anyhow!("Block not found at slot"))?
-        } else {
-            return Err(anyhow::anyhow!(
-                "Invalid block ID format. Must be parsable as a slot integer or a 0x prefix hash"
-            ));
-        };
-        let (block, _) = signed_block.deconstruct();
-        let block_json = serde_json::to_value(&block.as_electra().unwrap())?;
+        let signed_block = match SlotOrRoot::from_str(&block_id.to_string()) {
+            Ok(SlotOrRoot::Slot(slot)) => {
+                // need to do this two-step call because otherwise we end up with a blinded block
+                let root = self
+                    .inner
+                    .chain
+                    .block_root_at_slot(slot.into(), WhenSlotSkipped::None)
+                    .map_err(|_| anyhow::anyhow!("Failed to get block"))?
+                    .unwrap();
+                self.inner.chain.get_block(&root).await
+            }
+            Ok(SlotOrRoot::Root(root)) => self.inner.chain.get_block(&root).await,
+            Err(e) => return Err(e),
+        }
+        .unwrap()
+        .unwrap();
 
-        let res: ethereum_consensus::electra::mainnet::BeaconBlock =
-            serde_json::from_value(block_json)?;
-        Ok(ethereum_consensus::types::mainnet::BeaconBlock::Electra(
-            res,
-        ))
+        let (block, _) = signed_block.deconstruct();
+        Ok(convert_via_json(block.as_electra().unwrap())?)
     }
 
     async fn get_consensus_state(
         &self,
         state_id: impl std::fmt::Display,
     ) -> Result<crate::ConsensusState, anyhow::Error> {
-        println!("get_consensus_state: {}", state_id);
-        let state = if let Ok(slot) = u64::from_str_radix(state_id.to_string().as_str(), 10) {
-            self.inner
+        let state = match SlotOrRoot::from_str(&state_id.to_string()) {
+            Ok(SlotOrRoot::Slot(slot)) => self
+                .inner
                 .chain
-                .state_at_slot(slot.into(), StateSkipConfig::WithStateRoots)
-                .expect("failed to get state")
-            // .map_err(|_| anyhow::anyhow!("Failed to get state"))?
-        } else if let Ok(root) = Hash256::from_str(state_id.to_string().as_str()) {
-            self.inner
+                .state_at_slot(slot.into(), StateSkipConfig::WithStateRoots),
+            Ok(SlotOrRoot::Root(root)) => self
+                .inner
                 .chain
                 .get_state(&root, None, true)
-                .map_err(|_| anyhow::anyhow!("Failed to get state"))?
-                .ok_or(anyhow::anyhow!("state not found"))?
-        } else {
-            return Err(anyhow::anyhow!(
-                "Invalid state ID format. Must be parsable as a slot integer or a 0x prefix hash"
-            ));
-        };
+                .transpose()
+                .unwrap(),
+            Err(e) => return Err(e),
+        }
+        .unwrap();
+        Ok(consensus_state_from_state(&state))
+    }
+}
 
-        let json = serde_json::to_value(&state)?;
-        Ok(serde_json::from_value(json)?)
+enum SlotOrRoot {
+    Slot(u64),
+    Root(Hash256),
+}
+
+fn convert_via_json<T, TT>(value: T) -> Result<TT, serde_json::Error>
+where
+    T: serde::Serialize,
+    TT: serde::de::DeserializeOwned,
+{
+    let json = serde_json::to_value(value)?;
+    serde_json::from_value(json)
+}
+
+impl FromStr for SlotOrRoot {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        if let Ok(slot) = u64::from_str_radix(s, 10) {
+            Ok(SlotOrRoot::Slot(slot))
+        } else if let Ok(root) = Hash256::from_str(s) {
+            Ok(SlotOrRoot::Root(root))
+        } else {
+            Err(anyhow::anyhow!(
+                "Invalid format. Must be a slot integer or a 0x prefix hash"
+            ))
+        }
+    }
+}
+
+pub fn consensus_state_from_state<T: EthSpec>(
+    state: &beacon_types::BeaconState<T>,
+) -> ConsensusState {
+    ConsensusState {
+        finalized_checkpoint: crate::Checkpoint {
+            epoch: state.finalized_checkpoint().epoch.into(),
+            root: state.finalized_checkpoint().root.clone(),
+        },
+        current_justified_checkpoint: crate::Checkpoint {
+            epoch: state.current_justified_checkpoint().epoch.into(),
+            root: state.current_justified_checkpoint().root.clone(),
+        },
+        previous_justified_checkpoint: crate::Checkpoint {
+            epoch: state.previous_justified_checkpoint().epoch.into(),
+            root: state.previous_justified_checkpoint().root.clone(),
+        },
     }
 }

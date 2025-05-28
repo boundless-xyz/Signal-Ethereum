@@ -37,7 +37,6 @@ pub fn get_store(db_path: &TempDir, spec: Arc<ChainSpec>) -> Arc<HotColdDB> {
     let blobs_path = db_path.path().join("blobs_db");
     let config = StoreConfig {
         state_cache_size: NonZeroUsize::new(9999).unwrap(),
-        historic_state_cache_size: NonZeroUsize::new(9999).unwrap(),
         block_cache_size: NonZeroUsize::new(9999).unwrap(),
         ..Default::default()
     };

@@ -15,12 +15,18 @@ static KEYPAIRS: LazyLock<Vec<Keypair>> =
 /// This test builds a chain that is just long enough to finalize an epoch
 /// given 100% validator participation
 #[tokio::test]
+// #[tracing_test::traced_test]
 async fn simple_finalize_epoch() {
     // If you drop the temp_dir or store then the harness will break FYI
     let spec = get_spec();
     let temp_dir = TempDir::new().expect("temp dir should create");
     let store = get_store(&temp_dir, spec.clone());
-    let harness = get_harness(KEYPAIRS[..].to_vec(), store, spec).await;
+    let harness = get_harness(KEYPAIRS[..].to_vec(), store.clone(), spec).await;
+
+    println!(
+        "historic state limits: {:?}",
+        store.get_historic_state_limits()
+    );
 
     // Grab our bootstrap consensus state from there
     let head_state = harness.chain.head_beacon_state_cloned();
@@ -40,6 +46,11 @@ async fn simple_finalize_epoch() {
             AttestationStrategy::AllValidators, // this is where we can mess around with partial validator participation, forks etc
         )
         .await;
+
+    println!(
+        "historic state limits: {:?}",
+        store.get_historic_state_limits()
+    );
 
     let state_reader = HarnessStateReader::from(harness);
     let input = build_input(&state_reader, consensus_state)

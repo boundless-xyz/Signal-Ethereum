@@ -88,7 +88,7 @@ async fn get_next_finalization<CR: ChainReader>(
 
     // I think technically we can start from a later slot, but its ok this should still work.
     // We might just be doing more work than necessary, but this is the host.
-    let mut slot = start_slot;
+    let mut slot = start_slot + 64;
 
     // Iterate over the chain from the trusted slot to find where the consensus state changes saving each one until
     // we find a new finality event.

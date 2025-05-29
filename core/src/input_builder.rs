@@ -6,7 +6,7 @@ use ethereum_consensus::{
 };
 use futures::stream::{self, StreamExt};
 use std::fmt::Display;
-use tracing::{debug, info};
+use tracing::debug;
 
 /// A trait to abstract reading data from an instance of a beacon chain
 /// This could be an RPC to a node or something else (e.g. test harness)
@@ -77,10 +77,6 @@ pub async fn build_input<CR: ChainReader>(
         debug!("Link: {:?}, Attestations: {}", link, attestations.len());
     }
 
-    info!(
-        "Building input complete with {} links",
-        links_and_attestations.len()
-    );
     let (links, attestations) = links_and_attestations.into_iter().unzip();
 
     Ok(Input {

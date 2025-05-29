@@ -225,7 +225,7 @@ fn run_verify(
             "Native and Ssz output mismatch"
         );
 
-        if mode == ExecMode::Ssz {
+        if mode == ExecMode::R0vm {
             let journal = execute_guest_program(state_input, input, GuestContext);
             info!("Journal: {:?}", journal);
         }

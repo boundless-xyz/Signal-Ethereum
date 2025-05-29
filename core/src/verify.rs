@@ -17,6 +17,7 @@ pub fn verify<S: StateReader>(state_reader: &S, input: Input) -> ConsensusState 
         attestations,
         ..
     } = input;
+    assert_eq!(link.len(), attestations.len());
     // TODO(ec2): I think we need to enforce here that the trusted state is less than or equal to state.finalized_checkpoint epoch
     // TODO(ec2): We can also bound the number of state patches to the k in k-finality case
     let context = state_reader.context();
@@ -25,95 +26,107 @@ pub fn verify<S: StateReader>(state_reader: &S, input: Input) -> ConsensusState 
     let mut validator_cache: BTreeMap<Epoch, BTreeMap<ValidatorIndex, &ValidatorInfo>> =
         BTreeMap::new();
     let mut committee_caches: BTreeMap<Epoch, CommitteeCache> = BTreeMap::new();
+    for (link, attestations) in link.iter().zip(attestations.into_iter()) {
+        let attesting_balance: u64 = attestations
+            .into_iter()
+            .filter(|a| a.data.source == link.source && a.data.target == link.target)
+            .map(|attestation| {
+                let data = attestation.data;
+                debug!("Processing attestation: {:?}", data);
 
-    let attesting_balance: u64 = attestations
-        .into_iter()
-        .filter(|a| a.data.source == link.source && a.data.target == input.link.target)
-        .map(|attestation| {
-            let data = attestation.data;
-            debug!("Processing attestation: {:?}", data);
+                assert_eq!(data.index, 0);
 
-            assert_eq!(data.index, 0);
+                let attestation_epoch = data.target.epoch;
 
-            let attestation_epoch = data.target.epoch;
+                let committee_cache =
+                    committee_caches
+                        .entry(attestation_epoch)
+                        .or_insert_with(|| {
+                            get_shufflings_for_epoch(
+                                state_reader,
+                                attestation_epoch,
+                                attestation_epoch,
+                            )
+                        });
 
-            let committee_cache = committee_caches
-                .entry(attestation_epoch)
-                .or_insert_with(|| {
-                    get_shufflings_for_epoch(state_reader, attestation_epoch, attestation_epoch)
-                });
+                // get_attesting_indices
+                // see: https://github.com/ethereum/consensus-specs/blob/dev/specs/electra/beacon-chain.md#modified-get_attesting_indices
+                let mut attesting_indices: BTreeSet<usize> = BTreeSet::new();
 
-            // get_attesting_indices
-            // see: https://github.com/ethereum/consensus-specs/blob/dev/specs/electra/beacon-chain.md#modified-get_attesting_indices
-            let mut attesting_indices: BTreeSet<usize> = BTreeSet::new();
-
-            // get_committee_indices
-            let committee_indices = attestation
-                .committee_bits
-                .iter()
-                .enumerate()
-                .filter_map(|(index, bit)| bit.then_some(index));
-
-            let mut committee_offset = 0;
-            for committee_index in committee_indices {
-                assert!(committee_index < committee_cache.get_committee_count_per_slot());
-
-                let committee = committee_cache
-                    .get_beacon_committee(data.slot, committee_index, context)
-                    .unwrap();
-                let mut committee_attesters = committee
+                // get_committee_indices
+                let committee_indices = attestation
+                    .committee_bits
                     .iter()
                     .enumerate()
-                    .filter_map(|(i, attester_index)| {
-                        attestation.aggregation_bits[committee_offset + i]
-                            .then_some(*attester_index)
-                    })
-                    .peekable();
-                assert!(committee_attesters.peek().is_some());
-                attesting_indices.extend(committee_attesters);
+                    .filter_map(|(index, bit)| bit.then_some(index));
 
-                committee_offset += committee.len();
-            }
+                let mut committee_offset = 0;
+                for committee_index in committee_indices {
+                    assert!(committee_index < committee_cache.get_committee_count_per_slot());
 
-            // Bitfield length matches total number of participants
-            assert_eq!(attestation.aggregation_bits.len(), committee_offset);
+                    let committee = committee_cache
+                        .get_beacon_committee(data.slot, committee_index, context)
+                        .unwrap();
+                    let mut committee_attesters = committee
+                        .iter()
+                        .enumerate()
+                        .filter_map(|(i, attester_index)| {
+                            attestation.aggregation_bits[committee_offset + i]
+                                .then_some(*attester_index)
+                        })
+                        .peekable();
+                    assert!(committee_attesters.peek().is_some());
+                    attesting_indices.extend(committee_attesters);
 
-            let state_validators = validator_cache.entry(attestation_epoch).or_insert_with(|| {
-                state_reader
-                    .active_validators(attestation_epoch, attestation_epoch)
-                    .unwrap()
-                    .collect()
-            });
-            let attesting_validators = attesting_indices
-                .iter()
-                .map(|i| *state_validators.get(i).unwrap())
-                .collect::<Vec<_>>();
+                    committee_offset += committee.len();
+                }
 
-            assert!(is_valid_indexed_attestation(
-                state_reader,
-                attesting_validators.iter().copied(),
-                &data,
-                attestation.signature
-            ));
+                // Bitfield length matches total number of participants
+                assert_eq!(attestation.aggregation_bits.len(), committee_offset);
 
-            attesting_validators
-                .iter()
-                .fold(0u64, |acc, e| acc + e.effective_balance)
-        })
-        .sum();
+                let state_validators =
+                    validator_cache.entry(attestation_epoch).or_insert_with(|| {
+                        state_reader
+                            .active_validators(attestation_epoch, attestation_epoch)
+                            .unwrap()
+                            .collect()
+                    });
+                let attesting_validators = attesting_indices
+                    .iter()
+                    .map(|i| *state_validators.get(i).unwrap())
+                    .collect::<Vec<_>>();
 
-    let total_active_balance = state_reader
-        .get_total_active_balance(link.target.epoch)
-        .unwrap();
+                assert!(is_valid_indexed_attestation(
+                    state_reader,
+                    attesting_validators.iter().copied(),
+                    &data,
+                    attestation.signature
+                ));
 
-    assert!(attesting_balance * 3 >= &total_active_balance * 2);
+                attesting_validators
+                    .iter()
+                    .fold(0u64, |acc, e| acc + e.effective_balance)
+            })
+            .sum();
+
+        let total_active_balance = state_reader
+            .get_total_active_balance(link.target.epoch)
+            .unwrap();
+
+        assert!(attesting_balance * 3 >= &total_active_balance * 2);
+    }
 
     /////////// 2. State update calculation  //////////////
     info!("2. State update calculation start");
     assert!(consensus_state.is_consistent());
-    consensus_state
-        .state_transition(&link)
-        .expect("State transition failed")
+    let mut state = consensus_state;
+
+    for link in link.iter() {
+        state = state
+            .state_transition(link)
+            .expect("State transition failed");
+    }
+    state
 }
 
 fn is_valid_indexed_attestation<'a, S: StateReader>(

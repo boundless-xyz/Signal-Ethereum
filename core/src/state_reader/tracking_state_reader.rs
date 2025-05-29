@@ -21,16 +21,16 @@ pub enum TrackingReaderError {
     HostReaderError(#[from] HostReaderError),
 }
 
-pub struct TrackingStateReader {
+pub struct TrackingStateReader<'a> {
     trusted_epoch: Epoch,
-    inner: HostStateReader,
+    inner: &'a HostStateReader,
     validator_indices: RefCell<BTreeSet<ValidatorIndex>>,
     validator_epochs: RefCell<BTreeSet<Epoch>>,
     mix_epochs: RefCell<BTreeMap<Epoch, BTreeSet<usize>>>,
 }
 
-impl TrackingStateReader {
-    pub fn new(reader: HostStateReader, trusted_epoch: Epoch) -> Self {
+impl<'a> TrackingStateReader<'a> {
+    pub fn new(reader: &'a HostStateReader, trusted_epoch: Epoch) -> Self {
         Self {
             trusted_epoch,
             inner: reader,
@@ -165,7 +165,7 @@ impl TrackingStateReader {
     }
 }
 
-impl StateReader for TrackingStateReader {
+impl<'a> StateReader for TrackingStateReader<'a> {
     type Error = TrackingReaderError;
     type Context = HostContext;
 

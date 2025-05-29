@@ -1,12 +1,12 @@
-use crate::{Attestation, Checkpoint, ConsensusState, Epoch, Input, Link, Root, Slot};
+use crate::{Attestation, ConsensusState, Input, Link, Slot};
 use ethereum_consensus::{
     electra::mainnet::{BeaconBlockHeader, MAX_VALIDATORS_PER_SLOT, SignedBeaconBlockHeader},
-    phase0::mainnet::{MAX_COMMITTEES_PER_SLOT, SLOTS_PER_EPOCH},
+    phase0::mainnet::MAX_COMMITTEES_PER_SLOT,
     types::mainnet::BeaconBlock,
 };
 use futures::stream::{self, StreamExt};
-use std::{collections::BTreeMap, fmt::Display, ops::Range};
-use tracing::{debug, info};
+use std::fmt::Display;
+use tracing::debug;
 
 /// A trait to abstract reading data from an instance of a beacon chain
 /// This could be an RPC to a node or something else (e.g. test harness)
@@ -53,23 +53,35 @@ pub async fn build_input<CR: ChainReader>(
         &consensus_state,
     )
     .await?;
+    debug!("Consensus States: {:#?}", states);
 
     // We now have a list of at least 2 consensus states (one being the initial one).
     // We now need to compute the links that take us from the first state to the finalized one.
     let links = generate_links(&states)?;
 
+    // Sanity check to see the ConsensusState transition will work properly
+    for (i, link) in links.iter().enumerate() {
+        let post = states[i].state_transition(link);
+        match post {
+            Ok(post) => assert_eq!(post, states[i + 1], "State transition mismatch"),
+            Err(e) => {
+                panic!("Link {}: Transition failed: {}", i, e);
+            }
+        }
+    }
+
     let links_and_attestations =
         collect_attestations_for_links(chain_reader, &links, start_slot, end_slot).await?;
+
     for (link, attestations) in links_and_attestations.iter() {
         debug!("Link: {:?}, Attestations: {}", link, attestations.len());
     }
 
-    // TODO(ec2): Make this work for when we have multiple links
-    let (link, attestations) = links_and_attestations[0].clone();
+    let (links, attestations) = links_and_attestations.into_iter().unzip();
 
     Ok(Input {
         consensus_state,
-        link,
+        link: links,
         attestations,
         trusted_checkpoint_state_root: trusted_state_root,
     })
@@ -104,9 +116,12 @@ async fn get_next_finalization<CR: ChainReader>(
 
         // Found the next consensus state
         if curr_consensus_state != next_consensus_state
-            && curr_consensus_state.previous_justified_checkpoint.epoch
-                < next_consensus_state.previous_justified_checkpoint.epoch
+            && curr_consensus_state.current_justified_checkpoint.epoch
+                < next_consensus_state.current_justified_checkpoint.epoch
         {
+            // There can be the case where the the consensus state changes, but there is no new justification or finalization,
+            // so we can skip it.
+
             states.push(next_consensus_state.clone());
             // New finality event
             if curr_consensus_state.finalized_checkpoint
@@ -177,7 +192,7 @@ async fn collect_attestations_for_links(
 }
 
 // Given a list of consensus states, generate the links that can be used to evolve the state
-// to the next finalized state.
+// to the next finalized state. This assumes the states are sorted
 fn generate_links(states: &[ConsensusState]) -> Result<Vec<Link>, InputBuilderError> {
     let mut links = Vec::new();
 
@@ -193,23 +208,32 @@ fn generate_links(states: &[ConsensusState]) -> Result<Vec<Link>, InputBuilderEr
         }
     }
 
-    // TODO(ec2): This is still not exactly correct. Only for 1 finality right now. Will fix.
-    for i in 0..states.len() - 1 {
+    for i in 0..(states.len() - 1) {
         let prev_state = &states[i];
         let curr_state = &states[i + 1];
-        // We've reached the end
-        if curr_state.finalized_checkpoint == prev_state.current_justified_checkpoint {
-            assert!(
-                i == states.len() - 2,
-                "Last state must be the finalized one"
-            );
+
+        if curr_state.finalized_checkpoint == prev_state.current_justified_checkpoint
+            || curr_state.finalized_checkpoint == prev_state.previous_justified_checkpoint
+        {
             links.push(Link {
-                source: curr_state.finalized_checkpoint.into(),
+                source: prev_state.current_justified_checkpoint.into(),
                 target: curr_state.current_justified_checkpoint.into(),
             });
-            break;
+        } else if curr_state.current_justified_checkpoint == prev_state.current_justified_checkpoint
+            || curr_state.current_justified_checkpoint == prev_state.previous_justified_checkpoint
+        {
+            // This is the case where we dont have any justification
+            continue;
+        } else {
+            links.push(Link {
+                source: prev_state.current_justified_checkpoint.into(),
+                target: curr_state.current_justified_checkpoint.into(),
+            });
         }
     }
 
+    if links.is_empty() {
+        return Err(InputBuilderError::FailedToFindLink);
+    }
     Ok(links)
 }

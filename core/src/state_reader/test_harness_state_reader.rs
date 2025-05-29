@@ -179,10 +179,18 @@ where
         state_id: impl std::fmt::Display,
     ) -> Result<crate::ConsensusState, anyhow::Error> {
         let state = match SlotOrRoot::from_str(&state_id.to_string()) {
-            Ok(SlotOrRoot::Slot(slot)) => self
-                .inner
-                .chain
-                .state_at_slot(slot.into(), StateSkipConfig::WithStateRoots),
+            Ok(SlotOrRoot::Slot(slot)) => {
+                if slot > self.inner.chain.head().head_slot().as_u64() {
+                    return Err(anyhow::anyhow!(
+                        "Requested slot {} is beyond the head slot {}",
+                        slot,
+                        self.inner.chain.head().head_slot().as_u64()
+                    ));
+                }
+                self.inner
+                    .chain
+                    .state_at_slot(slot.into(), StateSkipConfig::WithStateRoots)
+            }
             Ok(SlotOrRoot::Root(root)) => self
                 .inner
                 .chain

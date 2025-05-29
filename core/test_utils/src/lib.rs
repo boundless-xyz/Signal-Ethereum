@@ -8,7 +8,7 @@ use beacon_types::{ChainSpec, Epoch, EthSpec, Keypair, MainnetEthSpec};
 use z_core::ConsensusState;
 
 type E = MainnetEthSpec;
-type TestHarness = BeaconChainHarness<EphemeralHarnessType<E>>;
+pub type TestHarness = BeaconChainHarness<EphemeralHarnessType<E>>;
 
 pub const VALIDATOR_COUNT: usize = 16;
 
@@ -60,6 +60,9 @@ pub async fn get_harness(keypairs: Vec<Keypair>, spec: Arc<ChainSpec>) -> TestHa
     harness
         .extend_to_slot(electra_fork_slot + harness.slots_per_epoch() * 3)
         .await;
+
+    harness.advance_slot();
+
     harness
 }
 

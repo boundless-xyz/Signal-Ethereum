@@ -1,17 +1,14 @@
-use std::{num::NonZeroUsize, sync::Arc};
+use std::sync::Arc;
 
 use beacon_chain::{
-    store::{self, StoreConfig, database::interface::BeaconNodeBackend},
-    test_utils::{BeaconChainHarness, DiskHarnessType},
+    ChainConfig,
+    test_utils::{BeaconChainHarness, EphemeralHarnessType},
 };
 use beacon_types::{ChainSpec, Epoch, EthSpec, Keypair, MainnetEthSpec};
-use sloggers::{Build, null::NullLoggerBuilder};
-use tempfile::TempDir;
 use z_core::ConsensusState;
 
 type E = MainnetEthSpec;
-type TestHarness = BeaconChainHarness<DiskHarnessType<E>>;
-type HotColdDB = store::HotColdDB<E, BeaconNodeBackend<E>, BeaconNodeBackend<E>>;
+type TestHarness = BeaconChainHarness<EphemeralHarnessType<E>>;
 
 pub const VALIDATOR_COUNT: usize = 16;
 
@@ -31,37 +28,15 @@ pub fn get_spec() -> Arc<ChainSpec> {
     Arc::new(spec)
 }
 
-pub fn get_store(db_path: &TempDir, spec: Arc<ChainSpec>) -> Arc<HotColdDB> {
-    let hot_path = db_path.path().join("hot_db");
-    let cold_path = db_path.path().join("cold_db");
-    let blobs_path = db_path.path().join("blobs_db");
-    let config = StoreConfig {
-        state_cache_size: NonZeroUsize::new(9999).unwrap(),
-        block_cache_size: NonZeroUsize::new(9999).unwrap(),
-        ..Default::default()
-    };
-    let log = NullLoggerBuilder.build().expect("logger should build");
-    HotColdDB::open(
-        &hot_path,
-        &cold_path,
-        &blobs_path,
-        |_, _, _| Ok(()),
-        config,
-        spec,
-        log,
-    )
-    .expect("disk store should initialize")
-}
-
-pub async fn get_harness(
-    keypairs: Vec<Keypair>,
-    store: Arc<HotColdDB>,
-    spec: Arc<ChainSpec>,
-) -> TestHarness {
+pub async fn get_harness(keypairs: Vec<Keypair>, spec: Arc<ChainSpec>) -> TestHarness {
     let harness = BeaconChainHarness::builder(MainnetEthSpec)
         .spec(spec.clone())
+        .chain_config(ChainConfig {
+            reconstruct_historic_states: true,
+            ..Default::default()
+        })
         .keypairs(keypairs)
-        .fresh_disk_store(store)
+        .fresh_ephemeral_store()
         .mock_execution_layer()
         .build();
 

@@ -11,7 +11,7 @@ use beacon_chain::{
     BeaconChainError, BeaconChainTypes, StateSkipConfig, WhenSlotSkipped,
     test_utils::BeaconChainHarness,
 };
-use beacon_types::{BeaconState, EthSpec, Hash256, MainnetEthSpec, Validator};
+use beacon_types::{BeaconState, EthSpec, Hash256, Validator};
 use elsa::FrozenMap;
 use std::str::FromStr;
 use thiserror::Error;

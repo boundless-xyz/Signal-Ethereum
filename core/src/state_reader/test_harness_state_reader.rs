@@ -149,25 +149,29 @@ where
         &self,
         block_id: impl std::fmt::Display,
     ) -> Result<ethereum_consensus::types::mainnet::BeaconBlock, anyhow::Error> {
-        let signed_block = match SlotOrRoot::from_str(&block_id.to_string()) {
-            Ok(SlotOrRoot::Slot(slot)) => {
-                // need to do this two-step call because otherwise we end up with a blinded block
-                let root = self
-                    .inner
-                    .chain
-                    .block_root_at_slot(slot.into(), WhenSlotSkipped::None)
-                    .map_err(|_| anyhow::anyhow!("Failed to get block"))?
-                    .unwrap();
-                self.inner.chain.get_block(&root).await
-            }
-            Ok(SlotOrRoot::Root(root)) => self.inner.chain.get_block(&root).await,
+        let root = match SlotOrRoot::from_str(&block_id.to_string()) {
+            Ok(SlotOrRoot::Slot(slot)) => self
+                .inner
+                .chain
+                .block_root_at_slot(slot.into(), WhenSlotSkipped::None)
+                .map_err(|_| anyhow::anyhow!("Failed to get block"))?
+                .ok_or(anyhow::anyhow!("Block not found at slot {}", slot))?,
+            Ok(SlotOrRoot::Root(root)) => root,
             Err(e) => return Err(e),
-        }
-        .unwrap()
-        .unwrap();
+        };
 
-        let (block, _) = signed_block.deconstruct();
-        Ok(convert_via_json(block.as_electra().unwrap())?)
+        let signed_block = self
+            .inner
+            .chain
+            .get_block(&root)
+            .await
+            .transpose()
+            .ok_or(anyhow::anyhow!("Block not found at root {}", root))?;
+
+        let (block, _) = signed_block
+            .map_err(|e| anyhow::anyhow!("Failed retrieving block: {:?}", e))?
+            .deconstruct();
+        Ok(convert_via_json(block.as_electra().expect("electra only"))?)
     }
 
     async fn get_consensus_state(
@@ -184,10 +188,10 @@ where
                 .chain
                 .get_state(&root, None, true)
                 .transpose()
-                .unwrap(),
+                .ok_or(anyhow::anyhow!("State not found at root {}", root))?,
             Err(e) => return Err(e),
         }
-        .unwrap();
+        .map_err(|e| anyhow::anyhow!("Failed retrieving state: {:?}", e))?;
         Ok(consensus_state_from_state(&state))
     }
 }

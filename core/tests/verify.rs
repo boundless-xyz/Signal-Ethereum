@@ -16,7 +16,6 @@ static KEYPAIRS: LazyLock<Vec<Keypair>> =
 #[tokio::test]
 // #[tracing_test::traced_test]
 async fn simple_finalize_epoch() {
-    // If you drop the temp_dir or store then the harness will break FYI
     let spec = get_spec();
     let harness = get_harness(KEYPAIRS[..].to_vec(), spec).await;
 

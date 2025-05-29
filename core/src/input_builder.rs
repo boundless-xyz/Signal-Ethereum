@@ -208,7 +208,6 @@ fn generate_links(states: &[ConsensusState]) -> Result<Vec<Link>, InputBuilderEr
         }
     }
 
-    // TODO(ec2): This is still not exactly correct. Only for 1 finality right now. Will fix.
     for i in 0..(states.len() - 1) {
         let prev_state = &states[i];
         let curr_state = &states[i + 1];

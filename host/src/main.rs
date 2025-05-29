@@ -1,21 +1,27 @@
 use beacon_api_client::{BlockId, StateId};
 use clap::{Parser, ValueEnum};
-use ethereum_consensus::electra::{Checkpoint, Context, Epoch};
-use futures::StreamExt;
+use ethereum_consensus::{
+    electra::{Context, Epoch},
+    phase0::mainnet::SLOTS_PER_EPOCH,
+};
 use methods::BEACON_GUEST_ELF;
 use risc0_zkvm::{default_executor, ExecutorEnv};
 use ssz_rs::prelude::*;
-use std::{fmt, fs, path::PathBuf};
-use tracing::{debug, info, trace, warn};
+use std::{
+    fmt::{self, Display},
+    fs,
+    path::PathBuf,
+};
+use tracing::{info, warn};
 use url::Url;
 use z_core::{
-    mainnet::BeaconState, verify, AssertStateReader, ConsensusState, Ctx, GuestContext,
-    HostStateReader, Input, Link, StateInput, StateReader,
+    build_input, verify, AssertStateReader, ConsensusState, Ctx, GuestContext, HostContext,
+    HostStateReader, Input, Root, StateInput,
 };
 
-mod beacon_client;
+pub mod beacon_client;
 
-use crate::beacon_client::{BeaconClient, EventKind, EventTopic};
+use crate::beacon_client::BeaconClient;
 
 /// CLI for generating and submitting ZKasper proofs
 #[derive(Parser, Debug)]
@@ -23,10 +29,10 @@ use crate::beacon_client::{BeaconClient, EventKind, EventTopic};
 struct Args {
     /// Trusted epoch
     #[clap(long)]
-    trusted_epoch: Option<Epoch>,
+    trusted_epoch: Epoch,
 
     /// Beacon API URL
-    #[clap(long)]
+    #[clap(long, env = "BEACON_RPC_URL")]
     beacon_api: Url,
 
     /// Max Beacon API requests per second (0 to disable rate limit)
@@ -45,17 +51,39 @@ struct Args {
     command: Command,
 }
 
+#[derive(Eq, PartialEq, Debug, Clone, Copy, ValueEnum)]
+enum ExecMode {
+    Native,
+    Ssz,
+    R0vm,
+}
+
+impl Display for ExecMode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ExecMode::Native => write!(f, "native"),
+            ExecMode::Ssz => write!(f, "ssz"),
+            ExecMode::R0vm => write!(f, "r0vm"),
+        }
+    }
+}
+
 /// Subcommands of the publisher CLI.
 #[derive(Parser, Debug)]
 enum Command {
     /// Runs FFG verification in R0VM Executor
-    #[clap(name = "exec")]
-    Exec,
-    /// Runs FFG verification in the host
-    #[clap(name = "native-exec")]
-    NativeExec,
-    #[clap(name = "daemon")]
-    Daemon,
+    #[clap(name = "verify")]
+    Verify {
+        /// If true, runs in R0VM as well, otherwise runs natively
+        #[clap(long, default_value_t = ExecMode::Native)]
+        mode: ExecMode,
+        /// Number of iterations to run
+        #[clap(short('i'), long, default_value_t = 1)]
+        iterations: u64,
+        /// If the provided trusted epoch does not have its state cached, use this block root to find the state
+        #[clap(long)]
+        trusted_block_root: Option<Root>,
+    },
 }
 
 /// Enum for network selection
@@ -94,58 +122,145 @@ async fn main() -> anyhow::Result<()> {
     let state_dir = args.data_dir.join(args.network.to_string()).join("states");
     fs::create_dir_all(&state_dir)?;
 
+    let reader = HostStateReader::new_with_dir(&state_dir, context.clone().into())?;
+
     match args.command {
-        Command::Exec => {
-            let reader = HostStateReader::new_with_dir(&state_dir, context.into())?;
-            let trusted_epoch = args.trusted_epoch.expect("trusted_epoch is required");
-            let trusted_checkpoint = Checkpoint {
-                epoch: trusted_epoch,
-                // TODO(ec2): this should be the root of the block at the trusted checkpoint
-                root: Default::default(),
+        Command::Verify {
+            mode,
+            iterations,
+            trusted_block_root,
+            ..
+        } => {
+            let trusted_state = match reader.get_beacon_state_by_epoch(args.trusted_epoch) {
+                Ok(state) => state,
+                Err(_) => {
+                    let block = if let Some(root) = trusted_block_root {
+                        warn!(
+                            "No state found for epoch {}, trying to fetch via trusted block root: {}",
+                            args.trusted_epoch, root
+                        );
+
+                        beacon_client.get_block(BlockId::Root(root)).await?
+                    } else {
+                        return Err(anyhow::anyhow!(
+                            "No state found for epoch {}, and no trusted block root provided",
+                            args.trusted_epoch
+                        ));
+                    };
+                    cache_beacon_state_root::<HostContext>(
+                        context.into(),
+                        &beacon_client,
+                        StateId::Root(block.state_root()),
+                        &state_dir,
+                    )
+                    .await?;
+
+                    // TODO(ec2): We should check if the state corresponds to the trusted epoch
+                    reader
+                        .get_beacon_state_by_epoch(args.trusted_epoch)
+                        .expect("Failed to establish trusted state")
+                }
             };
 
-            let input = compute_next_candidate(&beacon_client, trusted_checkpoint, &reader).await;
+            info!(
+                "Trusted Beacon State slot: {}, root: {}",
+                trusted_state.slot(),
+                trusted_state.hash_tree_root().unwrap()
+            );
 
-            let reader = reader.track(input.consensus_state.finalized_checkpoint.epoch);
-            verify(&reader, input.clone()); // will panic if verification fails
-
-            let state_input = reader.to_input();
-            let ssz_reader = state_input
-                .clone()
-                .into_state_reader(input.trusted_checkpoint_state_root, &GuestContext);
-
-            verify(&AssertStateReader::new(&ssz_reader, &reader), input.clone()); // will panic if verification fails
-
-            info!("Running FFG Verification in R0VM");
-            let journal = execute_guest_program(state_input, input, GuestContext);
-            info!("Journal: {:?}", journal);
-        }
-        Command::NativeExec => {
-            let reader = HostStateReader::new_with_dir(&state_dir, context.into())?;
-            let trusted_epoch = args.trusted_epoch.expect("trusted_epoch is required");
-            let trusted_checkpoint = Checkpoint {
-                epoch: trusted_epoch,
-                // TODO(ec2): this should be the root of the block at the trusted checkpoint
-                root: Default::default(),
+            // set the initial consensus state from the beacon state at `from_epoch`
+            let mut consensus_state = ConsensusState {
+                finalized_checkpoint: trusted_state.finalized_checkpoint().clone().into(),
+                current_justified_checkpoint: trusted_state
+                    .current_justified_checkpoint()
+                    .clone()
+                    .into(),
+                previous_justified_checkpoint: trusted_state
+                    .previous_justified_checkpoint()
+                    .clone()
+                    .into(),
             };
 
-            let input = compute_next_candidate(&beacon_client, trusted_checkpoint, &reader).await;
+            for i in 0..iterations {
+                tracing::info!("Iteration: {}", i);
+                let input = build_input(&beacon_client, consensus_state.clone()).await?;
+                tracing::debug!("Input: {:?}", input);
 
-            let reader = reader.track(input.consensus_state.finalized_checkpoint.epoch);
-            verify(&reader, input.clone()); // will panic if verification fails
+                for epoch in input.consensus_state.finalized_checkpoint.epoch
+                    ..=input.consensus_state.finalized_checkpoint.epoch + 3
+                {
+                    tracing::debug!("Caching beacon state for epoch: {}", epoch);
+                    cache_beacon_state(&beacon_client, epoch, &state_dir).await?;
+                }
 
-            let state_input = reader.to_input();
-            let ssz_reader =
-                state_input.into_state_reader(input.trusted_checkpoint_state_root, &GuestContext);
-
-            verify(&AssertStateReader::new(&ssz_reader, &reader), input.clone());
-            // will panic if verification fails
-        }
-        Command::Daemon => {
-            daemon(state_dir, &beacon_client).await?;
+                consensus_state = run_verify(mode, &reader, input.clone())?; // will panic if verification fails
+            }
         }
     }
 
+    Ok(())
+}
+
+fn run_verify(
+    mode: ExecMode,
+    host_reader: &HostStateReader,
+    input: Input,
+) -> anyhow::Result<ConsensusState> {
+    info!("Running Verification in mode: {mode}");
+
+    let reader = host_reader.track(input.consensus_state.finalized_checkpoint.epoch);
+    let consensus_state = verify(&reader, input.clone()); // will panic if verification fails
+    info!("Native Verification Success!");
+
+    if mode == ExecMode::Ssz || mode == ExecMode::R0vm {
+        let state_input = reader.to_input();
+        let ssz_reader = state_input
+            .clone()
+            .into_state_reader(input.trusted_checkpoint_state_root, &GuestContext);
+        let ssz_consensus_state =
+            verify(&AssertStateReader::new(&ssz_reader, &reader), input.clone()); // will panic if verification fails
+        info!("Ssz Verification Success!");
+        assert_eq!(
+            ssz_consensus_state, consensus_state,
+            "Native and Ssz output mismatch"
+        );
+
+        if mode == ExecMode::R0vm {
+            let journal = execute_guest_program(state_input, input, GuestContext);
+            info!("Journal: {:?}", journal);
+        }
+    }
+
+    tracing::info!("Consensus state: {:#?}", consensus_state);
+
+    Ok(consensus_state)
+}
+
+async fn cache_beacon_state(
+    beacon_client: &BeaconClient,
+    epoch: u64,
+    cache_dir: &std::path::Path,
+) -> anyhow::Result<()> {
+    let s = beacon_client
+        .get_beacon_state(epoch * SLOTS_PER_EPOCH)
+        .await?;
+    let file_name = cache_dir.join(format!("{}_beacon_state.ssz", epoch));
+    tracing::debug!("Writing state to: {}", file_name.display());
+    fs::write(file_name, &ssz_rs::serialize(&s)?)?;
+    Ok(())
+}
+
+async fn cache_beacon_state_root<C: Ctx>(
+    c: C,
+    beacon_client: &BeaconClient,
+    id: StateId,
+    cache_dir: &std::path::Path,
+) -> anyhow::Result<()> {
+    let s = beacon_client.get_beacon_state(id).await?;
+    let epoch = c.compute_epoch_at_slot(s.slot());
+    let file_name = cache_dir.join(format!("{}_beacon_state.ssz", epoch));
+    tracing::debug!("Writing state to: {}", file_name.display());
+    fs::write(file_name, &ssz_rs::serialize(&s)?)?;
     Ok(())
 }
 
@@ -173,207 +288,4 @@ fn execute_guest_program(state_input: StateInput, input: Input, context: GuestCo
         .expect("failed to execute guest program");
     info!("{} user cycles executed.", session_info.cycles());
     session_info.journal.bytes
-}
-
-async fn compute_next_candidate(
-    beacon_client: &beacon_client::BeaconClient,
-    trusted_checkpoint: Checkpoint,
-    reader: &HostStateReader,
-) -> Input {
-    // 1. Start with trusted checkpoint (CP_T)
-    let trusted_state = reader
-        .get_beacon_state_by_epoch(trusted_checkpoint.epoch)
-        .expect("trusted state should exist");
-    info!(
-        "Trusted State epoch: {}, slot: {}",
-        trusted_checkpoint.epoch,
-        trusted_state.slot()
-    );
-
-    // 2. Find the next_state where CP_T == next_state.finalized_checkpoint
-    // We know this must exist and must be at most 3? epochs ahead because of finalization rules
-    let mut next_state: Option<&BeaconState> = None;
-    for epoch in trusted_checkpoint.epoch + 1..trusted_checkpoint.epoch + 3 {
-        let state = reader.get_beacon_state_by_epoch(epoch).unwrap();
-        trace!(
-            r#"
-            State {epoch} Previous Justified: {:?}
-            State {epoch} Current Finalized: {:?}
-            State {epoch} Current Justified: {:?}
-            "#,
-            state.previous_justified_checkpoint(),
-            state.finalized_checkpoint(),
-            state.current_justified_checkpoint(),
-        );
-        // TODO(ec2): We really should be checking the root as well
-        if state.finalized_checkpoint().epoch == trusted_checkpoint.epoch {
-            next_state = Some(state);
-            break;
-        }
-    }
-    let next_state = next_state.expect("Next state should exist");
-    debug!(
-        r#"
-        Trusted State was finalized at epoch: {}
-            Previous Justified: {:?} (trusted checkpoint)
-            Current Finalized: {:?} (trusted checkpoint)
-            Current Justified: {:?} (new source)
-
-        "#,
-        reader.context().compute_epoch_at_slot(next_state.slot()),
-        next_state.previous_justified_checkpoint(),
-        next_state.finalized_checkpoint(),
-        next_state.current_justified_checkpoint(),
-    );
-
-    let new_previous_justified_checkpoint: Checkpoint =
-        next_state.current_justified_checkpoint().clone();
-
-    // 3. Find the state where some thing new is justified which is  where new_previous_justified_checkpoint is justified a second time
-    // This is only not the case when a justification is rolled back... Do we need to handle that?
-    // In normal times, this should be only a few epochs, but in times of inactivity, this can be quite far...
-    let mut next_next_state: Option<&BeaconState> = None;
-    for epoch in new_previous_justified_checkpoint.epoch + 1.. {
-        let state = reader.get_beacon_state_by_epoch(epoch).unwrap();
-        trace!(
-            r#"
-            State {epoch} Previous Justified: {:?}
-            State {epoch} Current Finalized: {:?}
-            State {epoch} Current Justified: {:?}
-            "#,
-            state.previous_justified_checkpoint(),
-            state.finalized_checkpoint(),
-            state.current_justified_checkpoint(),
-        );
-        if state.previous_justified_checkpoint() == &new_previous_justified_checkpoint {
-            next_next_state = Some(state);
-            break;
-        }
-    }
-    let next_next_state = next_next_state.expect("Next next state should exist");
-    debug!(
-        r#"
-        Supermajority event at epoch: {}
-            Previous Justified: {:?} (source checkpoint)
-            Current Finalized: {:?} (usually source but, depends on delay or leak)
-            Current Justified: {:?} (new target)
-        "#,
-        reader
-            .context()
-            .compute_epoch_at_slot(next_next_state.slot()),
-        next_next_state.previous_justified_checkpoint(),
-        next_next_state.finalized_checkpoint(),
-        next_next_state.current_justified_checkpoint(),
-    );
-
-    // 4. Link construction
-    let source = new_previous_justified_checkpoint;
-    let target = next_next_state.current_justified_checkpoint().clone();
-    let link = Link {
-        source: source.clone().into(),
-        target: target.clone().into(),
-    };
-
-    info!("Link to be verified: {:#?}", link);
-
-    let mut blocks = Vec::new();
-    info!(
-        "Get blocks from trusted checkpoint slot {} to where target checkpoint gets justified {}",
-        trusted_state.slot(),
-        next_next_state.slot()
-    );
-
-    for slot in trusted_state.slot()..=next_next_state.slot() {
-        let block = beacon_client.get_block(BlockId::Slot(slot)).await;
-        match block {
-            Ok(block) => blocks.push(block),
-            Err(e) => warn!("Failed to get block {}: {}", slot, e),
-        }
-    }
-
-    let attestations = blocks
-        .iter()
-        .flat_map(|b| match b.body() {
-            ethereum_consensus::types::BeaconBlockBodyRef::Electra(body) => {
-                body.attestations.iter().cloned().collect::<Vec<_>>()
-            }
-            _ => unimplemented!("Electra Only!"),
-        })
-        .filter(|a| a.data.target == target && a.data.source == source)
-        .collect::<Vec<_>>();
-
-    info!("Got {} attestations", attestations.len());
-
-    // TODO(willem): This is hard-coded for one-finality. Need to add extra conditions for building inputs for the other cases
-    // TODO(ec2): I think i've covered the other cases, pls confirm
-    Input {
-        consensus_state: ConsensusState {
-            finalized_checkpoint: next_state.finalized_checkpoint().clone().into(),
-            current_justified_checkpoint: next_state.current_justified_checkpoint().clone().into(),
-            previous_justified_checkpoint: next_state
-                .previous_justified_checkpoint()
-                .clone()
-                .into(),
-        },
-        link,
-        attestations: attestations.into_iter().map(Into::into).collect(),
-        trusted_checkpoint_state_root: trusted_state.hash_tree_root().unwrap(),
-    }
-}
-
-async fn daemon(
-    data_dir: impl Into<PathBuf>,
-    beacon_client: &beacon_client::BeaconClient,
-) -> anyhow::Result<()> {
-    let data_dir = data_dir.into();
-
-    let head = beacon_client.get_block(BlockId::Head).await?;
-    info!("Current Chain Head Block: {:?}", head.slot());
-
-    let cp = beacon_client
-        .get_finality_checkpoints(StateId::Head)
-        .await?;
-    info!(
-        r#"Previous Justified Checkpoint: {:?}
-   Current Justified Checkpoint: {:?}
-   Current Finalize Checkpoint: {:?}"#,
-        cp.previous_justified, cp.current_justified, cp.finalized
-    );
-
-    let mut event_stream = beacon_client
-        .get_events(&[EventTopic::Head, EventTopic::FinalizedCheckpoint])
-        .await
-        .unwrap();
-
-    info!("event stream started");
-    while let Some(event) = event_stream.next().await {
-        match event {
-            Ok(EventKind::Head(h)) => {
-                info!(
-                    "New Head at slot: {}, state: {}, epoch_transition {}",
-                    h.slot, h.state, h.epoch_transition
-                );
-            }
-            Ok(EventKind::FinalizedCheckpoint(cp)) => {
-                info!(
-                    "New finalized cp epoch: {}, block: {}, state: {}",
-                    cp.epoch, cp.block, cp.state
-                );
-                let s = beacon_client
-                    .get_beacon_state_ssz(StateId::Root(cp.state))
-                    .await?;
-                let file_name = data_dir.join(format!("{}_beacon_state.ssz", cp.epoch));
-                debug!("Writing state to: {}", file_name.display());
-                fs::write(file_name, &ssz_rs::serialize(&s)?)?;
-            }
-            Err(e) => {
-                warn!("Error: {:?}", e);
-            }
-            _ => {
-                warn!("Unknown event: {:?}", event);
-            }
-        }
-    }
-
-    Ok(())
 }

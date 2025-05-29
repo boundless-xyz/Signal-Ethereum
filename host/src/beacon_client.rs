@@ -35,7 +35,7 @@ use std::fmt::{self, Display};
 use std::path::PathBuf;
 use tracing::{info, warn};
 use url::Url;
-use z_core::mainnet::BeaconState;
+use z_core::{mainnet::BeaconState, ChainReader};
 
 /// Errors returned by the [BeaconClient].
 #[derive(Debug, thiserror::Error)]
@@ -389,5 +389,50 @@ impl BeaconClient {
                 Err(err) => Some(Err(format!("{:?}", err))),
             }
         })))
+    }
+}
+
+impl ChainReader for BeaconClient {
+    async fn get_block_header(
+        &self,
+        block_id: impl Display,
+    ) -> Result<SignedBeaconBlockHeader, anyhow::Error> {
+        self.get_block_header(block_id)
+            .await
+            .map_err(|e| anyhow::anyhow!(e))
+    }
+
+    async fn get_block(&self, block_id: impl Display) -> Result<BeaconBlock, anyhow::Error> {
+        self.get_block(block_id)
+            .await
+            .map_err(|e| anyhow::anyhow!(e))
+    }
+
+    async fn get_consensus_state(
+        &self,
+        state_id: impl Display,
+    ) -> Result<z_core::ConsensusState, anyhow::Error> {
+        let FinalityCheckpoints {
+            finalized,
+            current_justified,
+            previous_justified,
+        } = self
+            .get_finality_checkpoints(state_id)
+            .await
+            .map_err(|e| anyhow::anyhow!(e))?;
+        Ok(z_core::ConsensusState {
+            finalized_checkpoint: z_core::Checkpoint {
+                epoch: finalized.epoch,
+                root: finalized.root,
+            },
+            current_justified_checkpoint: z_core::Checkpoint {
+                epoch: current_justified.epoch,
+                root: current_justified.root,
+            },
+            previous_justified_checkpoint: z_core::Checkpoint {
+                epoch: previous_justified.epoch,
+                root: previous_justified.root,
+            },
+        })
     }
 }

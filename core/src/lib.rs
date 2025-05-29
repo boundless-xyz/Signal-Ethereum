@@ -1,5 +1,7 @@
 extern crate alloc;
 
+use core::fmt;
+
 use alloy_primitives::B256;
 use ssz_rs::prelude::*;
 #[cfg(feature = "host")]
@@ -8,6 +10,8 @@ mod bls;
 mod committee_cache;
 mod consensus_state;
 mod context;
+#[cfg(feature = "host")]
+mod input_builder;
 mod shuffle_list;
 mod state_patch;
 mod state_reader;
@@ -19,17 +23,19 @@ pub use bls::*;
 pub use committee_cache::*;
 pub use consensus_state::*;
 pub use context::*;
+#[cfg(feature = "host")]
+pub use input_builder::*;
 pub use state_patch::*;
 pub use state_reader::*;
 pub use verify::*;
 
 // Need to redefine/redeclare a bunch of types and constants because we can't use ssz-rs and ethereum-consensus in the guest
 
-type Epoch = u64;
-type Slot = u64;
+pub type Epoch = u64;
+pub type Slot = u64;
 type CommitteeIndex = usize;
 type ValidatorIndex = usize;
-type Root = B256;
+pub type Root = B256;
 pub type Version = [u8; 4];
 pub type ForkDigest = [u8; 4];
 pub type Domain = [u8; 32];
@@ -45,19 +51,41 @@ pub const VALIDATOR_TREE_DEPTH: u32 = 3;
 /// The depth of the Merkle tree of the BeaconState container.
 pub const BEACON_STATE_TREE_DEPTH: u32 = 6;
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct Input {
     pub consensus_state: ConsensusState,
-    pub link: Link,
+    pub link: Vec<Link>,
 
     pub attestations: Vec<
-        Attestation<
-            { MAX_VALIDATORS_PER_COMMITTEE * MAX_COMMITTEES_PER_SLOT },
-            MAX_COMMITTEES_PER_SLOT,
+        Vec<
+            Attestation<
+                { MAX_VALIDATORS_PER_COMMITTEE * MAX_COMMITTEES_PER_SLOT },
+                MAX_COMMITTEES_PER_SLOT,
+            >,
         >,
     >,
 
     pub trusted_checkpoint_state_root: Root, // The state root at trusted_checkpoint
+}
+impl fmt::Debug for Input {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Input")
+            .field("consensus_state", &self.consensus_state)
+            .field("link", &self.link)
+            .field(
+                "attestations",
+                &self
+                    .attestations
+                    .iter()
+                    .map(|a| a.len())
+                    .collect::<Vec<usize>>(),
+            )
+            .field(
+                "trusted_checkpoint_state_root",
+                &self.trusted_checkpoint_state_root,
+            )
+            .finish()
+    }
 }
 
 #[derive(Eq, PartialEq, Clone, Debug, serde::Serialize, serde::Deserialize)]

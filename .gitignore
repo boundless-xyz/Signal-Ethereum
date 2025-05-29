@@ -5,3 +5,5 @@ target/
 *.ssz
 data/
 *.pb
+.cache
+.env

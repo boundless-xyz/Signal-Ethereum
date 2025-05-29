@@ -96,8 +96,8 @@ impl HostStateReader {
         Ok(Self::new(provider.into(), context))
     }
 
-    pub fn track(self, at_epoch: Epoch) -> TrackingStateReader {
-        TrackingStateReader::new(self, at_epoch)
+    pub fn track(&self, at_epoch: Epoch) -> TrackingStateReader<'_> {
+        TrackingStateReader::new(&self, at_epoch)
     }
 
     pub fn get_beacon_state_by_epoch(&self, epoch: Epoch) -> Result<&BeaconState, HostReaderError> {

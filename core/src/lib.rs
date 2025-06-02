@@ -44,8 +44,6 @@ pub type ForkDigest = [u8; 4];
 pub type Domain = [u8; 32];
 
 // Mainnet constants
-// pub const MAX_VALIDATORS_PER_COMMITTEE: usize = 2048; // 2**11
-// pub const MAX_COMMITTEES_PER_SLOT: usize = 64; // 2**6
 pub type MaxValidatorsPerSlot = U131072; // 2**11
 pub type MaxCommitteesPerSlot = U64; // 2**6
 pub const BEACON_ATTESTER_DOMAIN: [u8; 4] = 1u32.to_le_bytes();
@@ -126,14 +124,6 @@ pub struct Attestation {
     pub committee_bits: ssz_types::BitVector<MaxCommitteesPerSlot>,
 }
 
-// // Note: This is was updated in electra.
-// #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-// pub struct Attestation<const MAX_VALIDATORS_PER_SLOT: usize, const MAX_COMMITTEES_PER_SLOT: usize> {
-//     pub aggregation_bits: Bitlist<MAX_VALIDATORS_PER_SLOT>,
-//     pub data: AttestationData,
-//     pub signature: Signature,
-//     pub committee_bits: Bitvector<MAX_COMMITTEES_PER_SLOT>,
-// }
 #[cfg_attr(feature = "host", derive(SimpleSerialize))]
 #[derive(
     Clone,

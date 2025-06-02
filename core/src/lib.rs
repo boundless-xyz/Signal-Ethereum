@@ -4,8 +4,6 @@ use core::fmt;
 
 use alloy_primitives::B256;
 #[cfg(feature = "host")]
-use ssz_rs::prelude::*;
-#[cfg(feature = "host")]
 mod beacon_state;
 mod bls;
 mod committee_cache;
@@ -105,7 +103,6 @@ impl From<&ethereum_consensus::phase0::Validator> for ValidatorInfo {
     }
 }
 
-#[cfg_attr(feature = "host", derive(SimpleSerialize))]
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize, TreeHash)]
 pub struct AttestationData {
     pub slot: Slot,
@@ -124,7 +121,6 @@ pub struct Attestation {
     pub committee_bits: ssz_types::BitVector<MaxCommitteesPerSlot>,
 }
 
-#[cfg_attr(feature = "host", derive(SimpleSerialize))]
 #[derive(
     Clone,
     Copy,

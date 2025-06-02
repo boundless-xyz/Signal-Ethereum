@@ -50,8 +50,8 @@ fn gen_guest_context_impl(
         let return_type = syn::parse_str::<syn::Type>(ret_type).unwrap();
 
         quote! {
-            fn #method_name(&self) -> #return_type {
-                #value as #return_type
+            pub fn #method_name(&self) -> #return_type {
+                #value
             }
         }
     });
@@ -155,7 +155,7 @@ fn gen_gindices<G>(name: String, path: &[PathElement]) -> (String, String, proc_
 where
     G: GeneralizedIndexable,
 {
-    (name, "usize".to_string(), {
+    (name, "u64".to_string(), {
         let gindex = G::generalized_index(path).unwrap() as u64;
         quote!(#gindex)
     })

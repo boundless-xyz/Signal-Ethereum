@@ -32,16 +32,16 @@ impl Ctx for GuestContext {
     }
 }
 impl GuestContext {
-    fn slot_gindex(&self) -> usize {
-        66u64 as usize
+    pub fn slot_gindex(&self) -> u64 {
+        66u64
     }
-    fn genesis_validators_root_gindex(&self) -> usize {
-        65u64 as usize
+    pub fn genesis_validators_root_gindex(&self) -> u64 {
+        65u64
     }
-    fn fork_current_version_gindex(&self) -> usize {
-        269u64 as usize
+    pub fn fork_current_version_gindex(&self) -> u64 {
+        269u64
     }
-    fn validators_gindex(&self) -> usize {
-        75u64 as usize
+    pub fn validators_gindex(&self) -> u64 {
+        75u64
     }
 }

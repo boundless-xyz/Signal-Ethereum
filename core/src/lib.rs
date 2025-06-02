@@ -3,7 +3,7 @@ extern crate alloc;
 use core::fmt;
 
 use alloy_primitives::B256;
-// #[cfg(feature = "host")]
+#[cfg(feature = "host")]
 use ssz_rs::prelude::*;
 #[cfg(feature = "host")]
 mod beacon_state;
@@ -134,7 +134,7 @@ pub struct Attestation {
 //     pub signature: Signature,
 //     pub committee_bits: Bitvector<MAX_COMMITTEES_PER_SLOT>,
 // }
-
+#[cfg_attr(feature = "host", derive(SimpleSerialize))]
 #[derive(
     Clone,
     Copy,
@@ -143,7 +143,6 @@ pub struct Attestation {
     Eq,
     PartialOrd,
     Ord,
-    SimpleSerialize,
     serde::Serialize,
     serde::Deserialize,
     TreeHash,

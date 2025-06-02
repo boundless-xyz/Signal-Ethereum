@@ -1,6 +1,6 @@
 use risc0_zkvm::guest::env;
 use sha2::{Digest, Sha256};
-use z_core::{verify, GuestContext, Input, MaxCommitteesPerSlot, MaxValidatorsPerSlot, StateInput};
+use z_core::{verify, GuestContext, Input, StateInput};
 
 fn print_mem() {
     const STACK_TOP: usize = 0x0020_0400;

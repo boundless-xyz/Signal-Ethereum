@@ -223,7 +223,7 @@ pub fn compute_signing_root<T: TreeHash>(ssz_object: &T, domain: Domain) -> Root
 
 fn fork_data_root<S: StateReader>(
     state_reader: &S,
-    genesis_validators_root: ssz_rs::Node,
+    genesis_validators_root: Root,
     epoch: Epoch,
 ) -> Root {
     #[derive(TreeHash)]

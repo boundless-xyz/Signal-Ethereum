@@ -65,7 +65,6 @@ fn gen_guest_context_impl(
         impl Ctx for #struct_ident {
             type Error = ();
             #(#method_impls)*
-
         }
 
         impl #struct_ident {
@@ -91,6 +90,10 @@ where
             Path::from(&["fork".into(), "current_version".into()]),
         ),
         ("validators", Path::from(&["validators".into()])),
+        (
+            "randao_mixes_0",
+            Path::from(&["randao_mixes".into(), 0.into()]),
+        ),
     ]
     .map(|(name, path)| gen_gindices::<G>(name.to_string(), path))
     .map(|(name, ret_type, value)| (format!("{name}_gindex"), ret_type, value))

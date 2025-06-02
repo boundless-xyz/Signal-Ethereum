@@ -52,8 +52,7 @@ impl StateInput<'_> {
             .unwrap();
 
         // the remaining values of the beacon state correspond to RANDAO
-        let randao_gindex_base: u64 = ((1 << BEACON_STATE_TREE_DEPTH) + 13)
-            * context.epochs_per_historical_vector().next_power_of_two();
+        let randao_gindex_base = context.randao_mixes_0_gindex();
         let randao = beacon_state
             .map(|(gindex, randao)| {
                 // 0 <= index <= EPOCHS_PER_HISTORICAL_VECTOR

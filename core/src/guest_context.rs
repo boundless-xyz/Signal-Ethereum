@@ -44,4 +44,7 @@ impl GuestContext {
     pub fn validators_gindex(&self) -> u64 {
         75u64
     }
+    pub fn randao_mixes_0_gindex(&self) -> u64 {
+        5046272u64
+    }
 }

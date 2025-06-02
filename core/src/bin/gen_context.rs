@@ -59,7 +59,7 @@ fn gen_guest_context_impl(
     quote! {
         use crate::Ctx;
 
-        #[derive(Clone)]
+        #[derive(serde::Serialize, serde::Deserialize)]
         pub struct #struct_ident;
 
         impl Ctx for #struct_ident {

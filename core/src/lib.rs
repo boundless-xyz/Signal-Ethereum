@@ -10,6 +10,7 @@ mod bls;
 mod committee_cache;
 mod consensus_state;
 mod context;
+mod guest_context;
 #[cfg(feature = "host")]
 mod input_builder;
 mod shuffle_list;

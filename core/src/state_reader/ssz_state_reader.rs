@@ -81,7 +81,7 @@ impl StateInput<'_> {
             .public_keys
             .into_iter()
             .map(|pubkey| {
-                // TODO: verify generalized indices
+                // We do not have to verify the gindices here because they are merkle verified against the root
                 let pk_compressed = {
                     let (_, part_1) = values.next().unwrap();
                     let (_, part_2) = values.next().unwrap();

@@ -26,6 +26,7 @@ pub use consensus_state::*;
 pub use context::*;
 #[cfg(feature = "host")]
 pub use input_builder::*;
+use ssz_types::typenum::{U64, U131072};
 pub use state_patch::*;
 pub use state_reader::*;
 use tree_hash_derive::TreeHash;
@@ -43,8 +44,10 @@ pub type ForkDigest = [u8; 4];
 pub type Domain = [u8; 32];
 
 // Mainnet constants
-pub const MAX_VALIDATORS_PER_COMMITTEE: usize = 2048; // 2**11
-pub const MAX_COMMITTEES_PER_SLOT: usize = 64; // 2**6
+// pub const MAX_VALIDATORS_PER_COMMITTEE: usize = 2048; // 2**11
+// pub const MAX_COMMITTEES_PER_SLOT: usize = 64; // 2**6
+pub type MaxValidatorsPerSlot = U131072; // 2**11
+pub type MaxCommitteesPerSlot = U64; // 2**6
 pub const BEACON_ATTESTER_DOMAIN: [u8; 4] = 1u32.to_le_bytes();
 pub const VALIDATOR_REGISTRY_LIMIT: u64 = 1099511627776; // 2**40
 pub const VALIDATOR_LIST_TREE_DEPTH: u32 = VALIDATOR_REGISTRY_LIMIT.ilog2() + 1; // 41
@@ -58,17 +61,11 @@ pub struct Input {
     pub consensus_state: ConsensusState,
     pub link: Vec<Link>,
 
-    pub attestations: Vec<
-        Vec<
-            Attestation<
-                { MAX_VALIDATORS_PER_COMMITTEE * MAX_COMMITTEES_PER_SLOT },
-                MAX_COMMITTEES_PER_SLOT,
-            >,
-        >,
-    >,
+    pub attestations: Vec<Vec<Attestation>>,
 
     pub trusted_checkpoint_state_root: Root, // The state root at trusted_checkpoint
 }
+
 impl fmt::Debug for Input {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Input")
@@ -122,12 +119,21 @@ pub struct AttestationData {
 
 // Note: This is was updated in electra.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct Attestation<const MAX_VALIDATORS_PER_SLOT: usize, const MAX_COMMITTEES_PER_SLOT: usize> {
-    pub aggregation_bits: Bitlist<MAX_VALIDATORS_PER_SLOT>,
+pub struct Attestation {
+    pub aggregation_bits: ssz_types::BitList<MaxValidatorsPerSlot>,
     pub data: AttestationData,
     pub signature: Signature,
-    pub committee_bits: Bitvector<MAX_COMMITTEES_PER_SLOT>,
+    pub committee_bits: ssz_types::BitVector<MaxCommitteesPerSlot>,
 }
+
+// // Note: This is was updated in electra.
+// #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+// pub struct Attestation<const MAX_VALIDATORS_PER_SLOT: usize, const MAX_COMMITTEES_PER_SLOT: usize> {
+//     pub aggregation_bits: Bitlist<MAX_VALIDATORS_PER_SLOT>,
+//     pub data: AttestationData,
+//     pub signature: Signature,
+//     pub committee_bits: Bitvector<MAX_COMMITTEES_PER_SLOT>,
+// }
 
 #[derive(
     Clone,
@@ -181,7 +187,7 @@ impl From<ethereum_consensus::electra::AttestationData> for AttestationData {
 #[cfg(feature = "host")]
 impl<const MAX_VALIDATORS_PER_SLOT: usize, const MAX_COMMITTEES_PER_SLOT: usize>
     From<ethereum_consensus::electra::Attestation<MAX_VALIDATORS_PER_SLOT, MAX_COMMITTEES_PER_SLOT>>
-    for Attestation<MAX_VALIDATORS_PER_SLOT, MAX_COMMITTEES_PER_SLOT>
+    for Attestation
 {
     fn from(
         attestation: ethereum_consensus::electra::Attestation<
@@ -189,11 +195,18 @@ impl<const MAX_VALIDATORS_PER_SLOT: usize, const MAX_COMMITTEES_PER_SLOT: usize>
             MAX_COMMITTEES_PER_SLOT,
         >,
     ) -> Self {
+        let agg_bits_ser = ssz_rs::serialize(&attestation.aggregation_bits)
+            .expect("Failed to serialize aggregation bits");
+        let committee_bits_ser = ssz_rs::serialize(&attestation.committee_bits)
+            .expect("Failed to serialize committee bits");
+
         Self {
-            aggregation_bits: attestation.aggregation_bits,
+            aggregation_bits: ssz_types::BitList::from_bytes(agg_bits_ser.into())
+                .expect("Failed to deserialize aggregation bits"),
             data: attestation.data.into(),
             signature: attestation.signature.into(),
-            committee_bits: attestation.committee_bits,
+            committee_bits: ssz_types::BitVector::from_bytes(committee_bits_ser.into())
+                .expect("Failed to deserialize committee bits"),
         }
     }
 }

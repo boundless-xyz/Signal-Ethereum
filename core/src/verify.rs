@@ -2,9 +2,8 @@ use std::collections::BTreeSet;
 
 use crate::{
     Attestation, AttestationData, BEACON_ATTESTER_DOMAIN, CommitteeCache, Domain, Epoch, Input,
-    MAX_COMMITTEES_PER_SLOT, MAX_VALIDATORS_PER_COMMITTEE, PublicKey, Root, ShuffleData, Signature,
-    StateReader, ValidatorIndex, ValidatorInfo, Version, consensus_state::ConsensusState,
-    fast_aggregate_verify_pre_aggregated,
+    PublicKey, Root, ShuffleData, Signature, StateReader, ValidatorIndex, ValidatorInfo, Version,
+    consensus_state::ConsensusState, fast_aggregate_verify_pre_aggregated,
 };
 use alloc::collections::BTreeMap;
 use tracing::{debug, info};
@@ -72,7 +71,10 @@ pub fn verify<S: StateReader>(state_reader: &S, input: Input) -> ConsensusState 
                         .iter()
                         .enumerate()
                         .filter_map(|(i, attester_index)| {
-                            attestation.aggregation_bits[committee_offset + i]
+                            attestation
+                                .aggregation_bits
+                                .get(committee_offset + i)
+                                .unwrap()
                                 .then_some(*attester_index)
                         })
                         .peekable();
@@ -183,17 +185,11 @@ pub fn get_shufflings_for_epoch<S: StateReader>(
     .unwrap()
 }
 
-pub fn get_attesting_indices(
-    committee: &[usize],
-    attestation: &Attestation<
-        { MAX_VALIDATORS_PER_COMMITTEE * MAX_COMMITTEES_PER_SLOT },
-        MAX_COMMITTEES_PER_SLOT,
-    >,
-) -> Vec<usize> {
+pub fn get_attesting_indices(committee: &[usize], attestation: &Attestation) -> Vec<usize> {
     committee
         .iter()
         .enumerate()
-        .filter(|(i, _)| attestation.aggregation_bits[*i])
+        .filter(|(i, _)| attestation.aggregation_bits.get(*i).unwrap())
         .map(|(_, validator_index)| *validator_index)
         .collect()
 }

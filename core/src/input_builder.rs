@@ -1,7 +1,6 @@
 use crate::{Attestation, ConsensusState, Input, Link, Slot};
 use ethereum_consensus::{
-    electra::mainnet::{BeaconBlockHeader, MAX_VALIDATORS_PER_SLOT, SignedBeaconBlockHeader},
-    phase0::mainnet::MAX_COMMITTEES_PER_SLOT,
+    electra::mainnet::{BeaconBlockHeader, SignedBeaconBlockHeader},
     types::mainnet::BeaconBlock,
 };
 use futures::stream::{self, StreamExt};
@@ -141,13 +140,7 @@ async fn collect_attestations_for_links(
     links: &[Link],
     start_slot: Slot,
     end_slot: Slot,
-) -> Result<
-    Vec<(
-        Link,
-        Vec<Attestation<MAX_VALIDATORS_PER_SLOT, MAX_COMMITTEES_PER_SLOT>>,
-    )>,
-    InputBuilderError,
-> {
+) -> Result<Vec<(Link, Vec<Attestation>)>, InputBuilderError> {
     let blocks = stream::iter(start_slot..=end_slot)
         .filter_map(async |slot| {
             let block = chain_reader.get_block(slot).await;

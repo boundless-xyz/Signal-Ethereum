@@ -1,7 +1,7 @@
 use super::StateReader;
 use crate::{
-    BEACON_STATE_TREE_DEPTH, Ctx, Epoch, GuestContext, PublicKey, StatePatch,
-    VALIDATOR_LIST_TREE_DEPTH, VALIDATOR_TREE_DEPTH, ValidatorIndex, ValidatorInfo, Version,
+    Ctx, Epoch, GuestContext, PublicKey, StatePatch, VALIDATOR_LIST_TREE_DEPTH,
+    VALIDATOR_TREE_DEPTH, ValidatorIndex, ValidatorInfo, Version,
 };
 use alloy_primitives::B256;
 use serde::{Deserialize, Serialize};

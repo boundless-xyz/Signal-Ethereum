@@ -49,9 +49,6 @@ pub const VALIDATOR_REGISTRY_LIMIT: u64 = 1099511627776; // 2**40
 pub const VALIDATOR_LIST_TREE_DEPTH: u32 = VALIDATOR_REGISTRY_LIMIT.ilog2() + 1; // 41
 pub const VALIDATOR_TREE_DEPTH: u32 = 3;
 
-/// The depth of the Merkle tree of the BeaconState container.
-pub const BEACON_STATE_TREE_DEPTH: u32 = 6;
-
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct Input {
     pub consensus_state: ConsensusState,

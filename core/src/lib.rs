@@ -27,6 +27,7 @@ pub use context::*;
 pub use input_builder::*;
 pub use state_patch::*;
 pub use state_reader::*;
+use tree_hash_derive::TreeHash;
 pub use verify::*;
 
 // Need to redefine/redeclare a bunch of types and constants because we can't use ssz-rs and ethereum-consensus in the guest
@@ -108,7 +109,9 @@ impl From<&ethereum_consensus::phase0::Validator> for ValidatorInfo {
     }
 }
 
-#[derive(Clone, Debug, SimpleSerialize, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Clone, Debug, SimpleSerialize, PartialEq, Eq, serde::Serialize, serde::Deserialize, TreeHash,
+)]
 pub struct AttestationData {
     pub slot: Slot,
     pub index: CommitteeIndex,
@@ -137,6 +140,7 @@ pub struct Attestation<const MAX_VALIDATORS_PER_SLOT: usize, const MAX_COMMITTEE
     SimpleSerialize,
     serde::Serialize,
     serde::Deserialize,
+    TreeHash,
 )]
 pub struct Checkpoint {
     pub epoch: Epoch,

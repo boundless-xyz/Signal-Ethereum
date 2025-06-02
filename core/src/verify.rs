@@ -9,6 +9,8 @@ use crate::{
 use alloc::collections::BTreeMap;
 use ssz_rs::prelude::*;
 use tracing::{debug, info};
+use tree_hash::TreeHash;
+use tree_hash_derive::TreeHash;
 
 pub fn verify<S: StateReader>(state_reader: &S, input: Input) -> ConsensusState {
     let Input {
@@ -208,10 +210,10 @@ fn beacon_attester_signing_domain<S: StateReader>(state_reader: &S, epoch: Epoch
     domain
 }
 
-pub fn compute_signing_root<T: SimpleSerialize>(ssz_object: &T, domain: Domain) -> Root {
-    let object_root = ssz_object.hash_tree_root().unwrap();
+pub fn compute_signing_root<T: TreeHash>(ssz_object: &T, domain: Domain) -> Root {
+    let object_root = ssz_object.tree_hash_root();
 
-    #[derive(SimpleSerialize)]
+    #[derive(TreeHash)]
     pub struct SigningData {
         pub object_root: Root,
         pub domain: Domain,
@@ -221,15 +223,15 @@ pub fn compute_signing_root<T: SimpleSerialize>(ssz_object: &T, domain: Domain) 
         object_root,
         domain,
     };
-    s.hash_tree_root().unwrap()
+    s.tree_hash_root()
 }
 
 fn fork_data_root<S: StateReader>(
     state_reader: &S,
     genesis_validators_root: ssz_rs::Node,
     epoch: Epoch,
-) -> ssz_rs::Node {
-    #[derive(SimpleSerialize)]
+) -> Root {
+    #[derive(TreeHash)]
     struct ForkData {
         pub current_version: Version,
         pub genesis_validators_root: Root,
@@ -238,6 +240,5 @@ fn fork_data_root<S: StateReader>(
         current_version: state_reader.fork_current_version(epoch).unwrap(),
         genesis_validators_root,
     }
-    .hash_tree_root()
-    .unwrap()
+    .tree_hash_root()
 }

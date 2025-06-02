@@ -3,6 +3,7 @@ extern crate alloc;
 use core::fmt;
 
 use alloy_primitives::B256;
+// #[cfg(feature = "host")]
 use ssz_rs::prelude::*;
 #[cfg(feature = "host")]
 mod beacon_state;
@@ -109,9 +110,8 @@ impl From<&ethereum_consensus::phase0::Validator> for ValidatorInfo {
     }
 }
 
-#[derive(
-    Clone, Debug, SimpleSerialize, PartialEq, Eq, serde::Serialize, serde::Deserialize, TreeHash,
-)]
+#[cfg_attr(feature = "host", derive(SimpleSerialize))]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize, TreeHash)]
 pub struct AttestationData {
     pub slot: Slot,
     pub index: CommitteeIndex,

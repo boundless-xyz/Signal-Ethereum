@@ -1,7 +1,6 @@
 use crate::{Ctx, ValidatorIndex, ValidatorInfo};
 use alloy_primitives::B256;
 use serde::{Deserialize, Serialize};
-use ssz_rs::prelude::*;
 use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

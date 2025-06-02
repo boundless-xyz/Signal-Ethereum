@@ -7,7 +7,6 @@ use crate::{
     fast_aggregate_verify_pre_aggregated,
 };
 use alloc::collections::BTreeMap;
-use ssz_rs::prelude::*;
 use tracing::{debug, info};
 use tree_hash::TreeHash;
 use tree_hash_derive::TreeHash;

@@ -38,11 +38,18 @@ impl StateInput<'_> {
     pub fn into_state_reader(self, root: B256, context: &GuestContext) -> SszStateReader {
         let mut beacon_state = self.beacon_state.values();
 
-        // TODO: verify generalized indices
-        let (_, genesis_validators_root) = beacon_state.next().unwrap();
-        let (_, slot) = beacon_state.next().unwrap();
-        let (_, fork_current_version) = beacon_state.next().unwrap();
-        let (_, validators_root) = beacon_state.next().unwrap();
+        let genesis_validators_root = beacon_state
+            .next_assert_gindex(context.genesis_validators_root_gindex())
+            .unwrap();
+        let slot = beacon_state
+            .next_assert_gindex(context.slot_gindex())
+            .unwrap();
+        let fork_current_version = beacon_state
+            .next_assert_gindex(context.fork_current_version_gindex())
+            .unwrap();
+        let validators_root = beacon_state
+            .next_assert_gindex(context.validators_gindex())
+            .unwrap();
 
         // the remaining values of the beacon state correspond to RANDAO
         let randao_gindex_base: u64 = ((1 << BEACON_STATE_TREE_DEPTH) + 13)

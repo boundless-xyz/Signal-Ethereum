@@ -3,6 +3,12 @@ name = "z-core"
 version = "0.1.0"
 edition = "2024"
 
+[[bin]]
+name = "gen_context"
+test = false
+bench = false
+required-features = ["host"]
+
 [dependencies]
 alloy-primitives = { workspace = true, default-features = false }
 ssz_rs = { workspace = true, default-features = true, features = ["serde"] }
@@ -18,9 +24,12 @@ thiserror = { workspace = true }
 blst = { version = "0.3.14", default-features = false, features = ["serde"]}
 serde_arrays = { version = "0.2.0" }
 elsa = { version = "1.11", optional = true }
-
+quote = { version = "1.0", optional = true }
+syn = { version = "2.0", optional = true }
+proc-macro2 = { version = "1.0", optional = true }
+prettyplease = { version = "0.2", optional = true }
 [features]
 default = ["host"]
 host = [
-    "dep:ethereum-consensus", "ssz-multiproofs/builder", "blst/default", "ssz-multiproofs/progress-bar", "dep:elsa", "dep:futures"
+    "dep:ethereum-consensus", "ssz-multiproofs/builder", "blst/default", "ssz-multiproofs/progress-bar", "dep:elsa", "dep:futures", "dep:quote", "dep:syn", "dep:prettyplease", "dep:proc-macro2"
 ]

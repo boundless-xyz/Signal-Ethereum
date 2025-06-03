@@ -81,7 +81,9 @@ impl StateInput<'_> {
             .public_keys
             .into_iter()
             .map(|pubkey| {
-                // We do not have to verify the gindices here because they are merkle verified against the root
+                // Note: We do not have to verify the gindices here. This is because the root of the Validators
+                // list is verified against the root which is in the top level BeaconState and this is a homogeneous
+                // collection. We are also using the exit_epoch_gindex to calculate the validator index.
                 let pk_compressed = {
                     let (_, part_1) = values.next().unwrap();
                     let (_, part_2) = values.next().unwrap();

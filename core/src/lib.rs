@@ -35,8 +35,8 @@ pub use verify::*;
 
 pub type Epoch = u64;
 pub type Slot = u64;
-type CommitteeIndex = usize;
-type ValidatorIndex = usize;
+pub type CommitteeIndex = usize;
+pub type ValidatorIndex = usize;
 pub type Root = B256;
 pub type Version = [u8; 4];
 pub type ForkDigest = [u8; 4];
@@ -101,6 +101,18 @@ impl From<&ethereum_consensus::phase0::Validator> for ValidatorInfo {
     }
 }
 
+#[cfg(feature = "host")]
+impl From<&beacon_types::Validator> for ValidatorInfo {
+    fn from(v: &beacon_types::Validator) -> Self {
+        Self {
+            pubkey: PublicKey::uncompress(&v.pubkey.serialize()).unwrap(),
+            effective_balance: v.effective_balance,
+            activation_epoch: v.activation_epoch.into(),
+            exit_epoch: v.exit_epoch.into(),
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize, TreeHash)]
 pub struct AttestationData {
     pub slot: Slot,
@@ -129,6 +141,7 @@ pub struct Attestation {
     Ord,
     serde::Serialize,
     serde::Deserialize,
+    Default,
     TreeHash,
 )]
 pub struct Checkpoint {

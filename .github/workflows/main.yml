@@ -30,7 +30,7 @@ jobs:
           submodules: recursive
 
       - name: Install rust
-        uses: risc0/risc0/.github/actions/rustup@main
+        uses: risc0/risc0/.github/actions/rustup@352dea62857ba57331053cd0986a12c1a4708732
 
       - name: install cargo risczero
         uses: ./.github/actions/bininstall-risc0
@@ -54,7 +54,7 @@ jobs:
           submodules: recursive
 
       - name: install rust
-        uses: risc0/risc0/.github/actions/rustup@main
+        uses: risc0/risc0/.github/actions/rustup@352dea62857ba57331053cd0986a12c1a4708732
 
       - name: lint rust code
         run: cargo fmt --all --check

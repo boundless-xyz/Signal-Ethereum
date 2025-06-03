@@ -86,7 +86,7 @@ At a recent epoch (369363) we have
 
 ## Analysis
 
-Using the above we can calculate that to ensure ZKasper can safely accept a supermajory link it must have received vote weight fraction
+Using the above we can calculate that to ensure ZKasper can safely accept a supermajority link it must have received vote weight fraction
 
 $w(L) = 2/3 + L \frac{2*16*32}{1055350} = 2/3 + L 9.7e-4$
 
@@ -122,4 +122,4 @@ $$p + \frac{2 L C}{totalActiveBalance}$$
 
 of the validator set to be honest for ZKasper to remain safe. Again this requirement increases as a function of the epoch lookahead and after some number of lookahead epochs it will exceed 100% (ZKaspers view of the validator set has been replaced by malicious validators).
 
-A real system would need to place a limit on $L$ meaning that there would be cases (e.g. delayed finality for more than $L$ epochs) that ZKasper would be unable to follow. So ideal liveness is impossible if the ZKasper client is to be secure. 
+A real system would need to place a limit on $L$ meaning that there would be cases (e.g. delayed finality for more than $L$ epochs) that ZKasper would be unable to follow. So ideal liveness is impossible if the ZKasper client is to be secure. Although a reasonable bound on $L$ could be set.

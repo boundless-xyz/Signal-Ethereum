@@ -18,7 +18,12 @@ env:
 
 jobs:
   test:
-    runs-on: [ self-hosted, cluster, Linux, cpu ]
+    runs-on: [ self-hosted, cluster, "${{ matrix.os }}", "${{ matrix.device }}" ]
+    strategy:
+      matrix:
+        include:
+          - os: Linux
+            device: cpu
     steps:
       # This is a workaround from: https://github.com/actions/checkout/issues/590#issuecomment-970586842
       - name: checkout dummy commit (submodule bug workaround)
@@ -46,7 +51,12 @@ jobs:
         run: cargo test
 
   lint:
-    runs-on: [ self-hosted, cluster, Linux, cpu ]
+    runs-on: [ self-hosted, cluster, "${{ matrix.os }}", "${{ matrix.device }}" ]
+    strategy:
+      matrix:
+        include:
+          - os: Linux
+            device: cpu
     steps:
       - name: checkout code
         uses: actions/checkout@v3

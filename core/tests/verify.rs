@@ -15,7 +15,7 @@ static KEYPAIRS: LazyLock<Vec<Keypair>> =
 /// attempt to sync the consensus state as far as possible and then checks
 /// that the finalized and justified checkpoints match the head state of the chain.
 async fn test_zkasper_sync(
-    harness: TestHarness,
+    harness: &TestHarness,
     initial_consensus_state: ConsensusState,
 ) -> ConsensusState {
     let head_state = harness.chain.head_beacon_state_cloned();
@@ -77,7 +77,7 @@ async fn simple_finalize_epoch() {
         )
         .await;
 
-    test_zkasper_sync(harness, consensus_state).await;
+    test_zkasper_sync(&harness, consensus_state).await;
 }
 
 #[tokio::test]
@@ -128,7 +128,7 @@ async fn finalizes_with_two_thirds_participation() {
         "the head should be finalized three behind the current epoch"
     );
 
-    test_zkasper_sync(harness, consensus_state_from_state(&initial_state)).await;
+    test_zkasper_sync(&harness, consensus_state_from_state(&initial_state)).await;
 }
 
 #[tokio::test]
@@ -177,7 +177,7 @@ async fn does_not_finalize_with_less_than_two_thirds_participation() {
         "only 1 epoch should have been finalized from prior attestations"
     );
 
-    test_zkasper_sync(harness, consensus_state_from_state(&initial_state)).await;
+    test_zkasper_sync(&harness, consensus_state_from_state(&initial_state)).await;
 }
 
 #[tokio::test]
@@ -205,7 +205,7 @@ async fn finalize_after_one_empty_epoch() {
         )
         .await;
 
-    test_zkasper_sync(harness, consensus_state).await;
+    test_zkasper_sync(&harness, consensus_state).await;
 }
 
 #[tokio::test]
@@ -293,5 +293,5 @@ async fn finalize_after_inactivity_leak() {
             .epoch
             .as_u64()
     );
-    test_zkasper_sync(harness, consensus_state).await;
+    test_zkasper_sync(&harness, consensus_state).await;
 }

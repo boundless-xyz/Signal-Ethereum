@@ -96,5 +96,5 @@ This suggests it can lookahead roughly 300 epochs provided validator participati
 
 Plot of required validator participation fraction, $w$, as a function of epochs lookahead, $L$.
 
-![](./images/liveness-threshold-frozen.png = x400)]
+![](./images/liveness-threshold-frozen.png)]
 

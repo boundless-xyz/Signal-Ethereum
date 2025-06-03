@@ -43,8 +43,9 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # Cache Rust dependencies
-      - uses: Swatinem/rust-cache@v2
+      # cache cargo dependencies
+      - name: Rust Cache  
+        uses: Swatinem/rust-cache@v2.7.8
 
       - name: run tests
         env:

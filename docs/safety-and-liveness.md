@@ -20,11 +20,11 @@ We also want to ensure that a malicious prover can't convince a ZKasper client t
 
 > It should be noted that we cannot have ideal safety and liveness under the same assumption as the beacon chain ($2/3$ of the stake is honest) due to the ability of a dishonest prover to manipulate the validator set up to the maximum amount of freedom at no cost. 
 
-## Frozen validator set
+# Frozen validator set
 
 One option is to not allow any degree of freedom to the prover when it comes to the validators set. We will call this the frozen validator set case. ZKasper assumes no changes to the validator set in future epochs and attempts to verify future attestations using this potentially outdated set.
 
-### Liveness
+## Liveness
 
 If the beacon chain can churn at most $C$ worth of stake per epoch this means that $C$ of the actual $\text{attestingBalance}$ might be unaccounted for by ZKasper even if the beacon chain is counting its weight when computing vote weight for a link. We therefore an additional buffer of $C$ worth of votes in the beacon chain to ensure ZKasper will still be able to form a supermajority link in the worst case.
 
@@ -42,7 +42,7 @@ $$
 
 of the stake voting on a supermajority link to ensure that Zkasper will always remain live.
 
-### Safety
+## Safety
 
 A frozen validator set also means that $C$ worth of stake of validators who may have exited can sign malicious attestations with no risk of slashing but ZKasper will believe they are still active and able to be penalized.
 
@@ -96,4 +96,5 @@ This suggests it can lookahead roughly 300 epochs provided validator participati
 
 Plot of required validator participation fraction, $w$, as a function of epochs lookahead, $L$.
 
-<iframe src="https://www.desmos.com/calculator/2ntenpf9te?embed" width="500" height="500" style="border: 1px solid #ccc" frameborder=0></iframe>
+![](./images/liveness-threshold-frozen.png = x400)]
+

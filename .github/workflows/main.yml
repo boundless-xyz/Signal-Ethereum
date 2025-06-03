@@ -39,10 +39,6 @@ jobs:
           toolchain-version: "1.85.0"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-  
-      - name: build guest
-        working-directory: methods/guest
-        run: cargo build
 
       - name: run tests
         env:

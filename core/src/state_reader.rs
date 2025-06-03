@@ -3,7 +3,6 @@ use std::cmp::{max, min};
 use alloy_primitives::B256;
 use alloy_primitives::aliases::B32;
 use sha2::Digest;
-use ssz_rs::prelude::*;
 use thiserror::Error;
 
 use crate::{Ctx, Epoch, Version};

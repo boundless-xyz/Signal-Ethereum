@@ -98,3 +98,28 @@ Plot of required validator participation fraction, $w$, as a function of epochs 
 
 ![](./images/liveness-threshold-frozen.png)]
 
+# Dynamic Validator Set
+
+Another option is we allow the prover to manipulate ZKaspers view the validator set by adding/removing validators or changing their effective balance between epochs. The ZKVM guest code would limit modifications to some predetermined non-zero churn limit $C_{zk}$ per epoch.
+
+This introduces a new parameter to help expand the design space and could allow for reaching ideal liveness at the expense of safety.
+
+## Safety
+
+This malleability of the validator set means we must now account for a dishonest prover why may be colluding with every dishonest validator.
+
+In our worse case the honest stake on the beacon chain can differ from ZKaspers view by $C + C_{zk}$. For example if $C$ worth of dishonest stake exits the beacon chain (and can now vote without regard for slashing) and the prover adds $C_{ZK}$ worth of dishonest stake to ZKaspers view. 
+
+We would therefore need to assume that 
+
+$$p + \frac{L (C + C_{zk})}{totalActiveBalance}$$
+
+of stake is honest in order for ZKasper to be safe.
+
+If $C_{zk}=C$ and $p_{zk} = p$ then ZKasper is able to reach the same vote weight as the beacon chain. This is the ideal liveness case and we require
+
+$$p + \frac{2 L C}{totalActiveBalance}$$
+
+of the validator set to be honest for ZKasper to remain safe. Again this requirement increases as a function of the epoch lookahead and after some number of lookahead epochs it will exceed 100% (ZKaspers view of the validator set has been replaced by malicious validators).
+
+A real system would need to place a limit on $L$ meaning that there would be cases (e.g. delayed finality for more than $L$ epochs) that ZKasper would be unable to follow. So ideal liveness is impossible if the ZKasper client is to be secure. 

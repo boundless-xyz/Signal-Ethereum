@@ -2,13 +2,13 @@ use std::collections::BTreeSet;
 
 use crate::{
     Attestation, AttestationData, BEACON_ATTESTER_DOMAIN, CommitteeCache, Domain, Epoch, Input,
-    MAX_COMMITTEES_PER_SLOT, MAX_VALIDATORS_PER_COMMITTEE, PublicKey, Root, ShuffleData, Signature,
-    StateReader, ValidatorIndex, ValidatorInfo, Version, consensus_state::ConsensusState,
-    fast_aggregate_verify_pre_aggregated,
+    PublicKey, Root, ShuffleData, Signature, StateReader, ValidatorIndex, ValidatorInfo, Version,
+    consensus_state::ConsensusState, fast_aggregate_verify_pre_aggregated,
 };
 use alloc::collections::BTreeMap;
-use ssz_rs::prelude::*;
 use tracing::{debug, info};
+use tree_hash::TreeHash;
+use tree_hash_derive::TreeHash;
 
 pub fn verify<S: StateReader>(state_reader: &S, input: Input) -> ConsensusState {
     let Input {
@@ -71,7 +71,10 @@ pub fn verify<S: StateReader>(state_reader: &S, input: Input) -> ConsensusState 
                         .iter()
                         .enumerate()
                         .filter_map(|(i, attester_index)| {
-                            attestation.aggregation_bits[committee_offset + i]
+                            attestation
+                                .aggregation_bits
+                                .get(committee_offset + i)
+                                .unwrap()
                                 .then_some(*attester_index)
                         })
                         .peekable();
@@ -182,17 +185,11 @@ pub fn get_shufflings_for_epoch<S: StateReader>(
     .unwrap()
 }
 
-pub fn get_attesting_indices(
-    committee: &[usize],
-    attestation: &Attestation<
-        { MAX_VALIDATORS_PER_COMMITTEE * MAX_COMMITTEES_PER_SLOT },
-        MAX_COMMITTEES_PER_SLOT,
-    >,
-) -> Vec<usize> {
+pub fn get_attesting_indices(committee: &[usize], attestation: &Attestation) -> Vec<usize> {
     committee
         .iter()
         .enumerate()
-        .filter(|(i, _)| attestation.aggregation_bits[*i])
+        .filter(|(i, _)| attestation.aggregation_bits.get(*i).unwrap())
         .map(|(_, validator_index)| *validator_index)
         .collect()
 }
@@ -208,10 +205,10 @@ fn beacon_attester_signing_domain<S: StateReader>(state_reader: &S, epoch: Epoch
     domain
 }
 
-pub fn compute_signing_root<T: SimpleSerialize>(ssz_object: &T, domain: Domain) -> Root {
-    let object_root = ssz_object.hash_tree_root().unwrap();
+pub fn compute_signing_root<T: TreeHash>(ssz_object: &T, domain: Domain) -> Root {
+    let object_root = ssz_object.tree_hash_root();
 
-    #[derive(SimpleSerialize)]
+    #[derive(TreeHash)]
     pub struct SigningData {
         pub object_root: Root,
         pub domain: Domain,
@@ -221,15 +218,15 @@ pub fn compute_signing_root<T: SimpleSerialize>(ssz_object: &T, domain: Domain) 
         object_root,
         domain,
     };
-    s.hash_tree_root().unwrap()
+    s.tree_hash_root()
 }
 
 fn fork_data_root<S: StateReader>(
     state_reader: &S,
-    genesis_validators_root: ssz_rs::Node,
+    genesis_validators_root: Root,
     epoch: Epoch,
-) -> ssz_rs::Node {
-    #[derive(SimpleSerialize)]
+) -> Root {
+    #[derive(TreeHash)]
     struct ForkData {
         pub current_version: Version,
         pub genesis_validators_root: Root,
@@ -238,6 +235,5 @@ fn fork_data_root<S: StateReader>(
         current_version: state_reader.fork_current_version(epoch).unwrap(),
         genesis_validators_root,
     }
-    .hash_tree_root()
-    .unwrap()
+    .tree_hash_root()
 }

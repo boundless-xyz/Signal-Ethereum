@@ -47,7 +47,7 @@ where
 
 #[derive(Error, Debug)]
 pub enum HarnessStateReaderError {
-    #[error("yeap")]
+    #[error("BeaconChainError: {0:?}")]
     LighthouseError(beacon_chain::BeaconChainError),
 }
 

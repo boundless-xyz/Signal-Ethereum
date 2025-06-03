@@ -179,3 +179,119 @@ async fn does_not_finalize_with_less_than_two_thirds_participation() {
 
     test_zkasper_sync(harness, consensus_state_from_state(&initial_state)).await;
 }
+
+#[tokio::test]
+async fn finalize_after_one_empty_epoch() {
+    let spec = get_spec();
+    let harness = get_harness(KEYPAIRS[..].to_vec(), spec).await;
+
+    // Grab our bootstrap consensus state from there
+    let head_state = harness.chain.head_beacon_state_cloned();
+    let consensus_state = consensus_state_from_state(&head_state);
+    println!("Current slot: {}", head_state.slot());
+    println!("Pre consensus state: {:?}", consensus_state);
+
+    // Advances 33 slots to get a whole empty epoch
+    for _ in 0..harness.slots_per_epoch() + 1 {
+        harness.advance_slot();
+    }
+
+    // progress the chain 2 epochs past the empty epoch
+    harness
+        .extend_chain(
+            (harness.slots_per_epoch() * 2) as usize,
+            BlockStrategy::OnCanonicalHead,
+            AttestationStrategy::AllValidators, // this is where we can mess around with partial validator participation, forks etc
+        )
+        .await;
+
+    test_zkasper_sync(harness, consensus_state).await;
+}
+
+#[tokio::test]
+async fn finalize_after_inactivity_leak() {
+    let spec = get_spec();
+    let harness = get_harness(KEYPAIRS[..].to_vec(), spec.clone()).await;
+
+    // Grab our bootstrap consensus state from there
+    let head_state = harness.chain.head_beacon_state_cloned();
+    let consensus_state = consensus_state_from_state(&head_state);
+    let current_epoch = head_state.current_epoch();
+
+    println!("Current slot: {}", head_state.slot());
+    println!("Current epoch: {}", head_state.current_epoch());
+    println!("Pre consensus state: {:?}", consensus_state);
+
+    let two_thirds = (VALIDATOR_COUNT / 3) * 2;
+    let less_than_two_thirds = two_thirds - 1;
+    let attesters = (0..less_than_two_thirds).collect();
+
+    // Where we get into leak
+    let target_epoch =
+        harness.get_current_state().current_epoch() + spec.min_epochs_to_inactivity_penalty + 1;
+
+    // progress the chain with less than 2/3rds participation
+    // this should result in an inactivity leak
+    harness
+        .extend_chain(
+            (((target_epoch - current_epoch) * harness.slots_per_epoch()) - 1).into(),
+            BlockStrategy::OnCanonicalHead,
+            AttestationStrategy::SomeValidators(attesters),
+        )
+        .await;
+
+    assert!(
+        harness
+            .get_current_state()
+            .is_in_inactivity_leak((target_epoch).into(), &spec)
+            .unwrap(),
+        "we should be in an inactivity leak"
+    );
+
+    // get out of inactivity leak
+    // first justification occurs here
+    harness
+        .extend_slots(harness.slots_per_epoch() as usize + 1)
+        .await;
+
+    assert_eq!(
+        target_epoch,
+        harness
+            .get_current_state()
+            .current_justified_checkpoint()
+            .epoch
+            .as_u64()
+    );
+
+    // first finalization occurs here
+    harness
+        .extend_slots((harness.slots_per_epoch()) as usize)
+        .await;
+
+    assert!(
+        !harness
+            .get_current_state()
+            .is_in_inactivity_leak((target_epoch).into(), &spec)
+            .unwrap(),
+        "we be should out of inactivity leak"
+    );
+
+    assert_eq!(
+        target_epoch,
+        harness
+            .get_current_state()
+            .previous_justified_checkpoint()
+            .epoch
+            .as_u64()
+    );
+
+    assert_eq!(
+        target_epoch,
+        harness
+            .get_current_state()
+            .finalized_checkpoint()
+            .epoch
+            .as_u64()
+    );
+    test_zkasper_sync(harness, consensus_state).await;
+}

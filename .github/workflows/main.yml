@@ -35,6 +35,8 @@ jobs:
       - name: Install rust
         uses: risc0/risc0/.github/actions/rustup@main
 
+      - uses: ./.github/actions/sccache
+
       - name: install cargo risczero
         uses: ./.github/actions/bininstall-risc0
         with:
@@ -43,14 +45,12 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # cache cargo dependencies
-      - name: Rust Cache  
-        uses: Swatinem/rust-cache@v2.7.8
-
       - name: run tests
         env:
             RISC0_DEV_MODE: true
         run: cargo test --locked
+
+      - run: sccache --show-stats
 
   lint:
     runs-on: ubuntu-latest

@@ -46,7 +46,7 @@ pub type Domain = [u8; 32];
 pub type MaxValidatorsPerSlot = U131072; // 2**11
 pub type MaxCommitteesPerSlot = U64; // 2**6
 pub const BEACON_ATTESTER_DOMAIN: [u8; 4] = 1u32.to_le_bytes();
-pub const VALIDATOR_REGISTRY_LIMIT: u64 = 1099511627776; // 2**40
+pub const VALIDATOR_REGISTRY_LIMIT: u64 = 2u64.pow(40);
 pub const VALIDATOR_LIST_TREE_DEPTH: u32 = VALIDATOR_REGISTRY_LIMIT.ilog2() + 1; // 41
 pub const VALIDATOR_TREE_DEPTH: u32 = 3;
 

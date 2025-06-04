@@ -2,8 +2,9 @@ use std::sync::LazyLock;
 
 use beacon_chain::test_utils::{AttestationStrategy, BlockStrategy};
 use beacon_types::Keypair;
+use test_utils::HarnessStateReader;
 use test_utils::{TestHarness, consensus_state_from_state, get_harness, get_spec};
-use z_core::{ConsensusState, HarnessStateReader, build_input, verify};
+use z_core::{ConsensusState, build_input, verify};
 
 pub const VALIDATOR_COUNT: usize = 48;
 

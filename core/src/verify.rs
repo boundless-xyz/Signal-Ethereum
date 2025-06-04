@@ -3,7 +3,9 @@ use std::collections::BTreeSet;
 use crate::{
     Attestation, AttestationData, BEACON_ATTESTER_DOMAIN, CommitteeCache, Domain, Epoch, Input,
     PublicKey, Root, ShuffleData, Signature, StateReader, ValidatorIndex, ValidatorInfo, Version,
-    consensus_state::ConsensusState, fast_aggregate_verify_pre_aggregated,
+    consensus_state::ConsensusState,
+    fast_aggregate_verify_pre_aggregated,
+    threshold::{self, threshold},
 };
 use alloc::collections::BTreeMap;
 use tracing::{debug, info};
@@ -21,6 +23,8 @@ pub fn verify<S: StateReader>(state_reader: &S, input: Input) -> ConsensusState 
     // TODO(ec2): I think we need to enforce here that the trusted state is less than or equal to state.finalized_checkpoint epoch
     // TODO(ec2): We can also bound the number of state patches to the k in k-finality case
     let context = state_reader.context();
+
+    let trusted_epoch = consensus_state.finalized_checkpoint.epoch;
 
     // 1. Attestation processing
     let mut validator_cache: BTreeMap<Epoch, BTreeMap<ValidatorIndex, &ValidatorInfo>> =
@@ -116,7 +120,12 @@ pub fn verify<S: StateReader>(state_reader: &S, input: Input) -> ConsensusState 
             .get_total_active_balance(link.target.epoch)
             .unwrap();
 
-        assert!(attesting_balance * 3 >= &total_active_balance * 2);
+        // In the worst case attestations can arrive one epoch after their target and because we don't have information about which epoch they belong to in the chain
+        // (if any) we need to assume the worst case
+        let lookahead = link.target.epoch + 1 - trusted_epoch;
+        let threshold = threshold(lookahead, total_active_balance);
+
+        assert!(attesting_balance >= threshold);
     }
 
     /////////// 2. State update calculation  //////////////

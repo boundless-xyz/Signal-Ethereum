@@ -160,21 +160,11 @@ impl StateReader for SszStateReader<'_> {
     ) -> Result<impl Iterator<Item = (ValidatorIndex, &ValidatorInfo)>, Self::Error> {
         assert!(state_epoch >= epoch, "Only historical epochs supported");
 
-        let patch = self.patches.get(&state_epoch);
-        assert!(
-            state_epoch == self.epoch || patch.is_some(),
-            "Missing state patch"
-        );
-
-        let iter = self
+        Ok(self
             .validators
             .iter()
-            .map(move |(idx, validator)| match patch {
-                Some(patch) => (*idx, patch.validators.get(idx).unwrap_or(validator)),
-                None => (*idx, validator),
-            });
-
-        Ok(iter.filter(move |(_, validator)| is_active_validator(validator, epoch)))
+            .map(|(idx, validator)| (*idx, validator))
+            .filter(move |(_, validator)| is_active_validator(validator, epoch)))
     }
 
     fn randao_mix(&self, epoch: Epoch, index: usize) -> Result<Option<B256>, Self::Error> {

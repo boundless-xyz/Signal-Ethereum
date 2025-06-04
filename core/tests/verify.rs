@@ -24,7 +24,7 @@ async fn test_zkasper_sync(
 ) -> ConsensusState {
     let head_state = harness.chain.head_beacon_state_cloned();
 
-    let state_reader = HarnessStateReader::from(harness);
+    let state_reader = HarnessStateReader::from(&harness);
     let mut consensus_state = initial_consensus_state;
 
     println!("Pre consensus state: {:?}", consensus_state);

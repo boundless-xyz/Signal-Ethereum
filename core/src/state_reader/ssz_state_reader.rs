@@ -1,7 +1,7 @@
 use super::StateReader;
 use crate::{
-    BEACON_STATE_TREE_DEPTH, Ctx, Epoch, GuestContext, PublicKey, StatePatch,
-    VALIDATOR_LIST_TREE_DEPTH, VALIDATOR_TREE_DEPTH, ValidatorIndex, ValidatorInfo, Version,
+    Ctx, Epoch, GuestContext, PublicKey, StatePatch, VALIDATOR_LIST_TREE_DEPTH,
+    VALIDATOR_TREE_DEPTH, ValidatorIndex, ValidatorInfo, Version,
 };
 use alloy_primitives::B256;
 use serde::{Deserialize, Serialize};
@@ -38,15 +38,21 @@ impl StateInput<'_> {
     pub fn into_state_reader(self, root: B256, context: &GuestContext) -> SszStateReader {
         let mut beacon_state = self.beacon_state.values();
 
-        // TODO: verify generalized indices
-        let (_, genesis_validators_root) = beacon_state.next().unwrap();
-        let (_, slot) = beacon_state.next().unwrap();
-        let (_, fork_current_version) = beacon_state.next().unwrap();
-        let (_, validators_root) = beacon_state.next().unwrap();
+        let genesis_validators_root = beacon_state
+            .next_assert_gindex(context.genesis_validators_root_gindex())
+            .unwrap();
+        let slot = beacon_state
+            .next_assert_gindex(context.slot_gindex())
+            .unwrap();
+        let fork_current_version = beacon_state
+            .next_assert_gindex(context.fork_current_version_gindex())
+            .unwrap();
+        let validators_root = beacon_state
+            .next_assert_gindex(context.validators_gindex())
+            .unwrap();
 
         // the remaining values of the beacon state correspond to RANDAO
-        let randao_gindex_base: u64 = ((1 << BEACON_STATE_TREE_DEPTH) + 13)
-            * context.epochs_per_historical_vector().next_power_of_two();
+        let randao_gindex_base = context.randao_mixes_0_gindex();
         let randao = beacon_state
             .map(|(gindex, randao)| {
                 // 0 <= index <= EPOCHS_PER_HISTORICAL_VECTOR
@@ -75,7 +81,9 @@ impl StateInput<'_> {
             .public_keys
             .into_iter()
             .map(|pubkey| {
-                // TODO: verify generalized indices
+                // Note: We do not have to verify the gindices here. This is because the root of the Validators
+                // list is verified against the root which is in the top level BeaconState and this is a homogeneous
+                // collection. We are also using the exit_epoch_gindex to calculate the validator index.
                 let pk_compressed = {
                     let (_, part_1) = values.next().unwrap();
                     let (_, part_2) = values.next().unwrap();

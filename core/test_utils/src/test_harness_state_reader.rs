@@ -3,10 +3,6 @@
 //! and have its data read directly by the verify function
 //!
 //!
-use crate::{
-    ChainReader, ConsensusState, Epoch, GuestContext, StateReader, ValidatorIndex, ValidatorInfo,
-    Version,
-};
 use beacon_chain::{
     BeaconChainError, BeaconChainTypes, StateSkipConfig, WhenSlotSkipped,
     test_utils::BeaconChainHarness,
@@ -15,6 +11,10 @@ use beacon_types::{BeaconState, EthSpec, Hash256, Validator};
 use elsa::FrozenMap;
 use std::str::FromStr;
 use thiserror::Error;
+use z_core::{
+    ChainReader, ConsensusState, Epoch, GuestContext, StateReader, ValidatorIndex, ValidatorInfo,
+    Version,
+};
 
 pub struct HarnessStateReader<T: BeaconChainTypes> {
     inner: BeaconChainHarness<T>,
@@ -177,7 +177,7 @@ where
     async fn get_consensus_state(
         &self,
         state_id: impl std::fmt::Display,
-    ) -> Result<crate::ConsensusState, anyhow::Error> {
+    ) -> Result<z_core::ConsensusState, anyhow::Error> {
         let state = match SlotOrRoot::from_str(&state_id.to_string()) {
             Ok(SlotOrRoot::Slot(slot)) => {
                 if slot > self.inner.chain.head().head_slot().as_u64() {
@@ -238,15 +238,15 @@ pub fn consensus_state_from_state<T: EthSpec>(
     state: &beacon_types::BeaconState<T>,
 ) -> ConsensusState {
     ConsensusState {
-        finalized_checkpoint: crate::Checkpoint {
+        finalized_checkpoint: z_core::Checkpoint {
             epoch: state.finalized_checkpoint().epoch.into(),
             root: state.finalized_checkpoint().root.clone(),
         },
-        current_justified_checkpoint: crate::Checkpoint {
+        current_justified_checkpoint: z_core::Checkpoint {
             epoch: state.current_justified_checkpoint().epoch.into(),
             root: state.current_justified_checkpoint().root.clone(),
         },
-        previous_justified_checkpoint: crate::Checkpoint {
+        previous_justified_checkpoint: z_core::Checkpoint {
             epoch: state.previous_justified_checkpoint().epoch.into(),
             root: state.previous_justified_checkpoint().root.clone(),
         },

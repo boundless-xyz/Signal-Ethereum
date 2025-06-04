@@ -1,7 +1,7 @@
 use crate::{Epoch, Slot};
 use alloc::fmt::Debug;
 
-use serde::{Deserialize, Serialize};
+pub use super::guest_context::GuestContext;
 
 pub trait Ctx {
     type Error: Debug;
@@ -20,50 +20,6 @@ pub trait Ctx {
     fn shuffle_round_count(&self) -> u64;
     fn target_committee_size(&self) -> u64;
     fn max_deposits(&self) -> usize;
-}
-
-#[derive(Serialize, Deserialize)]
-pub struct GuestContext;
-
-// TODO(ec2): Hardcoded for sepolia/mainnet. They are both the same. Consider a smarter method if we wanna run the spec-tests
-impl Ctx for GuestContext {
-    type Error = ();
-
-    fn slots_per_epoch(&self) -> u64 {
-        32
-    }
-
-    fn effective_balance_increment(&self) -> u64 {
-        1_000_000_000
-    }
-
-    fn max_validators_per_committee(&self) -> usize {
-        2048
-    }
-
-    fn max_committees_per_slot(&self) -> usize {
-        64
-    }
-
-    fn epochs_per_historical_vector(&self) -> u64 {
-        65536
-    }
-
-    fn min_seed_lookahead(&self) -> u64 {
-        1
-    }
-
-    fn shuffle_round_count(&self) -> u64 {
-        90
-    }
-
-    fn target_committee_size(&self) -> u64 {
-        128
-    }
-
-    fn max_deposits(&self) -> usize {
-        16
-    }
 }
 
 #[cfg(feature = "host")]

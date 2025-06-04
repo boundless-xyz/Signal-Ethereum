@@ -144,16 +144,6 @@ pub fn fast_aggregate_verify(
     }
 }
 
-// This is verification for the case where multiple messages were signed and an aggregate signature obtained by aggregating the resulting signatures.
-// TODO: BLST won't do this out of the box but it should be fairly easy to implement with their lower level operations
-pub fn multi_message_verify(
-    _messages: &[&[u8]],
-    _public_key: &PublicKey,
-    _signature: &Signature,
-) -> Result<(), BlsError> {
-    Ok(())
-}
-
 impl Serialize for Signature {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where

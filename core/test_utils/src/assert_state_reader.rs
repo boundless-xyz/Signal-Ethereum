@@ -1,6 +1,6 @@
-use crate::{Epoch, StateReader, ValidatorIndex, ValidatorInfo, Version};
 use alloy_primitives::B256;
 use std::iter;
+use z_core::{Epoch, StateReader, ValidatorIndex, ValidatorInfo, Version};
 
 /// A simple state reader used for debugging and testing.
 pub struct AssertStateReader<'a, S, R> {

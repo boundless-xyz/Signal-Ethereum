@@ -14,6 +14,7 @@ mod input_builder;
 mod shuffle_list;
 mod state_patch;
 mod state_reader;
+mod threshold;
 mod verify;
 
 #[cfg(feature = "host")]

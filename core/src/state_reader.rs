@@ -17,12 +17,7 @@ mod state_provider;
 mod tracking_state_reader;
 
 #[cfg(feature = "host")]
-mod test_harness_state_reader;
-
-#[cfg(feature = "host")]
-pub use self::{
-    host_state_reader::*, state_provider::*, test_harness_state_reader::*, tracking_state_reader::*,
-};
+pub use self::{host_state_reader::*, state_provider::*, tracking_state_reader::*};
 pub use ssz_state_reader::*;
 
 #[derive(Error, Debug)]

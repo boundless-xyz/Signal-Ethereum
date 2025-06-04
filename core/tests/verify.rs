@@ -33,6 +33,7 @@ async fn test_zkasper_sync(
         // Build the input and verify it
         match build_input(&state_reader, consensus_state.clone()).await {
             Ok(input) => {
+                println!("Input: {:?}", input);
                 consensus_state = verify(&state_reader, input);
                 println!("consensus state: {:?}", &consensus_state);
             }
@@ -236,16 +237,17 @@ async fn finalize_after_inactivity_leak() {
     let current_epoch = head_state.current_epoch();
 
     println!("Current slot: {}", head_state.slot());
-    println!("Current epoch: {}", head_state.current_epoch());
-    println!("Pre consensus state: {:?}", consensus_state);
 
     let two_thirds = (VALIDATOR_COUNT as usize / 3) * 2;
-    let less_than_two_thirds = two_thirds - 1;
+    let less_than_two_thirds = two_thirds - 2;
     let attesters = (0..less_than_two_thirds).collect();
 
     // Where we get into leak
     let target_epoch =
         harness.get_current_state().current_epoch() + spec.min_epochs_to_inactivity_penalty + 1;
+
+    println!("Current epoch: {}", head_state.current_epoch());
+    println!("Target epoch: {}", target_epoch);
 
     // progress the chain with less than 2/3rds participation
     // this should result in an inactivity leak
@@ -290,7 +292,7 @@ async fn finalize_after_inactivity_leak() {
             .get_current_state()
             .is_in_inactivity_leak((target_epoch).into(), &spec)
             .unwrap(),
-        "we be should out of inactivity leak"
+        "we be should out of inactivity leak after finalization"
     );
 
     assert_eq!(
@@ -310,6 +312,7 @@ async fn finalize_after_inactivity_leak() {
             .epoch
             .as_u64()
     );
+
     test_zkasper_sync(&harness, consensus_state).await;
 }
 

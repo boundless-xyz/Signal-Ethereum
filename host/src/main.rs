@@ -15,14 +15,19 @@ use std::{
 use tracing::{info, warn};
 use url::Url;
 use z_core::{
-    build_input, verify, ConsensusState, Ctx, GuestContext, HostContext, HostStateReader, Input,
-    Root, StateInput,
+    build_input, verify, ConsensusState, Ctx, FileProvider, GuestContext, HostContext,
+    HostStateReader, Input, Root, StateInput,
 };
 use z_core_test_utils::AssertStateReader;
 
 pub mod beacon_client;
 
-use crate::beacon_client::BeaconClient;
+pub mod state_provider;
+
+use crate::{
+    beacon_client::BeaconClient,
+    state_provider::{BeaconClientStateProvider, FileBackedBeaconClientStateProvider},
+};
 
 /// CLI for generating and submitting ZKasper proofs
 #[derive(Parser, Debug)]
@@ -123,7 +128,14 @@ async fn main() -> anyhow::Result<()> {
     let state_dir = args.data_dir.join(args.network.to_string()).join("states");
     fs::create_dir_all(&state_dir)?;
 
-    let reader = HostStateReader::new_with_dir(&state_dir, context.clone().into())?;
+    let state_provider = {
+        let api_provider =
+            BeaconClientStateProvider::new(beacon_client.clone(), &context.clone().into());
+        let file_provider = FileProvider::new(&state_dir, &context.clone().into())?;
+        FileBackedBeaconClientStateProvider::new(file_provider, api_provider)
+    };
+
+    let reader = HostStateReader::new(state_provider.into(), context.clone().into());
 
     match args.command {
         Command::Verify {
@@ -187,13 +199,6 @@ async fn main() -> anyhow::Result<()> {
                 let input = build_input(&beacon_client, consensus_state.clone()).await?;
                 tracing::debug!("Input: {:?}", input);
 
-                for epoch in input.consensus_state.finalized_checkpoint.epoch
-                    ..=input.consensus_state.finalized_checkpoint.epoch + 3
-                {
-                    tracing::debug!("Caching beacon state for epoch: {}", epoch);
-                    cache_beacon_state(&beacon_client, epoch, &state_dir).await?;
-                }
-
                 consensus_state = run_verify(mode, &reader, input.clone())?; // will panic if verification fails
             }
         }
@@ -235,20 +240,6 @@ fn run_verify(
     tracing::info!("Consensus state: {:#?}", consensus_state);
 
     Ok(consensus_state)
-}
-
-async fn cache_beacon_state(
-    beacon_client: &BeaconClient,
-    epoch: u64,
-    cache_dir: &std::path::Path,
-) -> anyhow::Result<()> {
-    let s = beacon_client
-        .get_beacon_state(epoch * SLOTS_PER_EPOCH)
-        .await?;
-    let file_name = cache_dir.join(format!("{}_beacon_state.ssz", epoch));
-    tracing::debug!("Writing state to: {}", file_name.display());
-    fs::write(file_name, &ssz_rs::serialize(&s)?)?;
-    Ok(())
 }
 
 async fn cache_beacon_state_root<C: Ctx>(

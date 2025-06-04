@@ -35,7 +35,9 @@ use std::fmt::{self, Display};
 use std::path::PathBuf;
 use tracing::{info, warn};
 use url::Url;
-use z_core::{mainnet::BeaconState, ChainReader};
+use z_core::{
+    mainnet::BeaconState, BoxedStateProvider, ChainReader, FileProvider, HostContext, StateProvider,
+};
 
 /// Errors returned by the [BeaconClient].
 #[derive(Debug, thiserror::Error)]
@@ -83,6 +85,7 @@ struct VersionedResponse<T> {
 }
 
 /// Simple beacon API client for the `mainnet` preset that can query headers and blocks.
+#[derive(Clone)]
 pub struct BeaconClient {
     http: ClientWithMiddleware,
     endpoint: Url,

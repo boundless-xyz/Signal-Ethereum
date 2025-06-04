@@ -1,9 +1,6 @@
 use beacon_api_client::{BlockId, StateId};
 use clap::{Parser, ValueEnum};
-use ethereum_consensus::{
-    electra::{Context, Epoch},
-    phase0::mainnet::SLOTS_PER_EPOCH,
-};
+use ethereum_consensus::electra::{Context, Epoch};
 use methods::BEACON_GUEST_ELF;
 use risc0_zkvm::{default_executor, ExecutorEnv};
 use ssz_rs::prelude::*;
@@ -114,7 +111,6 @@ async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::filter::EnvFilter::from_default_env())
         .init();
-
     let args = Args::parse();
 
     // Note: The part of the context we use for mainnet and sepolia is the same.

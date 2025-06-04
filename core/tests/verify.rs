@@ -204,7 +204,11 @@ async fn finalize_after_one_empty_epoch() {
     for _ in 0..harness.slots_per_epoch() + 1 {
         harness.advance_slot();
     }
-
+    assert_eq!(
+        consensus_state,
+        consensus_state_from_state(&harness.get_current_state()),
+        "Consensus state should not have updated after advancing 33 empty slots because there are no attestations"
+    );
     // progress the chain 2 epochs past the empty epoch
     harness
         .extend_chain(
@@ -213,7 +217,11 @@ async fn finalize_after_one_empty_epoch() {
             AttestationStrategy::AllValidators, // this is where we can mess around with partial validator participation, forks etc
         )
         .await;
-
+    assert_ne!(
+        consensus_state,
+        consensus_state_from_state(&harness.get_current_state()),
+        "Consensus state should have updated after extending the chain with attestations"
+    );
     test_zkasper_sync(&harness, consensus_state).await;
 }
 

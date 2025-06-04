@@ -123,7 +123,7 @@ pub fn verify<S: StateReader>(state_reader: &S, input: Input) -> ConsensusState 
         let lookahead = link.target.epoch + 1 - trusted_epoch;
         let threshold = threshold(lookahead, total_active_balance);
 
-        println!(
+        debug!(
             "Attesting balance: {attesting_balance}, Threshold: {threshold}, Lookahead: {lookahead}",
         );
         assert!(attesting_balance >= threshold);

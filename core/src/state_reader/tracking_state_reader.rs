@@ -130,15 +130,6 @@ impl<'a> TrackingStateReader<'a> {
         validator_multiproof.verify(&validators_root).unwrap();
         info!("Validator multiproof finished");
 
-        for epoch in self.validator_epochs.take() {
-            if epoch != self.trusted_epoch {
-                let patch = patch_builder
-                    .entry(epoch)
-                    .or_insert(self.patch_builder(epoch).unwrap());
-                patch.validator_diff(&validators);
-            }
-        }
-
         let public_keys = validators
             .into_values()
             .map(|validator| validator.pubkey)

@@ -4,7 +4,7 @@ use beacon_chain::test_utils::{AttestationStrategy, BlockStrategy};
 use beacon_types::Keypair;
 use test_utils::HarnessStateReader;
 use test_utils::{TestHarness, consensus_state_from_state, get_harness, get_spec};
-use z_core::{ConsensusState, HarnessStateReader, build_input, threshold, verify};
+use z_core::{ConsensusState, build_input, threshold, verify};
 
 pub const VALIDATOR_COUNT: u64 = 48;
 const ETH_PER_VALIDATOR: u64 = 32;
@@ -24,7 +24,7 @@ async fn test_zkasper_sync(
 ) -> ConsensusState {
     let head_state = harness.chain.head_beacon_state_cloned();
 
-    let state_reader = HarnessStateReader::from(&harness);
+    let state_reader = HarnessStateReader::from(harness);
     let mut consensus_state = initial_consensus_state;
 
     println!("Pre consensus state: {:?}", consensus_state);
@@ -231,7 +231,7 @@ async fn finalize_after_inactivity_leak() {
     println!("Current epoch: {}", head_state.current_epoch());
     println!("Pre consensus state: {:?}", consensus_state);
 
-    let two_thirds = (VALIDATOR_COUNT / 3) * 2;
+    let two_thirds = (VALIDATOR_COUNT as usize / 3) * 2;
     let less_than_two_thirds = two_thirds - 1;
     let attesters = (0..less_than_two_thirds).collect();
 
@@ -361,5 +361,5 @@ async fn chain_finalizes_but_zkcasper_does_not() {
         "the head should be finalized three behind the current epoch"
     );
 
-    test_zkasper_sync(harness, consensus_state_from_state(&initial_state)).await;
+    test_zkasper_sync(&harness, consensus_state_from_state(&initial_state)).await;
 }

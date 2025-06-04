@@ -3,9 +3,7 @@ use std::collections::BTreeSet;
 use crate::{
     Attestation, AttestationData, BEACON_ATTESTER_DOMAIN, CommitteeCache, Domain, Epoch, Input,
     PublicKey, Root, ShuffleData, Signature, StateReader, ValidatorIndex, ValidatorInfo, Version,
-    consensus_state::ConsensusState,
-    fast_aggregate_verify_pre_aggregated,
-    threshold::{self, threshold},
+    consensus_state::ConsensusState, fast_aggregate_verify_pre_aggregated, threshold::threshold,
 };
 use alloc::collections::BTreeMap;
 use tracing::{debug, info};

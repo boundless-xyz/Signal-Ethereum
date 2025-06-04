@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use tokio::runtime::Handle;
 use z_core::{
     mainnet::BeaconState, BoxedStateProvider, Ctx, Epoch, FileProvider, HostContext, StateProvider,
@@ -5,13 +7,13 @@ use z_core::{
 
 use crate::beacon_client::BeaconClient;
 
-pub(crate) struct BeaconClientStateProvider {
+struct BeaconClientStateProvider {
     client: BeaconClient,
     context: HostContext,
 }
 
 impl BeaconClientStateProvider {
-    pub fn new(client: BeaconClient, context: &HostContext) -> Self {
+    fn new(client: BeaconClient, context: &HostContext) -> Self {
         Self {
             client,
             context: context.clone(),
@@ -25,7 +27,7 @@ impl StateProvider for BeaconClientStateProvider {
         let slot = self.context.compute_start_slot_at_epoch(epoch);
         tokio::task::block_in_place(|| {
             Handle::current()
-                .block_on(self.client.get_beacon_state_ssz(slot))
+                .block_on(self.client.get_beacon_state(slot))
                 .map_err(|e| anyhow::anyhow!(e))
                 .map(Option::Some)
         })
@@ -44,11 +46,17 @@ pub(crate) struct FileBackedBeaconClientStateProvider {
 }
 
 impl FileBackedBeaconClientStateProvider {
-    pub fn new(file_provider: FileProvider, client_provider: BeaconClientStateProvider) -> Self {
-        Self {
+    pub(crate) fn new(
+        dir: impl Into<PathBuf>,
+        client: BeaconClient,
+        context: &HostContext,
+    ) -> Result<Self, anyhow::Error> {
+        let file_provider = FileProvider::new(dir, context)?;
+        let client_provider = BeaconClientStateProvider::new(client, context);
+        Ok(Self {
             file_provider,
             client_provider,
-        }
+        })
     }
 }
 

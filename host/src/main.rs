@@ -12,8 +12,8 @@ use std::{
 use tracing::{info, warn};
 use url::Url;
 use z_core::{
-    build_input, verify, ConsensusState, Ctx, FileProvider, GuestContext, HostContext,
-    HostStateReader, Input, Root, StateInput,
+    build_input, verify, ConsensusState, Ctx, GuestContext, HostContext, HostStateReader, Input,
+    Root, StateInput,
 };
 use z_core_test_utils::AssertStateReader;
 
@@ -21,10 +21,7 @@ pub mod beacon_client;
 
 pub mod state_provider;
 
-use crate::{
-    beacon_client::BeaconClient,
-    state_provider::{BeaconClientStateProvider, FileBackedBeaconClientStateProvider},
-};
+use crate::{beacon_client::BeaconClient, state_provider::FileBackedBeaconClientStateProvider};
 
 /// CLI for generating and submitting ZKasper proofs
 #[derive(Parser, Debug)]
@@ -124,14 +121,13 @@ async fn main() -> anyhow::Result<()> {
     let state_dir = args.data_dir.join(args.network.to_string()).join("states");
     fs::create_dir_all(&state_dir)?;
 
-    let state_provider = {
-        let api_provider =
-            BeaconClientStateProvider::new(beacon_client.clone(), &context.clone().into());
-        let file_provider = FileProvider::new(&state_dir, &context.clone().into())?;
-        FileBackedBeaconClientStateProvider::new(file_provider, api_provider)
-    };
+    let provider = FileBackedBeaconClientStateProvider::new(
+        &state_dir,
+        beacon_client.clone(),
+        &context.clone().into(),
+    )?;
 
-    let reader = HostStateReader::new(state_provider.into(), context.clone().into());
+    let reader = HostStateReader::new(provider.into(), context.clone().into());
 
     match args.command {
         Command::Verify {

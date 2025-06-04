@@ -227,7 +227,7 @@ fn run_verify(
         );
 
         if mode == ExecMode::R0vm {
-            let journal = execute_guest_program(state_input, input, GuestContext);
+            let journal = execute_guest_program(state_input, input);
             info!("Journal: {:?}", journal);
         }
     }
@@ -265,22 +265,16 @@ async fn cache_beacon_state_root<C: Ctx>(
     Ok(())
 }
 
-fn execute_guest_program(state_input: StateInput, input: Input, context: GuestContext) -> Vec<u8> {
+fn execute_guest_program(state_input: StateInput, input: Input) -> Vec<u8> {
     info!("Executing guest program");
     let ssz_reader = bincode::serialize(&state_input).unwrap();
     info!("Serialized SszStateReader: {} bytes", ssz_reader.len());
     let input = bincode::serialize(&input).unwrap();
     info!("Serialized Input: {} bytes", input.len());
-    let context = bincode::serialize(&context).unwrap();
-    info!("Serialized Context: {} bytes", context.len());
-    info!(
-        "Total Input: {} bytes",
-        ssz_reader.len() + input.len() + context.len()
-    );
+    info!("Total Input: {} bytes", ssz_reader.len() + input.len());
     let env = ExecutorEnv::builder()
         .write_frame(&ssz_reader)
         .write_frame(&input)
-        .write_frame(&context)
         .build()
         .unwrap();
     let executor = default_executor();

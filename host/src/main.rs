@@ -20,7 +20,7 @@ pub mod beacon_client;
 
 pub mod state_provider;
 
-use crate::{beacon_client::BeaconClient, state_provider::FileBackedBeaconClientStateProvider};
+use crate::{beacon_client::BeaconClient, state_provider::PersistentApiStateProvider};
 
 /// CLI for generating and submitting ZKasper proofs
 #[derive(Parser, Debug)]
@@ -120,7 +120,7 @@ async fn main() -> anyhow::Result<()> {
     let state_dir = args.data_dir.join(args.network.to_string()).join("states");
     fs::create_dir_all(&state_dir)?;
 
-    let provider = FileBackedBeaconClientStateProvider::new(
+    let provider = PersistentApiStateProvider::new(
         &state_dir,
         beacon_client.clone(),
         &context.clone().into(),

@@ -8,13 +8,13 @@ use z_core::{
 use crate::beacon_client::BeaconClient;
 
 #[derive(Clone)]
-pub(crate) struct FileBackedBeaconClientStateProvider {
+pub(crate) struct PersistentApiStateProvider {
     file_provider: FileProvider,
     client: BeaconClient,
     context: HostContext,
 }
 
-impl FileBackedBeaconClientStateProvider {
+impl PersistentApiStateProvider {
     pub(crate) fn new(
         dir: impl Into<PathBuf>,
         client: BeaconClient,
@@ -48,7 +48,7 @@ impl FileBackedBeaconClientStateProvider {
     }
 }
 
-impl StateProvider for FileBackedBeaconClientStateProvider {
+impl StateProvider for PersistentApiStateProvider {
     fn get_state(&self, epoch: Epoch) -> Result<Option<BeaconState>, anyhow::Error> {
         // First try to get the state from the file provider
         if let Ok(Some(state)) = self.file_provider.get_state(epoch) {
@@ -73,8 +73,8 @@ impl StateProvider for FileBackedBeaconClientStateProvider {
     }
 }
 
-impl From<FileBackedBeaconClientStateProvider> for BoxedStateProvider {
-    fn from(provider: FileBackedBeaconClientStateProvider) -> Self {
+impl From<PersistentApiStateProvider> for BoxedStateProvider {
+    fn from(provider: PersistentApiStateProvider) -> Self {
         Box::new(provider)
     }
 }

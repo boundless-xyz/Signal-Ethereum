@@ -1,11 +1,14 @@
 use std::sync::Arc;
 
+pub use assert_state_reader::AssertStateReader;
 use beacon_chain::{
     ChainConfig,
     test_utils::{BeaconChainHarness, EphemeralHarnessType},
 };
 use beacon_types::{ChainSpec, Epoch, EthSpec, Keypair, MainnetEthSpec};
 use z_core::ConsensusState;
+
+mod assert_state_reader;
 
 type E = MainnetEthSpec;
 pub type TestHarness = BeaconChainHarness<EphemeralHarnessType<E>>;

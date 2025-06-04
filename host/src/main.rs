@@ -161,7 +161,8 @@ async fn main() -> anyhow::Result<()> {
                 }
             };
 
-            // Find the first ConsensusState in which the trusted epoch the finalized checkpoint
+            // Find the first ConsensusState in which the trusted epoch is the finalized checkpoint
+            // This will be our initial consensus state
             let mut consensus_state = ConsensusState::default();
             let trusted_state_slot = trusted_state.slot();
             for i in trusted_state_slot + context.slots_per_epoch

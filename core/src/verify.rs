@@ -3,7 +3,9 @@ use std::collections::BTreeSet;
 use crate::{
     Attestation, AttestationData, BEACON_ATTESTER_DOMAIN, CommitteeCache, Domain, Epoch, Input,
     PublicKey, Root, ShuffleData, Signature, StateReader, ValidatorIndex, ValidatorInfo, Version,
-    consensus_state::ConsensusState, fast_aggregate_verify_pre_aggregated, threshold::threshold,
+    consensus_state::ConsensusState,
+    fast_aggregate_verify_pre_aggregated,
+    threshold::{self, threshold},
 };
 use alloc::collections::BTreeMap;
 use tracing::{debug, info};
@@ -121,8 +123,9 @@ pub fn verify<S: StateReader>(state_reader: &S, input: Input) -> ConsensusState 
         // In the worst case attestations can arrive one epoch after their target and because we don't have information about which epoch they belong to in the chain
         // (if any) we need to assume the worst case
         let lookahead = link.target.epoch + 1 - trusted_epoch;
+        let threshold = threshold(lookahead, total_active_balance);
 
-        assert!(attesting_balance >= threshold(lookahead, total_active_balance));
+        assert!(attesting_balance >= threshold);
     }
 
     /////////// 2. State update calculation  //////////////

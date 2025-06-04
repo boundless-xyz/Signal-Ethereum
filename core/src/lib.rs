@@ -28,6 +28,7 @@ pub use input_builder::*;
 use ssz_types::typenum::{U64, U131072};
 pub use state_patch::*;
 pub use state_reader::*;
+pub use threshold::*;
 use tree_hash_derive::TreeHash;
 pub use verify::*;
 

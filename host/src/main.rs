@@ -12,7 +12,8 @@ use std::{
 use tracing::{info, warn};
 use url::Url;
 use z_core::{
-    build_input, verify, ConsensusState, GuestContext, HostStateReader, Input, Root, StateInput,
+    build_input, verify, ChainReader, ConsensusState, GuestContext, HostStateReader, Input, Root,
+    StateInput,
 };
 use z_core_test_utils::AssertStateReader;
 
@@ -160,24 +161,27 @@ async fn main() -> anyhow::Result<()> {
                 }
             };
 
+            // Find the first ConsensusState in which the trusted epoch the finalized checkpoint
+            let mut consensus_state = ConsensusState::default();
+            let trusted_state_slot = trusted_state.slot();
+            for i in trusted_state_slot + context.slots_per_epoch
+                ..trusted_state_slot + context.slots_per_epoch * 3
+            {
+                let curr_state = beacon_client.get_consensus_state(StateId::Slot(i)).await?;
+                if curr_state.finalized_checkpoint.epoch == args.trusted_epoch {
+                    consensus_state = curr_state;
+                    break;
+                }
+            }
+            assert!(
+                consensus_state != ConsensusState::default(),
+                "No consensus state found for trusted epoch"
+            );
             info!(
                 "Trusted Beacon State slot: {}, root: {}",
                 trusted_state.slot(),
                 trusted_state.hash_tree_root().unwrap()
             );
-
-            // set the initial consensus state from the beacon state at `from_epoch`
-            let mut consensus_state = ConsensusState {
-                finalized_checkpoint: trusted_state.finalized_checkpoint().clone().into(),
-                current_justified_checkpoint: trusted_state
-                    .current_justified_checkpoint()
-                    .clone()
-                    .into(),
-                previous_justified_checkpoint: trusted_state
-                    .previous_justified_checkpoint()
-                    .clone()
-                    .into(),
-            };
 
             for i in 0..iterations {
                 tracing::info!("Iteration: {}", i);

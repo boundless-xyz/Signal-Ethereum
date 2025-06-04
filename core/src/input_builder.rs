@@ -1,4 +1,4 @@
-use crate::{Attestation, ConsensusState, Input, Link, Slot};
+use crate::{Attestation, ConsensusState, Input, Link};
 use ethereum_consensus::{
     electra::mainnet::{BeaconBlockHeader, SignedBeaconBlockHeader},
     types::mainnet::BeaconBlock,
@@ -46,7 +46,7 @@ pub async fn build_input<CR: ChainReader>(
     let trusted_block_header = chain_reader.get_block_header(trusted_block_root).await?;
     let trusted_state_root = trusted_block_header.message.state_root;
 
-    let (states, start_slot, end_slot) = get_next_finalization(
+    let states = get_next_finalization(
         chain_reader,
         &trusted_block_header.message,
         &consensus_state,
@@ -69,8 +69,7 @@ pub async fn build_input<CR: ChainReader>(
         }
     }
 
-    let links_and_attestations =
-        collect_attestations_for_links(chain_reader, &links, start_slot, end_slot).await?;
+    let links_and_attestations = collect_attestations_for_links(chain_reader, &links).await?;
 
     for (link, attestations) in links_and_attestations.iter() {
         debug!("Link: {:?}, Attestations: {}", link, attestations.len());
@@ -93,7 +92,7 @@ async fn get_next_finalization<CR: ChainReader>(
     chain_reader: &CR,
     trusted_block_header: &BeaconBlockHeader,
     consensus_state: &ConsensusState,
-) -> Result<(Vec<ConsensusState>, Slot, Slot), InputBuilderError> {
+) -> Result<Vec<ConsensusState>, InputBuilderError> {
     let start_slot = trusted_block_header.slot;
     let mut states = vec![consensus_state.clone()];
 
@@ -131,16 +130,21 @@ async fn get_next_finalization<CR: ChainReader>(
         }
     }
 
-    Ok((states, start_slot, slot))
+    Ok(states)
 }
 
 /// Gathers the attestations for links, looking at block in the range [start_slot, end_slot].
 async fn collect_attestations_for_links(
     chain_reader: &impl ChainReader,
     links: &[Link],
-    start_slot: Slot,
-    end_slot: Slot,
 ) -> Result<Vec<(Link, Vec<Attestation>)>, InputBuilderError> {
+    let min_epoch = links.iter().map(|link| link.target.epoch).min().unwrap();
+    // Add 2 because attestations can come one epoch late
+    let max_epoch = links.iter().map(|link| link.target.epoch).max().unwrap() + 2;
+
+    let start_slot = min_epoch * 32;
+    let end_slot = max_epoch * 32;
+
     let blocks = stream::iter(start_slot..=end_slot)
         .filter_map(async |slot| {
             let block = chain_reader.get_block(slot).await;

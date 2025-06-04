@@ -16,12 +16,12 @@ use z_core::{
     Version,
 };
 
-pub struct HarnessStateReader<T: BeaconChainTypes> {
-    inner: BeaconChainHarness<T>,
+pub struct HarnessStateReader<'a, T: BeaconChainTypes> {
+    inner: &'a BeaconChainHarness<T>,
     validator_cache: FrozenMap<Epoch, Vec<(ValidatorIndex, ValidatorInfo)>>,
 }
 
-impl<T> HarnessStateReader<T>
+impl<T> HarnessStateReader<'_, T>
 where
     T: BeaconChainTypes,
 {
@@ -33,11 +33,11 @@ where
     }
 }
 
-impl<T> From<BeaconChainHarness<T>> for HarnessStateReader<T>
+impl<'a, T> From<&'a BeaconChainHarness<T>> for HarnessStateReader<'a, T>
 where
     T: BeaconChainTypes,
 {
-    fn from(inner: BeaconChainHarness<T>) -> Self {
+    fn from(inner: &'a BeaconChainHarness<T>) -> Self {
         Self {
             inner,
             validator_cache: FrozenMap::new(),
@@ -57,7 +57,7 @@ impl From<beacon_chain::BeaconChainError> for HarnessStateReaderError {
     }
 }
 
-impl<T> StateReader for HarnessStateReader<T>
+impl<T> StateReader for HarnessStateReader<'_, T>
 where
     T: BeaconChainTypes,
 {
@@ -122,7 +122,7 @@ fn is_active_validator(validator: &Validator, epoch: Epoch) -> bool {
     validator.activation_epoch <= epoch && epoch < validator.exit_epoch.into()
 }
 
-impl<T> ChainReader for HarnessStateReader<T>
+impl<T> ChainReader for HarnessStateReader<'_, T>
 where
     T: BeaconChainTypes,
 {

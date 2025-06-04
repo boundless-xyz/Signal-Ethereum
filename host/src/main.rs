@@ -127,14 +127,13 @@ async fn main() -> anyhow::Result<()> {
         &context.clone().into(),
     )?;
 
-    let reader = HostStateReader::new(provider.into(), context.clone().into());
+    let reader = HostStateReader::new(provider.clone().into(), context.clone().into());
 
     match args.command {
         Command::Verify {
             mode,
             iterations,
             trusted_block_root,
-            ..
         } => {
             let trusted_state = match reader.get_beacon_state_by_epoch(args.trusted_epoch) {
                 Ok(state) => state,
@@ -152,13 +151,8 @@ async fn main() -> anyhow::Result<()> {
                             args.trusted_epoch
                         ));
                     };
-                    cache_beacon_state_root::<HostContext>(
-                        context.into(),
-                        &beacon_client,
-                        StateId::Root(block.state_root()),
-                        &state_dir,
-                    )
-                    .await?;
+
+                    provider.cache_state_at(StateId::Root(block.state_root()))?;
 
                     // TODO(ec2): We should check if the state corresponds to the trusted epoch
                     reader
@@ -232,20 +226,6 @@ fn run_verify(
     tracing::info!("Consensus state: {:#?}", consensus_state);
 
     Ok(consensus_state)
-}
-
-async fn cache_beacon_state_root<C: Ctx>(
-    c: C,
-    beacon_client: &BeaconClient,
-    id: StateId,
-    cache_dir: &std::path::Path,
-) -> anyhow::Result<()> {
-    let s = beacon_client.get_beacon_state(id).await?;
-    let epoch = c.compute_epoch_at_slot(s.slot());
-    let file_name = cache_dir.join(format!("{}_beacon_state.ssz", epoch));
-    tracing::debug!("Writing state to: {}", file_name.display());
-    fs::write(file_name, &ssz_rs::serialize(&s)?)?;
-    Ok(())
 }
 
 fn execute_guest_program(state_input: StateInput, input: Input) -> Vec<u8> {

@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::{fmt::Display, path::PathBuf};
 
 use tokio::runtime::Handle;
 use z_core::{
@@ -7,6 +7,7 @@ use z_core::{
 
 use crate::beacon_client::BeaconClient;
 
+#[derive(Clone)]
 struct BeaconClientStateProvider {
     client: BeaconClient,
     context: HostContext,
@@ -19,11 +20,19 @@ impl BeaconClientStateProvider {
             context: context.clone(),
         }
     }
+
+    fn get_state_at(&self, state_id: impl Display) -> Result<Option<BeaconState>, anyhow::Error> {
+        tokio::task::block_in_place(|| {
+            Handle::current()
+                .block_on(self.client.get_beacon_state(state_id))
+                .map_err(|e| anyhow::anyhow!(e))
+                .map(Option::Some)
+        })
+    }
 }
 
 impl StateProvider for BeaconClientStateProvider {
     fn get_state(&self, epoch: Epoch) -> Result<Option<BeaconState>, anyhow::Error> {
-        // TODO(ec2): What do if skip slot?
         let slot = self.context.compute_start_slot_at_epoch(epoch);
         tokio::task::block_in_place(|| {
             Handle::current()
@@ -40,6 +49,7 @@ impl From<BeaconClientStateProvider> for BoxedStateProvider {
     }
 }
 
+#[derive(Clone)]
 pub(crate) struct FileBackedBeaconClientStateProvider {
     file_provider: FileProvider,
     client_provider: BeaconClientStateProvider,
@@ -57,6 +67,20 @@ impl FileBackedBeaconClientStateProvider {
             file_provider,
             client_provider,
         })
+    }
+    /// Fetches and saves the beacon state at a specific `state_id`.
+    /// NOTE: This will overwrite the file store's state for this epoch if it exists.
+    pub(crate) fn cache_state_at(
+        &self,
+        state_id: impl Display,
+    ) -> Result<Option<BeaconState>, anyhow::Error> {
+        let state = self.client_provider.get_state_at(state_id);
+        if let Ok(Some(state)) = state {
+            self.file_provider.save_state(&state)?;
+            Ok(Some(state))
+        } else {
+            state
+        }
     }
 }
 

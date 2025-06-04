@@ -11,6 +11,7 @@ pub trait StateProvider {
 
 pub type BoxedStateProvider = Box<dyn StateProvider>;
 
+#[derive(Clone)]
 pub struct FileProvider {
     directory: PathBuf,
     context: HostContext,

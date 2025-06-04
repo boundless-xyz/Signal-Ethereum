@@ -91,6 +91,13 @@ pub struct ValidatorInfo {
     pub exit_epoch: u64,
 }
 
+impl ValidatorInfo {
+    /// Checks if the validator is active at the given epoch.
+    pub fn is_active_at(&self, epoch: Epoch) -> bool {
+        self.activation_epoch <= epoch && epoch < self.exit_epoch
+    }
+}
+
 #[cfg(feature = "host")]
 impl From<&ethereum_consensus::phase0::Validator> for ValidatorInfo {
     fn from(v: &ethereum_consensus::phase0::Validator) -> Self {

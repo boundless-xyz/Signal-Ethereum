@@ -29,10 +29,18 @@ pub enum VerifyError {
     },
     #[error("Committee cache error: {0:?}")]
     CommitteeCacheError(#[from] crate::committee_cache::Error),
-    // #[error("State reader error: {0}")]
-    // StateReaderError(SErr),
+    #[error("Bitfield error: {0:?}")]
+    BitfieldError(ssz::BitfieldError),
+    #[error("State reader error: {0}")]
+    StateReaderError(String),
     #[error("Verify error: {0}")]
     Other(String),
+}
+
+impl From<ssz::BitfieldError> for VerifyError {
+    fn from(e: ssz::BitfieldError) -> Self {
+        VerifyError::BitfieldError(e)
+    }
 }
 
 pub fn verify<S: StateReader>(
@@ -99,9 +107,12 @@ pub fn verify<S: StateReader>(
                 for committee_index in committee_indices {
                     assert!(committee_index < committee_cache.get_committee_count_per_slot());
 
-                    let committee = committee_cache
-                        .get_beacon_committee(data.slot, committee_index, context)
-                        .unwrap();
+                    let committee = committee_cache.get_beacon_committee(
+                        data.slot,
+                        committee_index,
+                        context,
+                    )?;
+
                     let mut committee_attesters = committee
                         .iter()
                         .enumerate()
@@ -109,11 +120,11 @@ pub fn verify<S: StateReader>(
                             attestation
                                 .aggregation_bits
                                 .get(committee_offset + i)
-                                .unwrap()
+                                .expect("aggregation_bits access out of bounds")
                                 .then_some(*attester_index)
                         })
                         .peekable();
-                    assert!(committee_attesters.peek().is_some());
+                    assert!(committee_attesters.peek().is_some(), "empty committee");
                     attesting_indices.extend(committee_attesters);
 
                     committee_offset += committee.len();
@@ -126,30 +137,35 @@ pub fn verify<S: StateReader>(
                     validator_cache.entry(attestation_epoch).or_insert_with(|| {
                         state_reader
                             .active_validators(attestation_epoch, attestation_epoch)
+                            .map_err(|e| VerifyError::StateReaderError(e.to_string()))
                             .unwrap()
                             .collect()
                     });
                 let attesting_validators = attesting_indices
                     .iter()
-                    .map(|i| *state_validators.get(i).unwrap())
+                    .map(|i| *state_validators.get(i).expect("Missing validator info"))
                     .collect::<Vec<_>>();
 
-                assert!(is_valid_indexed_attestation(
+                if !is_valid_indexed_attestation(
                     state_reader,
                     attesting_validators.iter().copied(),
                     &data,
-                    attestation.signature
-                ));
+                    attestation.signature,
+                ) {
+                    return Err(VerifyError::InvalidAttestation(
+                        "Invalid indexed attestation".to_string(),
+                    ));
+                }
 
-                attesting_validators
+                Ok(attesting_validators
                     .iter()
-                    .fold(0u64, |acc, e| acc + e.effective_balance)
+                    .fold(0u64, |acc, e| acc + e.effective_balance))
             })
-            .sum();
+            .sum::<Result<u64, VerifyError>>()?;
 
         let total_active_balance = state_reader
             .get_total_active_balance(link.target.epoch)
-            .unwrap();
+            .map_err(|e| VerifyError::StateReaderError(e.to_string()))?;
 
         // In the worst case attestations can arrive one epoch after their target and because we don't have information about which epoch they belong to in the chain
         // (if any) we need to assume the worst case

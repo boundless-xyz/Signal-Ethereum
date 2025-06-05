@@ -3,6 +3,7 @@ extern crate alloc;
 use core::fmt;
 
 use alloy_primitives::B256;
+mod attestations;
 #[cfg(feature = "host")]
 mod beacon_state;
 mod bls;
@@ -18,6 +19,7 @@ mod state_reader;
 mod threshold;
 mod verify;
 
+pub use attestations::*;
 #[cfg(feature = "host")]
 pub use beacon_state::*;
 pub use bls::*;

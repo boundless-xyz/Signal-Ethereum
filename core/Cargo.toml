@@ -38,6 +38,7 @@ beacon_types = { package = "types", git = "https://github.com/sigp/lighthouse.gi
 tokio = { workspace = true }
 tracing-test = { version = "0.2.5", features = ["no-env-filter"] }
 test_utils = { path = "test_utils" }
+bincode = { workspace = true }
 
 [features]
 default = ["host"]

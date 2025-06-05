@@ -176,8 +176,8 @@ async fn collect_attestations_for_links(
         let matching_attestations = all_attestations
             .iter()
             .filter(|attestation| {
-                attestation.data.source.root == link.source.root
-                    && attestation.data.target.epoch == link.target.epoch
+                crate::Checkpoint::from(attestation.data.source.clone()) == link.source
+                    && crate::Checkpoint::from(attestation.data.target.clone()) == link.target
             })
             .cloned()
             .map(Into::into)

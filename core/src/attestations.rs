@@ -5,8 +5,7 @@ use crate::{Attestation, AttestationData, Link, MaxCommitteesPerSlot, Root, Sign
 pub fn compress(
     attestations: &[Attestation],
 ) -> Vec<(Link, Vec<SparseAttestation<MinimalAttestationData>>)> {
-    let grouped = factor_by_link(attestations);
-    grouped
+    factor_by_link(attestations)
         .into_iter()
         .map(|(link, attestations)| (link, attestations.into_iter().map(Into::into).collect()))
         .collect()
@@ -163,10 +162,10 @@ mod tests {
 
     #[test]
     fn test_roundtrip_attestation() {
-        let attestations = vec![Attestation {
+        let attestation = |slot: u64| Attestation {
             aggregation_bits: BitList::with_capacity(0).unwrap(),
             data: AttestationData {
-                slot: 1,
+                slot,
                 index: 0,
                 beacon_block_root: Root::default(),
                 source: Checkpoint {
@@ -180,7 +179,9 @@ mod tests {
             },
             signature: Signature::from_bytes(&VALID_SIG).unwrap(),
             committee_bits: BitVector::new(),
-        }];
+        };
+
+        let attestations = (0..32).map(attestation).collect::<Vec<_>>();
 
         let original_size = bincode::serialize(&attestations).unwrap().len();
         println!("Original size: {}", original_size);

@@ -165,8 +165,9 @@ async fn main() -> anyhow::Result<()> {
             // This will be our initial consensus state
             let mut consensus_state = ConsensusState::default();
             let trusted_state_slot = trusted_state.slot();
-            for i in trusted_state_slot + context.slots_per_epoch
-                ..trusted_state_slot + context.slots_per_epoch * 3
+            for i in (trusted_state_slot + context.slots_per_epoch
+                ..=trusted_state_slot + context.slots_per_epoch * 3)
+                .step_by(context.slots_per_epoch as usize)
             {
                 let curr_state = beacon_client.get_consensus_state(StateId::Slot(i)).await?;
                 if curr_state.finalized_checkpoint.epoch == args.trusted_epoch {

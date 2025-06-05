@@ -199,7 +199,6 @@ async fn finalize_after_one_empty_epoch() {
     let head_state = harness.chain.head_beacon_state_cloned();
     let consensus_state = consensus_state_from_state(&head_state);
     println!("Current slot: {}", head_state.slot());
-    println!("Pre consensus state: {:?}", consensus_state);
 
     // Advances 33 slots to get a whole empty epoch
     for _ in 0..harness.slots_per_epoch() + 1 {
@@ -218,10 +217,20 @@ async fn finalize_after_one_empty_epoch() {
             AttestationStrategy::AllValidators, // this is where we can mess around with partial validator participation, forks etc
         )
         .await;
-    assert_ne!(
-        consensus_state,
-        consensus_state_from_state(&harness.get_current_state()),
-        "Consensus state should have updated after extending the chain with attestations"
+    let new_consensus_state = consensus_state_from_state(&harness.get_current_state());
+    assert!(
+        consensus_state.finalized_checkpoint.epoch < new_consensus_state.finalized_checkpoint.epoch,
+        "Consensus state should have finalized after extending the chain with attestations"
+    );
+    assert!(
+        consensus_state.previous_justified_checkpoint.epoch
+            < new_consensus_state.previous_justified_checkpoint.epoch,
+        "Consensus state should have new previous justified after extending the chain with attestations"
+    );
+    assert!(
+        consensus_state.current_justified_checkpoint.epoch
+            < new_consensus_state.current_justified_checkpoint.epoch,
+        "Consensus state should have new current justified after extending the chain with attestations"
     );
     test_zkasper_sync(&harness, consensus_state).await;
 }

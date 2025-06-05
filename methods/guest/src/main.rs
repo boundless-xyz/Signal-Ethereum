@@ -57,7 +57,7 @@ fn main() {
     let pre_state_bytes = bincode::serialize(&input.consensus_state).unwrap();
     let pre_state_hash = Sha256::digest(&pre_state_bytes);
 
-    let post_state = verify(&state_reader, input);
+    let post_state = verify(&state_reader, input).unwrap();
     let post_state_bytes = bincode::serialize(&post_state).unwrap();
     let post_state_hash = Sha256::digest(&post_state_bytes);
 

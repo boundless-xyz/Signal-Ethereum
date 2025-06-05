@@ -17,14 +17,21 @@ pub struct CommitteeCache {
     slots_per_epoch: usize,
 }
 
-#[derive(Debug)]
+#[derive(thiserror::Error, Debug)]
 pub enum Error {
+    #[error("Cache is not initialized")]
     NotInitialized,
+    #[error("Cache is not initialized at epoch {0}")]
     NotInitializedAtEpoch(Epoch),
+    #[error("Zero slots per epoch")]
     ZeroSlotsPerEpoch,
+    #[error("Insufficient validators")]
     InsufficientValidators,
+    #[error("Unable to shuffle")]
     UnableToShuffle,
+    #[error("Too many validators")]
     TooManyValidators,
+    #[error("Shuffle index out of bounds: {0}")]
     ShuffleIndexOutOfBounds(usize),
 }
 

@@ -2,22 +2,54 @@ use std::collections::BTreeSet;
 
 use crate::{
     Attestation, AttestationData, BEACON_ATTESTER_DOMAIN, CommitteeCache, Domain, Epoch, Input,
-    PublicKey, Root, ShuffleData, Signature, StateReader, ValidatorIndex, ValidatorInfo, Version,
-    consensus_state::ConsensusState, fast_aggregate_verify_pre_aggregated, threshold::threshold,
+    PublicKey, Root, ShuffleData, Signature, StateReader, StateTransitionError, ValidatorIndex,
+    ValidatorInfo, Version, consensus_state::ConsensusState, fast_aggregate_verify_pre_aggregated,
+    threshold::threshold,
 };
 use alloc::collections::BTreeMap;
 use tracing::{debug, info};
 use tree_hash::TreeHash;
 use tree_hash_derive::TreeHash;
 
-pub fn verify<S: StateReader>(state_reader: &S, input: Input) -> ConsensusState {
+#[derive(thiserror::Error, Debug)]
+pub enum VerifyError<SErr> {
+    #[error("Invalid attestation: {0}")]
+    InvalidAttestation(String),
+    #[error("State transition error: {0}")]
+    StateTransition(#[from] StateTransitionError),
+    #[error("Consensus state is inconsistent")]
+    InconsistentState,
+    #[error(
+        "Attesting balance not met: {attesting_balance} < {threshold} (lookahead: {lookahead})"
+    )]
+    ThresholdNotMet {
+        lookahead: u64,
+        attesting_balance: u64,
+        threshold: u64,
+    },
+    #[error("Committee cache error: {0:?}")]
+    CommitteeCacheError(#[from] crate::committee_cache::Error),
+    #[error("State reader error: {0}")]
+    StateReaderError(SErr),
+    #[error("Verify error: {0}")]
+    Other(String),
+}
+
+pub fn verify<S: StateReader>(
+    state_reader: &S,
+    input: Input,
+) -> Result<ConsensusState, VerifyError<S::Error>> {
     let Input {
         consensus_state,
         link,
         attestations,
         ..
     } = input;
-    assert_eq!(link.len(), attestations.len());
+    if link.len() != attestations.len() {
+        return Err(VerifyError::Other(
+            "Link and attestations must be the same length".to_string(),
+        ));
+    }
     // TODO(ec2): I think we need to enforce here that the trusted state is less than or equal to state.finalized_checkpoint epoch
     // TODO(ec2): We can also bound the number of state patches to the k in k-finality case
     let context = state_reader.context();
@@ -27,6 +59,7 @@ pub fn verify<S: StateReader>(state_reader: &S, input: Input) -> ConsensusState 
     // 1. Attestation processing
     let mut validator_cache: BTreeMap<Epoch, BTreeMap<ValidatorIndex, &ValidatorInfo>> =
         BTreeMap::new();
+
     let mut committee_caches: BTreeMap<Epoch, CommitteeCache> = BTreeMap::new();
     for (link, attestations) in link.iter().zip(attestations.into_iter()) {
         let attesting_balance: u64 = attestations
@@ -123,20 +156,27 @@ pub fn verify<S: StateReader>(state_reader: &S, input: Input) -> ConsensusState 
         let lookahead = link.target.epoch + 1 - trusted_epoch;
         let threshold = threshold(lookahead, total_active_balance);
 
-        assert!(attesting_balance >= threshold);
+        if attesting_balance < threshold {
+            return Err(VerifyError::ThresholdNotMet {
+                lookahead,
+                attesting_balance,
+                threshold,
+            });
+        }
     }
 
     /////////// 2. State update calculation  //////////////
     info!("2. State update calculation start");
-    assert!(consensus_state.is_consistent());
+    if !consensus_state.is_consistent() {
+        return Err(VerifyError::InconsistentState);
+    }
+
     let mut state = consensus_state;
 
     for link in link.iter() {
-        state = state
-            .state_transition(link)
-            .expect("State transition failed");
+        state = state.state_transition(link)?;
     }
-    state
+    Ok(state)
 }
 
 fn is_valid_indexed_attestation<'a, S: StateReader>(
@@ -192,7 +232,7 @@ pub fn get_shufflings_for_epoch<S: StateReader>(
     .unwrap()
 }
 
-pub fn get_attesting_indices(committee: &[usize], attestation: &Attestation) -> Vec<usize> {
+fn get_attesting_indices(committee: &[usize], attestation: &Attestation) -> Vec<usize> {
     committee
         .iter()
         .enumerate()
@@ -212,7 +252,7 @@ fn beacon_attester_signing_domain<S: StateReader>(state_reader: &S, epoch: Epoch
     domain
 }
 
-pub fn compute_signing_root<T: TreeHash>(ssz_object: &T, domain: Domain) -> Root {
+fn compute_signing_root<T: TreeHash>(ssz_object: &T, domain: Domain) -> Root {
     let object_root = ssz_object.tree_hash_root();
 
     #[derive(TreeHash)]

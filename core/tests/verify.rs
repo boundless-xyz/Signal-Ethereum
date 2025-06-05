@@ -33,7 +33,7 @@ async fn test_zkasper_sync(
         // Build the input and verify it
         match build_input(&state_reader, consensus_state.clone()).await {
             Ok(input) => {
-                consensus_state = verify(&state_reader, input);
+                consensus_state = verify(&state_reader, input).unwrap();
                 println!("consensus state: {:?}", &consensus_state);
             }
             Err(e) => {

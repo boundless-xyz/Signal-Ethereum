@@ -210,7 +210,7 @@ fn run_verify(
     info!("Running Verification in mode: {mode}");
 
     let reader = host_reader.track(input.consensus_state.finalized_checkpoint.epoch);
-    let consensus_state = verify(&reader, input.clone()); // will panic if verification fails
+    let consensus_state = verify(&reader, input.clone()).unwrap(); // will panic if verification fails
     info!("Native Verification Success!");
 
     if mode == ExecMode::Ssz || mode == ExecMode::R0vm {
@@ -219,7 +219,7 @@ fn run_verify(
             .clone()
             .into_state_reader(input.trusted_checkpoint_state_root, &GuestContext)?;
         let ssz_consensus_state =
-            verify(&AssertStateReader::new(&ssz_reader, &reader), input.clone()); // will panic if verification fails
+            verify(&AssertStateReader::new(&ssz_reader, &reader), input.clone()).unwrap(); // will panic if verification fails
         info!("Ssz Verification Success!");
         assert_eq!(
             ssz_consensus_state, consensus_state,

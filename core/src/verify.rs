@@ -12,7 +12,7 @@ use tree_hash::TreeHash;
 use tree_hash_derive::TreeHash;
 
 #[derive(thiserror::Error, Debug)]
-pub enum VerifyError<SErr> {
+pub enum VerifyError {
     #[error("Invalid attestation: {0}")]
     InvalidAttestation(String),
     #[error("State transition error: {0}")]
@@ -29,8 +29,8 @@ pub enum VerifyError<SErr> {
     },
     #[error("Committee cache error: {0:?}")]
     CommitteeCacheError(#[from] crate::committee_cache::Error),
-    #[error("State reader error: {0}")]
-    StateReaderError(SErr),
+    // #[error("State reader error: {0}")]
+    // StateReaderError(SErr),
     #[error("Verify error: {0}")]
     Other(String),
 }
@@ -38,7 +38,7 @@ pub enum VerifyError<SErr> {
 pub fn verify<S: StateReader>(
     state_reader: &S,
     input: Input,
-) -> Result<ConsensusState, VerifyError<S::Error>> {
+) -> Result<ConsensusState, VerifyError> {
     let Input {
         consensus_state,
         link,

@@ -4,7 +4,7 @@ use beacon_chain::test_utils::{AttestationStrategy, BlockStrategy};
 use beacon_types::Keypair;
 use test_utils::HarnessStateReader;
 use test_utils::{TestHarness, consensus_state_from_state, get_harness, get_spec};
-use z_core::{ConsensusState, HarnessStateReader, build_input, threshold, verify};
+use z_core::{ConsensusState, build_input, threshold, verify};
 
 pub const VALIDATOR_COUNT: u64 = 48;
 const ETH_PER_VALIDATOR: u64 = 32;
@@ -19,12 +19,12 @@ static KEYPAIRS: LazyLock<Vec<Keypair>> = LazyLock::new(|| {
 /// attempt to sync the consensus state as far as possible and then checks
 /// that the finalized and justified checkpoints match the head state of the chain.
 async fn test_zkasper_sync(
-    harness: TestHarness,
+    harness: &TestHarness,
     initial_consensus_state: ConsensusState,
 ) -> ConsensusState {
     let head_state = harness.chain.head_beacon_state_cloned();
 
-    let state_reader = HarnessStateReader::from(&harness);
+    let state_reader = HarnessStateReader::from(harness);
     let mut consensus_state = initial_consensus_state;
 
     println!("Pre consensus state: {:?}", consensus_state);
@@ -33,6 +33,7 @@ async fn test_zkasper_sync(
         // Build the input and verify it
         match build_input(&state_reader, consensus_state.clone()).await {
             Ok(input) => {
+                println!("Input: {:?}", input);
                 consensus_state = verify(&state_reader, input);
                 println!("consensus state: {:?}", &consensus_state);
             }
@@ -81,7 +82,7 @@ async fn simple_finalize_epoch() {
         )
         .await;
 
-    test_zkasper_sync(harness, consensus_state).await;
+    test_zkasper_sync(&harness, consensus_state).await;
 }
 
 #[tokio::test]
@@ -135,7 +136,7 @@ async fn finalizes_with_threshold_participation() {
         "the head should be finalized three behind the current epoch"
     );
 
-    test_zkasper_sync(harness, consensus_state_from_state(&initial_state)).await;
+    test_zkasper_sync(&harness, consensus_state_from_state(&initial_state)).await;
 }
 
 // Both the chain and ZKasper should fail to finalize when there is less than 2/3rds participation
@@ -186,7 +187,142 @@ async fn does_not_finalize_with_less_than_two_thirds_participation() {
         "only 1 epoch should have been finalized from prior attestations"
     );
 
-    test_zkasper_sync(harness, consensus_state_from_state(&initial_state)).await;
+    test_zkasper_sync(&harness, consensus_state_from_state(&initial_state)).await;
+}
+
+#[tokio::test]
+async fn finalize_after_one_empty_epoch() {
+    let spec = get_spec();
+    let harness = get_harness(KEYPAIRS[..].to_vec(), spec).await;
+
+    // Grab our bootstrap consensus state from there
+    let head_state = harness.chain.head_beacon_state_cloned();
+    let consensus_state = consensus_state_from_state(&head_state);
+    println!("Current slot: {}", head_state.slot());
+
+    // Advances 33 slots to get a whole empty epoch
+    for _ in 0..harness.slots_per_epoch() + 1 {
+        harness.advance_slot();
+    }
+    assert_eq!(
+        consensus_state,
+        consensus_state_from_state(&harness.get_current_state()),
+        "Consensus state should not have updated after advancing 33 empty slots because there are no attestations"
+    );
+    // progress the chain 2 epochs past the empty epoch
+    harness
+        .extend_chain(
+            (harness.slots_per_epoch() * 2) as usize,
+            BlockStrategy::OnCanonicalHead,
+            AttestationStrategy::AllValidators, // this is where we can mess around with partial validator participation, forks etc
+        )
+        .await;
+    let new_consensus_state = consensus_state_from_state(&harness.get_current_state());
+    assert!(
+        consensus_state.finalized_checkpoint.epoch < new_consensus_state.finalized_checkpoint.epoch,
+        "Consensus state should have finalized after extending the chain with attestations"
+    );
+    assert!(
+        consensus_state.previous_justified_checkpoint.epoch
+            < new_consensus_state.previous_justified_checkpoint.epoch,
+        "Consensus state should have new previous justified after extending the chain with attestations"
+    );
+    assert!(
+        consensus_state.current_justified_checkpoint.epoch
+            < new_consensus_state.current_justified_checkpoint.epoch,
+        "Consensus state should have new current justified after extending the chain with attestations"
+    );
+    test_zkasper_sync(&harness, consensus_state).await;
+}
+
+#[tokio::test]
+async fn finalize_after_inactivity_leak() {
+    let spec = get_spec();
+    let harness = get_harness(KEYPAIRS[..].to_vec(), spec.clone()).await;
+
+    // Grab our bootstrap consensus state from there
+    let head_state = harness.chain.head_beacon_state_cloned();
+    let consensus_state = consensus_state_from_state(&head_state);
+    let current_epoch = head_state.current_epoch();
+
+    println!("Current slot: {}", head_state.slot());
+
+    let two_thirds = (VALIDATOR_COUNT as usize / 3) * 2;
+    let less_than_two_thirds = two_thirds - 2;
+    let attesters = (0..less_than_two_thirds).collect();
+
+    // Where we get into leak
+    let target_epoch =
+        harness.get_current_state().current_epoch() + spec.min_epochs_to_inactivity_penalty + 1;
+
+    println!("Current epoch: {}", head_state.current_epoch());
+    println!("Target epoch: {}", target_epoch);
+
+    // progress the chain with less than 2/3rds participation
+    // this should result in an inactivity leak
+    harness
+        .extend_chain(
+            (((target_epoch - current_epoch) * harness.slots_per_epoch()) - 1).into(),
+            BlockStrategy::OnCanonicalHead,
+            AttestationStrategy::SomeValidators(attesters),
+        )
+        .await;
+
+    assert!(
+        harness
+            .get_current_state()
+            .is_in_inactivity_leak((target_epoch).into(), &spec)
+            .unwrap(),
+        "we should be in an inactivity leak"
+    );
+
+    // get out of inactivity leak
+    // first justification occurs here
+    harness
+        .extend_slots(harness.slots_per_epoch() as usize + 1)
+        .await;
+
+    assert_eq!(
+        target_epoch,
+        harness
+            .get_current_state()
+            .current_justified_checkpoint()
+            .epoch
+            .as_u64()
+    );
+
+    // first finalization occurs here
+    harness
+        .extend_slots((harness.slots_per_epoch()) as usize)
+        .await;
+
+    assert!(
+        !harness
+            .get_current_state()
+            .is_in_inactivity_leak((target_epoch).into(), &spec)
+            .unwrap(),
+        "we be should out of inactivity leak after finalization"
+    );
+
+    assert_eq!(
+        target_epoch,
+        harness
+            .get_current_state()
+            .previous_justified_checkpoint()
+            .epoch
+            .as_u64()
+    );
+
+    assert_eq!(
+        target_epoch,
+        harness
+            .get_current_state()
+            .finalized_checkpoint()
+            .epoch
+            .as_u64()
+    );
+
+    test_zkasper_sync(&harness, consensus_state).await;
 }
 
 /// This test case has (2/3 stake) < attesting_balance < threshold
@@ -245,5 +381,5 @@ async fn chain_finalizes_but_zkcasper_does_not() {
         "the head should be finalized three behind the current epoch"
     );
 
-    test_zkasper_sync(harness, consensus_state_from_state(&initial_state)).await;
+    test_zkasper_sync(&harness, consensus_state_from_state(&initial_state)).await;
 }

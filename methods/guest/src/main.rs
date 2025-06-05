@@ -42,7 +42,8 @@ fn main() {
 
         env::log("Verify and Cache SszStateReader");
         state_input.into_state_reader(input.trusted_checkpoint_state_root.into(), &GuestContext)
-    };
+    }
+    .unwrap();
 
     // the input bytes are no longer needed
     drop((ssz_reader_bytes, input_bytes));

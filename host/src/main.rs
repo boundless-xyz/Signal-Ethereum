@@ -217,7 +217,7 @@ fn run_verify(
         let state_input = reader.to_input();
         let ssz_reader = state_input
             .clone()
-            .into_state_reader(input.trusted_checkpoint_state_root, &GuestContext);
+            .into_state_reader(input.trusted_checkpoint_state_root, &GuestContext)?;
         let ssz_consensus_state =
             verify(&AssertStateReader::new(&ssz_reader, &reader), input.clone()); // will panic if verification fails
         info!("Ssz Verification Success!");

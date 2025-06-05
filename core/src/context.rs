@@ -14,6 +14,9 @@ pub trait Ctx {
     fn compute_epoch_at_slot(&self, slot: Slot) -> Epoch {
         slot / self.slots_per_epoch()
     }
+    fn compute_start_slot_at_epoch(&self, epoch: Epoch) -> Slot {
+        epoch * self.slots_per_epoch()
+    }
     fn epochs_per_historical_vector(&self) -> u64;
     fn min_seed_lookahead(&self) -> u64;
 

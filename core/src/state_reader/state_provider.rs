@@ -11,13 +11,14 @@ pub trait StateProvider {
 
 pub type BoxedStateProvider = Box<dyn StateProvider>;
 
+#[derive(Clone)]
 pub struct FileProvider {
     directory: PathBuf,
     context: HostContext,
 }
 
 impl FileProvider {
-    pub(crate) fn new(
+    pub fn new(
         directory: impl Into<PathBuf>,
         context: &HostContext,
     ) -> Result<Self, anyhow::Error> {
@@ -28,6 +29,13 @@ impl FileProvider {
         ensure!(provider.directory.is_dir(), "not a directory");
 
         Ok(provider)
+    }
+    pub fn save_state(&self, state: &BeaconState) -> Result<(), anyhow::Error> {
+        let epoch = self.context.compute_epoch_at_slot(state.slot());
+        let file = self.directory.join(format!("{}_beacon_state.ssz", epoch));
+        debug!("Saving beacon state for epoch: {}", epoch);
+        fs::write(&file, ssz_rs::serialize(state)?)?;
+        Ok(())
     }
 }
 

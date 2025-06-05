@@ -83,6 +83,7 @@ struct VersionedResponse<T> {
 }
 
 /// Simple beacon API client for the `mainnet` preset that can query headers and blocks.
+#[derive(Clone)]
 pub struct BeaconClient {
     http: ClientWithMiddleware,
     endpoint: Url,

@@ -3,9 +3,7 @@ use std::collections::BTreeSet;
 use crate::{
     Attestation, AttestationData, BEACON_ATTESTER_DOMAIN, CommitteeCache, Domain, Epoch, Input,
     PublicKey, Root, ShuffleData, Signature, StateReader, ValidatorIndex, ValidatorInfo, Version,
-    consensus_state::ConsensusState,
-    fast_aggregate_verify_pre_aggregated,
-    threshold::{self, threshold},
+    consensus_state::ConsensusState, fast_aggregate_verify_pre_aggregated, threshold::threshold,
 };
 use alloc::collections::BTreeMap;
 use tracing::{debug, info};
@@ -125,6 +123,9 @@ pub fn verify<S: StateReader>(state_reader: &S, input: Input) -> ConsensusState 
         let lookahead = link.target.epoch + 1 - trusted_epoch;
         let threshold = threshold(lookahead, total_active_balance);
 
+        debug!(
+            "Attesting balance: {attesting_balance}, Threshold: {threshold}, Lookahead: {lookahead}",
+        );
         assert!(attesting_balance >= threshold);
     }
 

@@ -81,7 +81,7 @@ pub fn verify<S: StateReader>(
             .into_iter()
             .filter(|a| a.data.source == link.source && a.data.target == link.target)
             .map(|attestation| {
-                let data = attestation.data;
+                let data = &attestation.data;
                 debug!("Processing attestation: {:?}", data);
 
                 assert_eq!(data.index, 0);
@@ -100,46 +100,8 @@ pub fn verify<S: StateReader>(
                             .unwrap()
                         });
 
-                // get_attesting_indices
-                // see: https://github.com/ethereum/consensus-specs/blob/dev/specs/electra/beacon-chain.md#modified-get_attesting_indices
-                let mut attesting_indices: BTreeSet<usize> = BTreeSet::new();
-
-                // get_committee_indices
-                let committee_indices = attestation
-                    .committee_bits
-                    .iter()
-                    .enumerate()
-                    .filter_map(|(index, bit)| bit.then_some(index));
-
-                let mut committee_offset = 0;
-                for committee_index in committee_indices {
-                    assert!(committee_index < committee_cache.get_committee_count_per_slot());
-
-                    let committee = committee_cache.get_beacon_committee(
-                        data.slot,
-                        committee_index,
-                        context,
-                    )?;
-
-                    let mut committee_attesters = committee
-                        .iter()
-                        .enumerate()
-                        .filter_map(|(i, attester_index)| {
-                            attestation
-                                .aggregation_bits
-                                .get(committee_offset + i)
-                                .expect("aggregation_bits access out of bounds")
-                                .then_some(*attester_index)
-                        })
-                        .peekable();
-                    assert!(committee_attesters.peek().is_some(), "empty committee");
-                    attesting_indices.extend(committee_attesters);
-
-                    committee_offset += committee.len();
-                }
-
-                // Bitfield length matches total number of participants
-                assert_eq!(attestation.aggregation_bits.len(), committee_offset);
+                let attesting_indices =
+                    attestation.get_attesting_indices(context, committee_cache)?;
 
                 let state_validators =
                     validator_cache.entry(attestation_epoch).or_insert_with(|| {
@@ -149,6 +111,7 @@ pub fn verify<S: StateReader>(
                             .unwrap()
                             .collect()
                     });
+
                 let attesting_validators = attesting_indices
                     .iter()
                     .map(|i| *state_validators.get(i).expect("Missing validator info"))

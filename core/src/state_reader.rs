@@ -27,7 +27,7 @@ pub enum StateReaderError {
 }
 
 pub trait StateReader {
-    type Error: alloc::fmt::Debug;
+    type Error: std::error::Error;
     type Context: Ctx;
 
     fn context(&self) -> &Self::Context;

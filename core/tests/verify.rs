@@ -4,7 +4,7 @@ use beacon_chain::test_utils::{AttestationStrategy, BlockStrategy};
 use beacon_types::Keypair;
 use test_utils::HarnessStateReader;
 use test_utils::{TestHarness, consensus_state_from_state, get_harness, get_spec};
-use z_core::{ConsensusState, build_input, threshold, verify};
+use z_core::{ConsensusState, VerifyError, build_input, threshold, verify};
 
 pub const VALIDATOR_COUNT: u64 = 48;
 const ETH_PER_VALIDATOR: u64 = 32;
@@ -21,7 +21,7 @@ static KEYPAIRS: LazyLock<Vec<Keypair>> = LazyLock::new(|| {
 async fn test_zkasper_sync(
     harness: &TestHarness,
     initial_consensus_state: ConsensusState,
-) -> ConsensusState {
+) -> Result<ConsensusState, VerifyError> {
     let head_state = harness.chain.head_beacon_state_cloned();
 
     let state_reader = HarnessStateReader::from(harness);
@@ -33,8 +33,7 @@ async fn test_zkasper_sync(
         // Build the input and verify it
         match build_input(&state_reader, consensus_state.clone()).await {
             Ok(input) => {
-                println!("Input: {:?}", input);
-                consensus_state = verify(&state_reader, input);
+                consensus_state = verify(&state_reader, input)?;
                 println!("consensus state: {:?}", &consensus_state);
             }
             Err(e) => {
@@ -57,7 +56,7 @@ async fn test_zkasper_sync(
         "current justified checkpoint should match"
     );
 
-    consensus_state
+    Ok(consensus_state)
 }
 
 /// This test builds a chain that is just long enough to finalize an epoch
@@ -82,7 +81,7 @@ async fn simple_finalize_epoch() {
         )
         .await;
 
-    test_zkasper_sync(&harness, consensus_state).await;
+    test_zkasper_sync(&harness, consensus_state).await.unwrap();
 }
 
 #[tokio::test]
@@ -136,12 +135,13 @@ async fn finalizes_with_threshold_participation() {
         "the head should be finalized three behind the current epoch"
     );
 
-    test_zkasper_sync(&harness, consensus_state_from_state(&initial_state)).await;
+    test_zkasper_sync(&harness, consensus_state_from_state(&initial_state))
+        .await
+        .unwrap();
 }
 
 // Both the chain and ZKasper should fail to finalize when there is less than 2/3rds participation
 #[tokio::test]
-#[should_panic(expected = "assertion failed: attesting_balance >= threshold")]
 async fn does_not_finalize_with_less_than_two_thirds_participation() {
     let spec = get_spec();
     let harness = get_harness(KEYPAIRS[..].to_vec(), spec).await;
@@ -187,7 +187,15 @@ async fn does_not_finalize_with_less_than_two_thirds_participation() {
         "only 1 epoch should have been finalized from prior attestations"
     );
 
-    test_zkasper_sync(&harness, consensus_state_from_state(&initial_state)).await;
+    assert_eq!(
+        test_zkasper_sync(&harness, consensus_state_from_state(&initial_state)).await,
+        Err(VerifyError::ThresholdNotMet {
+            lookahead: 3,
+            attesting_balance: 1024000000000,
+            threshold: 1024140625000,
+        }),
+        "Expected threshold not met error, but got a different result"
+    );
 }
 
 #[tokio::test]
@@ -232,7 +240,7 @@ async fn finalize_after_one_empty_epoch() {
             < new_consensus_state.current_justified_checkpoint.epoch,
         "Consensus state should have new current justified after extending the chain with attestations"
     );
-    test_zkasper_sync(&harness, consensus_state).await;
+    test_zkasper_sync(&harness, consensus_state).await.unwrap();
 }
 
 #[tokio::test]
@@ -322,14 +330,13 @@ async fn finalize_after_inactivity_leak() {
             .as_u64()
     );
 
-    test_zkasper_sync(&harness, consensus_state).await;
+    test_zkasper_sync(&harness, consensus_state).await.unwrap();
 }
 
 /// This test case has (2/3 stake) < attesting_balance < threshold
 /// The result should be a beacon chain that finalizes and a ZKasper instance that doesn't
 /// This is a liveness failure case
 #[tokio::test]
-#[should_panic(expected = "assertion failed: attesting_balance >= threshold")]
 async fn chain_finalizes_but_zkcasper_does_not() {
     let spec = get_spec();
     let harness = get_harness(KEYPAIRS[..].to_vec(), spec).await;
@@ -381,5 +388,13 @@ async fn chain_finalizes_but_zkcasper_does_not() {
         "the head should be finalized three behind the current epoch"
     );
 
-    test_zkasper_sync(&harness, consensus_state_from_state(&initial_state)).await;
+    assert_eq!(
+        test_zkasper_sync(&harness, consensus_state_from_state(&initial_state)).await,
+        Err(VerifyError::ThresholdNotMet {
+            lookahead: 3,
+            attesting_balance: 1024000000000,
+            threshold: 1024140625000,
+        }),
+        "Expected threshold not met error, but got a different result"
+    );
 }

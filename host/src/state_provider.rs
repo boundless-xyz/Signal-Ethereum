@@ -1,9 +1,7 @@
 use std::{fmt::Display, path::PathBuf};
 
 use tokio::runtime::Handle;
-use z_core::{
-    mainnet::BeaconState, BoxedStateProvider, Ctx, Epoch, FileProvider, HostContext, StateProvider,
-};
+use z_core::{mainnet::BeaconState, BoxedStateProvider, FileProvider, HostContext, StateProvider};
 
 use crate::beacon_client::BeaconClient;
 
@@ -49,31 +47,9 @@ impl PersistentApiStateProvider {
 }
 
 impl StateProvider for PersistentApiStateProvider {
-    fn get_state_at_epoch_boundary(
-        &self,
-        epoch: Epoch,
-    ) -> Result<Option<BeaconState>, anyhow::Error> {
-        let slot = self.context.compute_start_slot_at_epoch(epoch);
-        let state = self.get_state_at_slot(slot);
-
-        if let Ok(Some(state)) = state {
-            let latest_block_header = state.latest_block_header();
-            if latest_block_header.slot == slot {
-                Ok(Some(state))
-            } else {
-                tracing::info!(
-                    "Epoch {}, State slot {} does not match latest block header slot {}, going backwards",
-                    epoch,
-                    slot,
-                    latest_block_header.slot
-                );
-                self.get_state_at_slot(latest_block_header.slot)
-            }
-        } else {
-            state
-        }
+    fn context(&self) -> &HostContext {
+        &self.context
     }
-
     fn get_state_at_slot(&self, slot: u64) -> Result<Option<BeaconState>, anyhow::Error> {
         // First try to get the state from the file provider
         if let Ok(Some(state)) = self.file_provider.get_state_at_slot(slot) {

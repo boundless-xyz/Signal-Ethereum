@@ -49,13 +49,30 @@ impl PersistentApiStateProvider {
 }
 
 impl StateProvider for PersistentApiStateProvider {
-    fn get_state(&self, epoch: Epoch) -> Result<Option<BeaconState>, anyhow::Error> {
+    fn get_state_at_epoch_boundary(
+        &self,
+        epoch: Epoch,
+    ) -> Result<Option<BeaconState>, anyhow::Error> {
+        let mut slot = self.context.compute_start_slot_at_epoch(epoch);
+
+        // Check if it is a skip slot. If so, we need to go backwards to find the LEBB.
+        while tokio::task::block_in_place(|| {
+            Handle::current()
+                .block_on(self.client.get_block_header(slot))
+                .is_err()
+        }) {
+            slot -= 1;
+            tracing::info!("Slot {} not found, going backwards to find EBB", slot);
+        }
+        self.get_state_at_slot(slot)
+    }
+
+    fn get_state_at_slot(&self, slot: u64) -> Result<Option<BeaconState>, anyhow::Error> {
         // First try to get the state from the file provider
-        if let Ok(Some(state)) = self.file_provider.get_state(epoch) {
+        if let Ok(Some(state)) = self.file_provider.get_state_at_slot(slot) {
             return Ok(Some(state));
         }
-        // If not found, fall back to the beacon client provider
-        let slot = self.context.compute_start_slot_at_epoch(epoch);
+
         let state = tokio::task::block_in_place(|| {
             Handle::current()
                 .block_on(self.client.get_beacon_state(slot))

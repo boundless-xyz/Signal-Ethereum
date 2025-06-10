@@ -1,5 +1,5 @@
 use crate::shuffle_list::shuffle_list;
-use crate::{CommitteeIndex, Ctx, Epoch, Slot, ValidatorIndex};
+use crate::{CommitteeIndex, Ctx, Epoch, Slot, ValidatorIndex, ensure};
 use alloc::{vec, vec::Vec};
 use alloy_primitives::B256;
 use core::num::NonZeroUsize;
@@ -17,14 +17,21 @@ pub struct CommitteeCache {
     slots_per_epoch: usize,
 }
 
-#[derive(Debug)]
+#[derive(thiserror::Error, Debug, PartialEq)]
 pub enum Error {
+    #[error("Cache is not initialized")]
     NotInitialized,
+    #[error("Cache is not initialized at epoch {0}")]
     NotInitializedAtEpoch(Epoch),
+    #[error("Zero slots per epoch")]
     ZeroSlotsPerEpoch,
+    #[error("Insufficient validators")]
     InsufficientValidators,
+    #[error("Unable to shuffle")]
     UnableToShuffle,
+    #[error("Too many validators")]
     TooManyValidators,
+    #[error("Shuffle index out of bounds: {0}")]
     ShuffleIndexOutOfBounds(usize),
 }
 
@@ -47,9 +54,7 @@ impl CommitteeCache {
         context: &C,
     ) -> Result<CommitteeCache, Error> {
         // May cause divide-by-zero errors.
-        if context.slots_per_epoch() == 0 {
-            return Err(Error::ZeroSlotsPerEpoch);
-        }
+        ensure!(committees_per_slot > 0, Error::ZeroSlotsPerEpoch);
 
         let max_validator_index = *active_validator_indices
             .iter()
@@ -70,9 +75,7 @@ impl CommitteeCache {
         .ok_or(Error::UnableToShuffle)?;
 
         // The use of `NonZeroUsize` reduces the maximum number of possible validators by one.
-        if max_validator_index == usize::MAX {
-            return Err(Error::TooManyValidators);
-        }
+        ensure!(max_validator_index < usize::MAX, Error::TooManyValidators);
 
         let mut shuffling_positions = vec![<_>::default(); max_validator_index + 1];
         for (i, &v) in shuffling.iter().enumerate() {
@@ -114,17 +117,15 @@ impl CommitteeCache {
         index: CommitteeIndex,
         context: &C,
     ) -> Result<&[usize], Error> {
-        if self.initialized_epoch.is_none() {
-            return Err(Error::NotInitialized);
-        }
-        if !self.is_initialized_at(context.compute_epoch_at_slot(slot)) {
-            return Err(Error::NotInitializedAtEpoch(
-                context.compute_epoch_at_slot(slot),
-            ));
-        }
-        if index >= self.committees_per_slot {
-            return Err(Error::ShuffleIndexOutOfBounds(index));
-        }
+        ensure!(self.initialized_epoch.is_some(), Error::NotInitialized);
+        ensure!(
+            self.is_initialized_at(context.compute_epoch_at_slot(slot)),
+            Error::NotInitializedAtEpoch(context.compute_epoch_at_slot(slot),)
+        );
+        ensure!(
+            index < self.committees_per_slot,
+            Error::ShuffleIndexOutOfBounds(index)
+        );
 
         let committee_index = compute_committee_index_in_epoch(
             slot,
@@ -144,9 +145,7 @@ impl CommitteeCache {
         slot: Slot,
         context: &C,
     ) -> Result<Vec<&[usize]>, Error> {
-        if self.initialized_epoch.is_none() {
-            return Err(Error::NotInitialized);
-        }
+        ensure!(self.initialized_epoch.is_some(), Error::NotInitialized);
 
         (0..self.get_committee_count_per_slot())
             .map(|index| self.get_beacon_committee(slot, index, context))

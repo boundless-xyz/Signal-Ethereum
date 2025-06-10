@@ -3,6 +3,7 @@ extern crate alloc;
 use core::fmt;
 
 use alloy_primitives::B256;
+mod attestation;
 #[cfg(feature = "host")]
 mod beacon_state;
 mod bls;
@@ -18,6 +19,7 @@ mod state_reader;
 mod threshold;
 mod verify;
 
+pub use attestation::*;
 #[cfg(feature = "host")]
 pub use beacon_state::*;
 pub use bls::*;
@@ -91,6 +93,13 @@ pub struct ValidatorInfo {
     pub exit_epoch: u64,
 }
 
+impl ValidatorInfo {
+    /// Checks if the validator is active at the given epoch.
+    pub fn is_active_at(&self, epoch: Epoch) -> bool {
+        self.activation_epoch <= epoch && epoch < self.exit_epoch
+    }
+}
+
 #[cfg(feature = "host")]
 impl From<&ethereum_consensus::phase0::Validator> for ValidatorInfo {
     fn from(v: &ethereum_consensus::phase0::Validator) -> Self {
@@ -113,24 +122,6 @@ impl From<&beacon_types::Validator> for ValidatorInfo {
             exit_epoch: v.exit_epoch.into(),
         }
     }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize, TreeHash)]
-pub struct AttestationData {
-    pub slot: Slot,
-    pub index: CommitteeIndex,
-    pub beacon_block_root: Root,
-    pub source: Checkpoint,
-    pub target: Checkpoint,
-}
-
-// Note: This is was updated in electra.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct Attestation {
-    pub aggregation_bits: ssz_types::BitList<MaxValidatorsPerSlot>,
-    pub data: AttestationData,
-    pub signature: Signature,
-    pub committee_bits: ssz_types::BitVector<MaxCommitteesPerSlot>,
 }
 
 #[derive(
@@ -169,42 +160,11 @@ impl From<ethereum_consensus::electra::Checkpoint> for Checkpoint {
     }
 }
 
-#[cfg(feature = "host")]
-impl From<ethereum_consensus::electra::AttestationData> for AttestationData {
-    fn from(data: ethereum_consensus::electra::AttestationData) -> Self {
-        Self {
-            slot: data.slot,
-            index: data.index,
-            beacon_block_root: data.beacon_block_root,
-            source: data.source.into(),
-            target: data.target.into(),
+#[macro_export]
+macro_rules! ensure {
+    ($cond:expr, $err:expr) => {
+        if !$cond {
+            return Err($err);
         }
-    }
-}
-
-#[cfg(feature = "host")]
-impl<const MAX_VALIDATORS_PER_SLOT: usize, const MAX_COMMITTEES_PER_SLOT: usize>
-    From<ethereum_consensus::electra::Attestation<MAX_VALIDATORS_PER_SLOT, MAX_COMMITTEES_PER_SLOT>>
-    for Attestation
-{
-    fn from(
-        attestation: ethereum_consensus::electra::Attestation<
-            MAX_VALIDATORS_PER_SLOT,
-            MAX_COMMITTEES_PER_SLOT,
-        >,
-    ) -> Self {
-        let agg_bits_ser = ssz_rs::serialize(&attestation.aggregation_bits)
-            .expect("Failed to serialize aggregation bits");
-        let committee_bits_ser = ssz_rs::serialize(&attestation.committee_bits)
-            .expect("Failed to serialize committee bits");
-
-        Self {
-            aggregation_bits: ssz_types::BitList::from_bytes(agg_bits_ser.into())
-                .expect("Failed to deserialize aggregation bits"),
-            data: attestation.data.into(),
-            signature: attestation.signature.into(),
-            committee_bits: ssz_types::BitVector::from_bytes(committee_bits_ser.into())
-                .expect("Failed to deserialize committee bits"),
-        }
-    }
+    };
 }

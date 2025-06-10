@@ -6,7 +6,8 @@ use tracing::debug;
 
 pub trait StateProvider {
     fn context(&self) -> &HostContext;
-    /// Returns the beacon state at `epoch`.
+    /// Returns the beacon state at the start of a given epoch. If the slot there is a skip slot,
+    /// it will return the state at the latest block header slot that is less than to the epoch's start slot.
     fn get_state_at_epoch_boundary(
         &self,
         epoch: Epoch,

@@ -55,7 +55,24 @@ impl StateProvider for FileProvider {
         epoch: Epoch,
     ) -> Result<Option<BeaconState>, anyhow::Error> {
         let slot = self.context.compute_start_slot_at_epoch(epoch);
-        self.get_state_at_slot(slot)
+        let state = self.get_state_at_slot(slot);
+
+        if let Ok(Some(state)) = state {
+            let latest_block_header = state.latest_block_header();
+            if latest_block_header.slot == slot {
+                Ok(Some(state))
+            } else {
+                tracing::info!(
+                    "Epoch {}, State slot {} does not match latest block header slot {}, going backwards",
+                    epoch,
+                    slot,
+                    latest_block_header.slot
+                );
+                self.get_state_at_slot(latest_block_header.slot)
+            }
+        } else {
+            state
+        }
     }
 
     fn get_state_at_slot(&self, slot: u64) -> Result<Option<BeaconState>, anyhow::Error> {

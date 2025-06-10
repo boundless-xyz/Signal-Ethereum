@@ -116,7 +116,6 @@ pub fn verify<S: StateReader>(
                     .map(|i| {
                         state_validators
                             .get(i)
-                            .cloned()
                             .ok_or(VerifyError::MissingValidatorInfo(*i))
                     })
                     .collect::<Result<Vec<_>, _>>()?;
@@ -175,7 +174,7 @@ pub fn verify<S: StateReader>(
 
 fn is_valid_indexed_attestation<'a, S: StateReader>(
     state_reader: &S,
-    attesting_validators: impl IntoIterator<Item = &'a ValidatorInfo>,
+    attesting_validators: impl IntoIterator<Item = &'a &'a ValidatorInfo>,
     data: &AttestationData,
     signature: Signature,
 ) -> Result<bool, VerifyError> {

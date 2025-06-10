@@ -64,7 +64,6 @@ impl StateInput<'_> {
             })
             .collect();
 
-        info!("STATE ROOT: {root:?}");
         self.beacon_state
             .verify(&root)
             .expect("Beacon state root mismatch");

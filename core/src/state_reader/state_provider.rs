@@ -5,8 +5,34 @@ use std::path::PathBuf;
 use tracing::debug;
 
 pub trait StateProvider {
-    /// Returns the beacon state at `epoch`.
-    fn get_state(&self, epoch: Epoch) -> Result<Option<BeaconState>, anyhow::Error>;
+    fn context(&self) -> &HostContext;
+    /// Returns the beacon state at the start of a given epoch. If the slot there is a skip slot,
+    /// it will return the state at the latest block header slot that is less than to the epoch's start slot.
+    fn get_state_at_epoch_boundary(
+        &self,
+        epoch: Epoch,
+    ) -> Result<Option<BeaconState>, anyhow::Error> {
+        let slot = self.context().compute_start_slot_at_epoch(epoch);
+        let state = self.get_state_at_slot(slot);
+
+        if let Ok(Some(state)) = state {
+            let latest_block_header = state.latest_block_header();
+            if latest_block_header.slot == slot {
+                Ok(Some(state))
+            } else {
+                tracing::info!(
+                    "Epoch {}, State slot {} does not match latest block header slot {}, going backwards",
+                    epoch,
+                    slot,
+                    latest_block_header.slot
+                );
+                self.get_state_at_slot(latest_block_header.slot)
+            }
+        } else {
+            state
+        }
+    }
+    fn get_state_at_slot(&self, slot: u64) -> Result<Option<BeaconState>, anyhow::Error>;
 }
 
 pub type BoxedStateProvider = Box<dyn StateProvider>;
@@ -31,26 +57,35 @@ impl FileProvider {
         Ok(provider)
     }
     pub fn save_state(&self, state: &BeaconState) -> Result<(), anyhow::Error> {
-        let epoch = self.context.compute_epoch_at_slot(state.slot());
-        let file = self.directory.join(format!("{}_beacon_state.ssz", epoch));
-        debug!("Saving beacon state for epoch: {}", epoch);
+        let slot = state.slot();
+        let epoch = self.context.compute_epoch_at_slot(slot);
+        let file = self.directory.join(format!("{}_beacon_state.ssz", slot));
+        ensure!(
+            !file.exists(),
+            "State file already exists: {}",
+            file.display()
+        );
+        debug!("Saving beacon state at slot {slot} in epoch: {epoch}");
         fs::write(&file, ssz_rs::serialize(state)?)?;
         Ok(())
     }
 }
 
 impl StateProvider for FileProvider {
-    fn get_state(&self, epoch: Epoch) -> Result<Option<BeaconState>, anyhow::Error> {
-        let file = self.directory.join(format!("{}_beacon_state.ssz", epoch));
+    fn context(&self) -> &HostContext {
+        &self.context
+    }
+
+    fn get_state_at_slot(&self, slot: u64) -> Result<Option<BeaconState>, anyhow::Error> {
+        let epoch = self.context.compute_epoch_at_slot(slot);
+        let file = self.directory.join(format!("{}_beacon_state.ssz", slot));
         if !file.exists() {
             return Ok(None);
         }
 
-        debug!("Loading beacon state for epoch: {}", epoch);
+        debug!("Loading beacon state at slot {slot} in epoch: {epoch}");
         let bytes = fs::read(&file)?;
         let state: BeaconState = ssz_rs::deserialize(&bytes)?;
-        let state_epoch = self.context.compute_epoch_at_slot(state.slot());
-        ensure!(epoch == state_epoch, "Invalid epoch");
 
         Ok(Some(state))
     }

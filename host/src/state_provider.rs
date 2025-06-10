@@ -1,9 +1,7 @@
 use std::{fmt::Display, path::PathBuf};
 
 use tokio::runtime::Handle;
-use z_core::{
-    mainnet::BeaconState, BoxedStateProvider, Ctx, Epoch, FileProvider, HostContext, StateProvider,
-};
+use z_core::{mainnet::BeaconState, BoxedStateProvider, FileProvider, HostContext, StateProvider};
 
 use crate::beacon_client::BeaconClient;
 
@@ -49,13 +47,15 @@ impl PersistentApiStateProvider {
 }
 
 impl StateProvider for PersistentApiStateProvider {
-    fn get_state(&self, epoch: Epoch) -> Result<Option<BeaconState>, anyhow::Error> {
+    fn context(&self) -> &HostContext {
+        &self.context
+    }
+    fn get_state_at_slot(&self, slot: u64) -> Result<Option<BeaconState>, anyhow::Error> {
         // First try to get the state from the file provider
-        if let Ok(Some(state)) = self.file_provider.get_state(epoch) {
+        if let Ok(Some(state)) = self.file_provider.get_state_at_slot(slot) {
             return Ok(Some(state));
         }
-        // If not found, fall back to the beacon client provider
-        let slot = self.context.compute_start_slot_at_epoch(epoch);
+
         let state = tokio::task::block_in_place(|| {
             Handle::current()
                 .block_on(self.client.get_beacon_state(slot))

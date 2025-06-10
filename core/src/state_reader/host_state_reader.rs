@@ -56,7 +56,10 @@ impl StateCache {
         match self.state_cache.get(&epoch) {
             Some(beacon_state) => Ok(beacon_state),
             None => {
-                let state = self.provider.get_state(epoch)?.ok_or(StateMissing)?;
+                let state = self
+                    .provider
+                    .get_state_at_epoch_boundary(epoch)?
+                    .ok_or(StateMissing)?;
                 let genesis_validators_root = state.genesis_validators_root();
                 match self.genesis_validators_root.borrow_mut().deref_mut() {
                     Some(root) => {

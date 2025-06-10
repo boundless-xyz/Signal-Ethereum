@@ -1,4 +1,4 @@
-use crate::{Checkpoint, Link};
+use crate::{Checkpoint, Link, ensure};
 use thiserror::Error;
 
 #[derive(Debug, Clone, Eq, PartialEq, serde::Serialize, serde::Deserialize, Default)]
@@ -33,13 +33,14 @@ impl ConsensusState {
     ///     - the current justified checkpoint must be greater than or equal to the previous justified checkpoint.
     ///
     pub fn state_transition(&self, link: &Link) -> Result<ConsensusState, StateTransitionError> {
-        if link.target.epoch <= link.source.epoch {
-            return Err(StateTransitionError::LinkNotValid);
-        }
-
-        if link.target.epoch < self.current_justified_checkpoint.epoch {
-            return Err(StateTransitionError::LinkTargetTooLow);
-        }
+        ensure!(
+            link.target.epoch > link.source.epoch,
+            StateTransitionError::LinkNotValid
+        );
+        ensure!(
+            link.target.epoch >= self.current_justified_checkpoint.epoch,
+            StateTransitionError::LinkTargetTooLow
+        );
 
         match link {
             // Case 1: 1-finality. Finalizes and justifies the source and target checkpoints respectively

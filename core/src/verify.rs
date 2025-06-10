@@ -1,17 +1,15 @@
-use std::collections::BTreeSet;
-
 use crate::{
     AttestationData, BEACON_ATTESTER_DOMAIN, BlsError, CommitteeCache, Domain, Epoch, Input,
     PublicKey, Root, ShuffleData, Signature, StateReader, StateTransitionError, ValidatorIndex,
-    ValidatorInfo, Version, consensus_state::ConsensusState, fast_aggregate_verify_pre_aggregated,
-    threshold::threshold,
+    ValidatorInfo, Version, consensus_state::ConsensusState, ensure,
+    fast_aggregate_verify_pre_aggregated, threshold::threshold,
 };
 use alloc::collections::BTreeMap;
 use tracing::{debug, info};
 use tree_hash::TreeHash;
 use tree_hash_derive::TreeHash;
 
-#[derive(thiserror::Error, Debug)]
+#[derive(thiserror::Error, Debug, PartialEq)]
 pub enum VerifyError {
     #[error("Invalid attestation: {0}")]
     InvalidAttestation(String),
@@ -35,6 +33,8 @@ pub enum VerifyError {
     BitfieldError(ssz::BitfieldError),
     #[error("State reader error: {0}")]
     StateReaderError(String),
+    #[error("Missing validator info for index: {0}")]
+    MissingValidatorInfo(ValidatorIndex),
     #[error("Verify error: {0}")]
     Other(String),
 }
@@ -60,11 +60,10 @@ pub fn verify<S: StateReader>(
         attestations,
         ..
     } = input;
-    if link.len() != attestations.len() {
-        return Err(VerifyError::Other(
-            "Link and attestations must be the same length".to_string(),
-        ));
-    }
+    ensure!(
+        link.len() == attestations.len(),
+        VerifyError::Other("Link and attestations must be the same length".to_string())
+    );
     // TODO(ec2): I think we need to enforce here that the trusted state is less than or equal to state.finalized_checkpoint epoch
     // TODO(ec2): We can also bound the number of state patches to the k in k-finality case
     let context = state_reader.context();
@@ -114,23 +113,29 @@ pub fn verify<S: StateReader>(
 
                 let attesting_validators = attesting_indices
                     .iter()
-                    .map(|i| *state_validators.get(i).expect("Missing validator info"))
-                    .collect::<Vec<_>>();
+                    .map(|i| {
+                        state_validators
+                            .get(i)
+                            .cloned()
+                            .ok_or(VerifyError::MissingValidatorInfo(*i))
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
 
-                if !is_valid_indexed_attestation(
-                    state_reader,
-                    attesting_validators.iter().copied(),
-                    &data,
-                    attestation.signature,
-                )? {
-                    return Err(VerifyError::InvalidAttestation(
-                        "Invalid indexed attestation".to_string(),
-                    ));
-                }
-
-                Ok(attesting_validators
+                let attesting_balance = attesting_validators
                     .iter()
-                    .fold(0u64, |acc, e| acc + e.effective_balance))
+                    .fold(0u64, |acc, e| acc + e.effective_balance);
+
+                ensure!(
+                    is_valid_indexed_attestation(
+                        state_reader,
+                        attesting_validators.into_iter(),
+                        &data,
+                        attestation.signature,
+                    )?,
+                    VerifyError::InvalidAttestation("Invalid indexed attestation".to_string(),)
+                );
+
+                Ok(attesting_balance)
             })
             .sum::<Result<u64, VerifyError>>()?;
 
@@ -143,20 +148,22 @@ pub fn verify<S: StateReader>(
         let lookahead = link.target.epoch + 1 - trusted_epoch;
         let threshold = threshold(lookahead, total_active_balance);
 
-        if attesting_balance < threshold {
-            return Err(VerifyError::ThresholdNotMet {
+        ensure!(
+            attesting_balance >= threshold,
+            VerifyError::ThresholdNotMet {
                 lookahead,
                 attesting_balance,
                 threshold,
-            });
-        }
+            }
+        );
     }
 
     /////////// 2. State update calculation  //////////////
     info!("2. State update calculation start");
-    if !consensus_state.is_consistent() {
-        return Err(VerifyError::InconsistentState);
-    }
+    ensure!(
+        consensus_state.is_consistent(),
+        VerifyError::InconsistentState
+    );
 
     let mut state = consensus_state;
 

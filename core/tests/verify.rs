@@ -187,12 +187,15 @@ async fn does_not_finalize_with_less_than_two_thirds_participation() {
         "only 1 epoch should have been finalized from prior attestations"
     );
 
-    match test_zkasper_sync(&harness, consensus_state_from_state(&initial_state)).await {
-        Err(VerifyError::ThresholdNotMet { .. }) => {}
-        _ => {
-            panic!("Expected threshold not met error, but got a different result");
-        }
-    }
+    assert_eq!(
+        test_zkasper_sync(&harness, consensus_state_from_state(&initial_state)).await,
+        Err(VerifyError::ThresholdNotMet {
+            lookahead: 3,
+            attesting_balance: 1024000000000,
+            threshold: 1024140625000,
+        }),
+        "Expected threshold not met error, but got a different result"
+    );
 }
 
 #[tokio::test]
@@ -385,10 +388,13 @@ async fn chain_finalizes_but_zkcasper_does_not() {
         "the head should be finalized three behind the current epoch"
     );
 
-    match test_zkasper_sync(&harness, consensus_state_from_state(&initial_state)).await {
-        Err(VerifyError::ThresholdNotMet { .. }) => {}
-        _ => {
-            panic!("Expected threshold not met error, but got a different result");
-        }
-    }
+    assert_eq!(
+        test_zkasper_sync(&harness, consensus_state_from_state(&initial_state)).await,
+        Err(VerifyError::ThresholdNotMet {
+            lookahead: 3,
+            attesting_balance: 1024000000000,
+            threshold: 1024140625000,
+        }),
+        "Expected threshold not met error, but got a different result"
+    );
 }

@@ -12,8 +12,8 @@ use std::{
 use tracing::{info, warn};
 use url::Url;
 use z_core::{
-    build_input, verify, ChainReader, ConsensusState, GuestContext, HostStateReader, Input, Root,
-    StateInput,
+    build_input, verify, ChainReader, ConsensusState, GuestContext, HostStateReader, Input,
+    PreflightStateReader, Root, StateInput,
 };
 use z_core_test_utils::AssertStateReader;
 
@@ -205,12 +205,17 @@ fn run_verify(
 ) -> anyhow::Result<ConsensusState> {
     info!("Running Verification in mode: {mode}");
 
-    let reader = host_reader.track(input.consensus_state.finalized_checkpoint.epoch);
+    info!("Performign the pre-flight");
+    let epoch_reader = host_reader.read_at_epoch(input.consensus_state.finalized_checkpoint.epoch);
+    let reader = PreflightStateReader::new(&epoch_reader);
     let consensus_state = verify(&reader, input.clone()).unwrap(); // will panic if verification fails
-    info!("Native Verification Success!");
+    info!("pre-flight and native verification success!");
 
     if mode == ExecMode::Ssz || mode == ExecMode::R0vm {
-        let state_input = reader.to_input();
+        let state_input = reader.to_input(
+            host_reader
+                .get_beacon_state_by_epoch(input.consensus_state.finalized_checkpoint.epoch)?,
+        );
         let ssz_reader = state_input
             .clone()
             .into_state_reader(input.trusted_checkpoint_state_root, &GuestContext)?;
@@ -223,7 +228,7 @@ fn run_verify(
         );
 
         if mode == ExecMode::R0vm {
-            let journal = execute_guest_program(state_input, input);
+            let journal = execute_guest_program(&state_input, input);
             info!("Journal: {:?}", journal);
         }
     }
@@ -233,7 +238,7 @@ fn run_verify(
     Ok(consensus_state)
 }
 
-fn execute_guest_program(state_input: StateInput, input: Input) -> Vec<u8> {
+fn execute_guest_program(state_input: &StateInput, input: Input) -> Vec<u8> {
     info!("Executing guest program");
     let ssz_reader = bincode::serialize(&state_input).unwrap();
     info!("Serialized SszStateReader: {} bytes", ssz_reader.len());

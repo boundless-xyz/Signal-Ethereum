@@ -14,18 +14,20 @@ pub use host::StatePatchBuilder;
 mod host {
     use super::*;
     use crate::Ctx;
-    use crate::HostContext;
     use crate::beacon_state::mainnet::BeaconState;
     use tracing::debug;
 
-    pub struct StatePatchBuilder<'a> {
+    pub struct StatePatchBuilder<'a, C> {
         state: &'a BeaconState,
-        context: &'a HostContext,
+        context: &'a C,
         patch: StatePatch,
     }
 
-    impl<'a> StatePatchBuilder<'a> {
-        pub fn new(state: &'a BeaconState, context: &'a HostContext) -> Self {
+    impl<'a, C> StatePatchBuilder<'a, C>
+    where
+        C: Ctx,
+    {
+        pub fn new(state: &'a BeaconState, context: &'a C) -> Self {
             Self {
                 state,
                 context,

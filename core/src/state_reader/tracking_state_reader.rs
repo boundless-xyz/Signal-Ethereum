@@ -3,10 +3,10 @@ use ssz_multiproofs::MultiproofBuilder;
 use ssz_rs::prelude::*;
 use thiserror::Error;
 
-use super::{HostStateReader, StateInput, host_state_reader::HostReaderError};
+use super::{StateInput, host_state_reader::HostReaderError};
 use crate::{
-    Epoch, HostContext, HostEpochStateReader, StatePatchBuilder, StateReader, ValidatorIndex,
-    ValidatorInfo, Version, beacon_state::mainnet::BeaconState, mainnet::ElectraBeaconState,
+    Epoch, StatePatchBuilder, StateReader, ValidatorIndex, ValidatorInfo, Version,
+    beacon_state::mainnet::BeaconState, mainnet::ElectraBeaconState,
 };
 use alloy_primitives::B256;
 use std::{
@@ -21,19 +21,22 @@ pub enum TrackingReaderError {
     HostReaderError(#[from] HostReaderError),
 }
 
-/// A TrackingStateReader functions identically to a HostStateReader. In fact it is just a wrapper around one.
-/// It is used to record the state data read from the HostStateReader as it is used. This data can then be packed into a `StateInput`
+/// A TrackingStateReader functions identically to a StateReader. In fact it is just a wrapper around one.
+/// It is used to record the state data read from the StateReader as it is used. This data can then be packed into a `StateInput`
 /// This StateInput can be serialized and sent to another context for use where there is no access to a beacon API
-pub struct TrackingStateReader<'a> {
-    /// The wrapped HostEpochStateReader
-    inner: &'a HostEpochStateReader<'a>,
-    // The data used for recording the state data read from the HostStateReader
+pub struct TrackingStateReader<'a, SR> {
+    /// The wrapped StateReader
+    inner: &'a SR,
+    // The data used for recording the state data read from the StateReader
     validator_indices: RefCell<BTreeSet<ValidatorIndex>>,
     mix_epochs: RefCell<BTreeMap<Epoch, BTreeSet<usize>>>,
 }
 
-impl<'a> TrackingStateReader<'a> {
-    pub fn new(reader: &'a HostEpochStateReader) -> Self {
+impl<'a, SR> TrackingStateReader<'a, SR>
+where
+    SR: StateReader,
+{
+    pub fn new(reader: &'a SR) -> Self {
         Self {
             inner: reader,
             validator_indices: Default::default(),
@@ -41,19 +44,14 @@ impl<'a> TrackingStateReader<'a> {
         }
     }
 
-    pub fn host_reader(&self) -> &HostEpochStateReader {
+    pub fn host_reader(&self) -> &SR {
         &self.inner
     }
 
-    pub fn to_input(&self) -> StateInput {
-        let state = self
-            .inner
-            .host_state_reader
-            .get_beacon_state_by_epoch(self.inner.epoch())
-            .unwrap();
+    pub fn to_input(&self, state: &BeaconState) -> StateInput {
         let beacon_state_root = state.hash_tree_root().unwrap();
 
-        let mut patch_builder: BTreeMap<Epoch, StatePatchBuilder> = BTreeMap::new();
+        let mut patch_builder: BTreeMap<Epoch, StatePatchBuilder<SR::Context>> = BTreeMap::new();
         let mut proof_builder: MultiproofBuilder = MultiproofBuilder::new();
 
         for (epoch, indices) in self.mix_epochs.take() {
@@ -65,7 +63,7 @@ impl<'a> TrackingStateReader<'a> {
             } else {
                 let patch = patch_builder
                     .entry(epoch)
-                    .or_insert(self.patch_builder(epoch).unwrap());
+                    .or_insert(StatePatchBuilder::new(state, self.context()));
                 for idx in indices {
                     patch.randao_mix(idx);
                 }
@@ -149,21 +147,14 @@ impl<'a> TrackingStateReader<'a> {
             patches,
         }
     }
-
-    fn patch_builder(&self, epoch: Epoch) -> Result<StatePatchBuilder, HostReaderError> {
-        let state = self
-            .inner
-            .host_state_reader
-            .get_beacon_state_by_epoch(epoch)?;
-        let context = self.inner.context();
-
-        Ok(StatePatchBuilder::new(state, context))
-    }
 }
 
-impl<'a> StateReader for TrackingStateReader<'a> {
-    type Error = TrackingReaderError;
-    type Context = HostContext;
+impl<'a, SR> StateReader for TrackingStateReader<'a, SR>
+where
+    SR: StateReader,
+{
+    type Error = SR::Error;
+    type Context = SR::Context;
 
     fn epoch(&self) -> Epoch {
         self.inner.epoch()

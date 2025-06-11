@@ -57,9 +57,11 @@ pub enum SszReaderError {
 }
 
 impl StateInput<'_> {
+    /// Converts the `StateInput` into a `SszStateReader`
+    /// beacon_root is a known root of the beacon state which is used to verify the multiproof as a sanity check
     pub fn into_state_reader(
         self,
-        root: B256,
+        beacon_root: B256,
         context: &GuestContext,
     ) -> Result<SszStateReader, SszReaderError> {
         let (genesis_validators_root, state_epoch, fork_current_version, validators_root, randao) =
@@ -71,7 +73,7 @@ impl StateInput<'_> {
             })?;
 
         self.beacon_state
-            .verify(&root)
+            .verify(&beacon_root)
             .map_err(|e| SszReaderError::SszVerify {
                 msg: "Beacon state root mismatch".to_string(),
                 source: e,

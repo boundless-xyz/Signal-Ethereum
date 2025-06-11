@@ -3,6 +3,7 @@
 //! and have its data read directly by the verify function
 //!
 //!
+use alloy_primitives::B256;
 use beacon_chain::{
     BeaconChainError, BeaconChainTypes, StateSkipConfig, WhenSlotSkipped,
     test_utils::BeaconChainHarness,
@@ -13,7 +14,7 @@ use std::str::FromStr;
 use thiserror::Error;
 use z_core::{
     ChainReader, ConsensusState, Epoch, GuestContext, StateReader, ValidatorIndex, ValidatorInfo,
-    Version,
+    Version, mainnet::BeaconState as ZKBeaconState,
 };
 
 pub struct HarnessStateReader<'a, T: BeaconChainTypes> {
@@ -31,6 +32,14 @@ where
         self.inner
             .chain
             .state_at_slot(slot.into(), StateSkipConfig::WithStateRoots)
+    }
+
+    pub fn state_by_root(
+        &self,
+        state_root: &B256,
+    ) -> Result<ZKBeaconState, HarnessStateReaderError> {
+        let state = self.inner.chain.get_state(state_root, None, true)?;
+        Ok(convert_via_json(state).unwrap())
     }
 }
 

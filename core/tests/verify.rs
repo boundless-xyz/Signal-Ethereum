@@ -5,7 +5,7 @@ use beacon_types::Keypair;
 use test_utils::HarnessStateReader;
 use test_utils::{TestHarness, consensus_state_from_state, get_harness, get_spec};
 use z_core::{
-    ChainReader, ConsensusState, StateReader, TrackingStateReader, VerifyError, build_input,
+    ChainReader, ConsensusState, PreflightStateReader, StateReader, VerifyError, build_input,
     threshold, verify,
 };
 
@@ -34,7 +34,7 @@ async fn test_zkasper_sync(
     loop {
         let state_reader =
             HarnessStateReader::new(harness, consensus_state.finalized_checkpoint.epoch);
-        let tracking_state_reader = TrackingStateReader::new(&state_reader);
+        let tracking_state_reader = PreflightStateReader::new(&state_reader);
 
         // Build the input and verify it
         match build_input(&state_reader, consensus_state.clone()).await {

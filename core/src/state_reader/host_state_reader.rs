@@ -1,5 +1,4 @@
 use crate::HostReaderError::StateMissing;
-use crate::StateProvider;
 use crate::state_reader::state_provider::{BoxedStateProvider, FileProvider};
 use crate::{
     Epoch, HostContext, Root, StateReader, ValidatorIndex, ValidatorInfo, Version,

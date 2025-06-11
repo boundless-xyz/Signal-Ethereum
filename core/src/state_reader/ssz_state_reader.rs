@@ -9,6 +9,7 @@ use ssz_multiproofs::Multiproof;
 use std::collections::BTreeMap;
 use tracing::info;
 
+/// A serializable structure that can be converted into a `SszStateReader`.
 #[derive(Clone, Deserialize, Serialize)]
 pub struct StateInput<'a> {
     /// Used fields of the BeaconState plus their inclusion proof against the state root.

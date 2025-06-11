@@ -21,10 +21,10 @@ pub enum TrackingReaderError {
     HostReaderError(#[from] HostReaderError),
 }
 
-/// A TrackingStateReader functions identically to a StateReader. In fact it is just a wrapper around one.
+/// A PreflightStateReader functions identically to a StateReader. In fact it is just a wrapper around one.
 /// It is used to record the state data read from the StateReader as it is used. This data can then be packed into a `StateInput`
 /// This StateInput can be serialized and sent to another context for use where there is no access to a beacon API
-pub struct TrackingStateReader<'a, SR> {
+pub struct PreflightStateReader<'a, SR> {
     /// The wrapped StateReader
     inner: &'a SR,
     // The data used for recording the state data read from the StateReader
@@ -32,7 +32,7 @@ pub struct TrackingStateReader<'a, SR> {
     mix_epochs: RefCell<BTreeMap<Epoch, BTreeSet<usize>>>,
 }
 
-impl<'a, SR> TrackingStateReader<'a, SR>
+impl<'a, SR> PreflightStateReader<'a, SR>
 where
     SR: StateReader,
 {
@@ -149,7 +149,7 @@ where
     }
 }
 
-impl<'a, SR> StateReader for TrackingStateReader<'a, SR>
+impl<'a, SR> StateReader for PreflightStateReader<'a, SR>
 where
     SR: StateReader,
 {

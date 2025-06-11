@@ -5,8 +5,8 @@ use thiserror::Error;
 
 use super::{HostStateReader, StateInput, host_state_reader::HostReaderError};
 use crate::{
-    Epoch, HostContext, StatePatchBuilder, StateReader, ValidatorIndex, ValidatorInfo, Version,
-    beacon_state::mainnet::BeaconState, mainnet::ElectraBeaconState,
+    Epoch, HostContext, HostEpochStateReader, StatePatchBuilder, StateReader, ValidatorIndex,
+    ValidatorInfo, Version, beacon_state::mainnet::BeaconState, mainnet::ElectraBeaconState,
 };
 use alloy_primitives::B256;
 use std::{
@@ -21,33 +21,35 @@ pub enum TrackingReaderError {
     HostReaderError(#[from] HostReaderError),
 }
 
+/// A TrackingStateReader functions identically to a HostStateReader. In fact it is just a wrapper around one.
+/// It is used to record the state data read from the HostStateReader as it is used. This data can then be packed into a `StateInput`
+/// This StateInput can be serialized and sent to another context for use where there is no access to a beacon API
 pub struct TrackingStateReader<'a> {
-    trusted_epoch: Epoch,
-    inner: &'a HostStateReader,
+    /// The wrapped HostEpochStateReader
+    inner: &'a HostEpochStateReader<'a>,
+    // The data used for recording the state data read from the HostStateReader
     validator_indices: RefCell<BTreeSet<ValidatorIndex>>,
-    validator_epochs: RefCell<BTreeSet<Epoch>>,
     mix_epochs: RefCell<BTreeMap<Epoch, BTreeSet<usize>>>,
 }
 
 impl<'a> TrackingStateReader<'a> {
-    pub fn new(reader: &'a HostStateReader, trusted_epoch: Epoch) -> Self {
+    pub fn new(reader: &'a HostEpochStateReader) -> Self {
         Self {
-            trusted_epoch,
             inner: reader,
             validator_indices: Default::default(),
-            validator_epochs: Default::default(),
             mix_epochs: Default::default(),
         }
     }
 
-    pub fn host_reader(&self) -> &HostStateReader {
+    pub fn host_reader(&self) -> &HostEpochStateReader {
         &self.inner
     }
 
     pub fn to_input(&self) -> StateInput {
         let state = self
             .inner
-            .get_beacon_state_by_epoch(self.trusted_epoch)
+            .host_state_reader
+            .get_beacon_state_by_epoch(self.inner.epoch())
             .unwrap();
         let beacon_state_root = state.hash_tree_root().unwrap();
 
@@ -55,7 +57,7 @@ impl<'a> TrackingStateReader<'a> {
         let mut proof_builder: MultiproofBuilder = MultiproofBuilder::new();
 
         for (epoch, indices) in self.mix_epochs.take() {
-            if epoch == self.trusted_epoch {
+            if epoch == self.inner.epoch() {
                 for idx in indices {
                     let path = ["randao_mixes".into(), idx.into()];
                     proof_builder = proof_builder.with_path::<ElectraBeaconState>(&path);
@@ -149,7 +151,10 @@ impl<'a> TrackingStateReader<'a> {
     }
 
     fn patch_builder(&self, epoch: Epoch) -> Result<StatePatchBuilder, HostReaderError> {
-        let state = self.inner.get_beacon_state_by_epoch(epoch)?;
+        let state = self
+            .inner
+            .host_state_reader
+            .get_beacon_state_by_epoch(epoch)?;
         let context = self.inner.context();
 
         Ok(StatePatchBuilder::new(state, context))
@@ -160,27 +165,26 @@ impl<'a> StateReader for TrackingStateReader<'a> {
     type Error = TrackingReaderError;
     type Context = HostContext;
 
+    fn epoch(&self) -> Epoch {
+        self.inner.epoch()
+    }
+
     fn context(&self) -> &Self::Context {
         self.inner.context()
     }
 
     fn active_validators(
         &self,
-        state: Epoch,
         epoch: Epoch,
     ) -> Result<impl Iterator<Item = (ValidatorIndex, &ValidatorInfo)>, Self::Error> {
-        assert!(state >= self.trusted_epoch);
-
-        let iter = self.inner.active_validators(state, epoch)?;
-        self.validator_epochs.borrow_mut().insert(state);
-
+        let iter = self.inner.active_validators(epoch)?;
         Ok(iter.inspect(|(idx, _)| {
             self.validator_indices.borrow_mut().insert(*idx);
         }))
     }
 
     fn randao_mix(&self, epoch: Epoch, idx: usize) -> Result<Option<B256>, Self::Error> {
-        assert!(epoch >= self.trusted_epoch);
+        assert!(epoch >= self.epoch());
 
         // to be able to prove the inclusion, the randao value must exist
         let randao = self.inner.randao_mix(epoch, idx)?.unwrap();
@@ -197,7 +201,7 @@ impl<'a> StateReader for TrackingStateReader<'a> {
         self.inner.genesis_validators_root()
     }
 
-    fn fork_current_version(&self, epoch: Epoch) -> Result<Version, Self::Error> {
-        Ok(self.inner.fork_current_version(epoch)?)
+    fn fork_current_version(&self) -> Result<Version, Self::Error> {
+        Ok(self.inner.fork_current_version()?)
     }
 }

@@ -17,6 +17,7 @@ use z_core::{
 };
 
 pub struct HarnessStateReader<'a, T: BeaconChainTypes> {
+    epoch: Epoch,
     inner: &'a BeaconChainHarness<T>,
     validator_cache: FrozenMap<Epoch, Vec<(ValidatorIndex, ValidatorInfo)>>,
 }
@@ -33,13 +34,14 @@ where
     }
 }
 
-impl<'a, T> From<&'a BeaconChainHarness<T>> for HarnessStateReader<'a, T>
+impl<'a, T> HarnessStateReader<'a, T>
 where
     T: BeaconChainTypes,
 {
-    fn from(inner: &'a BeaconChainHarness<T>) -> Self {
+    pub fn new(harness: &'a BeaconChainHarness<T>, epoch: Epoch) -> Self {
         Self {
-            inner,
+            inner: harness,
+            epoch,
             validator_cache: FrozenMap::new(),
         }
     }
@@ -65,6 +67,10 @@ where
 
     type Context = GuestContext;
 
+    fn epoch(&self) -> Epoch {
+        self.epoch
+    }
+
     fn context(&self) -> &Self::Context {
         &GuestContext
     }
@@ -73,22 +79,19 @@ where
         self.inner.chain.genesis_validators_root
     }
 
-    fn fork_current_version(&self, state_epoch: Epoch) -> Result<Version, Self::Error> {
-        let state = self.state_at_epoch(state_epoch)?;
+    fn fork_current_version(&self) -> Result<Version, Self::Error> {
+        let state = self.state_at_epoch(self.epoch)?;
         Ok(state.fork().current_version)
     }
 
     fn active_validators(
         &self,
-        state_epoch: Epoch,
         epoch: Epoch,
     ) -> Result<impl Iterator<Item = (ValidatorIndex, &ValidatorInfo)>, Self::Error> {
-        assert!(state_epoch >= epoch, "Only historical epochs supported");
-
-        let iter = match self.validator_cache.get(&state_epoch) {
+        let iter = match self.validator_cache.get(&self.epoch) {
             Some(validators) => validators.iter(),
             None => {
-                let state = self.state_at_epoch(state_epoch)?;
+                let state = self.state_at_epoch(self.epoch)?;
 
                 let validators: Vec<_> = state
                     .validators()
@@ -98,7 +101,7 @@ where
                     .map(move |(idx, validator)| (idx, ValidatorInfo::from(validator)))
                     .collect();
 
-                self.validator_cache.insert(state_epoch, validators).iter()
+                self.validator_cache.insert(self.epoch, validators).iter()
             }
         };
         Ok(iter.map(|(idx, validator)| (*idx, validator)))

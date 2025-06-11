@@ -2,7 +2,9 @@ use alloy_primitives::B256;
 use std::iter;
 use z_core::{Epoch, StateReader, ValidatorIndex, ValidatorInfo, Version};
 
-/// A simple state reader used for debugging and testing.
+/// Merge two state readers into one and assert that their results are equal.
+/// Useful for testing that two implementations of `StateReader` yield the same results
+/// when used in a particular context
 pub struct AssertStateReader<'a, S, R> {
     reader_a: &'a S,
     reader_b: &'a R,
@@ -21,6 +23,11 @@ impl<S: StateReader, R: StateReader> StateReader for AssertStateReader<'_, S, R>
     type Error = S::Error;
     type Context = S::Context;
 
+    fn epoch(&self) -> Epoch {
+        assert_eq!(self.reader_a.epoch(), self.reader_b.epoch());
+        self.reader_a.epoch()
+    }
+
     fn context(&self) -> &S::Context {
         self.reader_a.context()
     }
@@ -32,20 +39,19 @@ impl<S: StateReader, R: StateReader> StateReader for AssertStateReader<'_, S, R>
         a
     }
 
-    fn fork_current_version(&self, state: Epoch) -> Result<Version, Self::Error> {
-        let a = self.reader_a.fork_current_version(state)?;
-        let b = self.reader_b.fork_current_version(state).unwrap();
+    fn fork_current_version(&self) -> Result<Version, Self::Error> {
+        let a = self.reader_a.fork_current_version()?;
+        let b = self.reader_b.fork_current_version().unwrap();
         assert_eq!(a, b);
         Ok(a)
     }
 
     fn active_validators(
         &self,
-        state: Epoch,
         epoch: Epoch,
     ) -> Result<impl Iterator<Item = (ValidatorIndex, &ValidatorInfo)>, Self::Error> {
-        let mut iter_a = self.reader_a.active_validators(state, epoch)?;
-        let mut iter_b = self.reader_b.active_validators(state, epoch).unwrap();
+        let mut iter_a = self.reader_a.active_validators(epoch)?;
+        let mut iter_b = self.reader_b.active_validators(epoch).unwrap();
         Ok(iter::from_fn(move || {
             match (iter_a.next(), iter_b.next()) {
                 (None, None) => None,

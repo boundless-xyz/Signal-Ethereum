@@ -114,6 +114,10 @@ impl StateReader for SszStateReader<'_> {
     type Error = SszReaderError;
     type Context = GuestContext;
 
+    fn epoch(&self) -> Epoch {
+        self.epoch
+    }
+
     fn context(&self) -> &Self::Context {
         self.context
     }
@@ -122,16 +126,15 @@ impl StateReader for SszStateReader<'_> {
         self.genesis_validators_root
     }
 
-    fn fork_current_version(&self, _epoch: Epoch) -> Result<Version, Self::Error> {
+    fn fork_current_version(&self) -> Result<Version, Self::Error> {
         Ok(self.fork_current_version)
     }
 
     fn active_validators(
         &self,
-        state_epoch: Epoch,
         epoch: Epoch,
     ) -> Result<impl Iterator<Item = (ValidatorIndex, &ValidatorInfo)>, Self::Error> {
-        assert!(state_epoch >= epoch, "Only historical epochs supported");
+        assert!(self.epoch >= epoch, "Only historical epochs supported");
 
         Ok(self
             .validators

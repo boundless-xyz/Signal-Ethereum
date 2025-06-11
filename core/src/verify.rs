@@ -105,7 +105,7 @@ pub fn verify<S: StateReader>(
                 let state_validators =
                     validator_cache.entry(attestation_epoch).or_insert_with(|| {
                         state_reader
-                            .active_validators(attestation_epoch, attestation_epoch)
+                            .active_validators(attestation_epoch)
                             .map_err(|e| VerifyError::StateReaderError(e.to_string()))
                             .unwrap()
                             .collect()
@@ -139,7 +139,7 @@ pub fn verify<S: StateReader>(
             .sum::<Result<u64, VerifyError>>()?;
 
         let total_active_balance = state_reader
-            .get_total_active_balance(link.target.epoch)
+            .get_total_active_balance()
             .map_err(|e| VerifyError::StateReaderError(e.to_string()))?;
 
         // In the worst case attestations can arrive one epoch after their target and because we don't have information about which epoch they belong to in the chain
@@ -185,7 +185,7 @@ fn is_valid_indexed_attestation<'a, S: StateReader>(
     if pubkeys.is_empty() {
         return Ok(false);
     }
-    let domain = beacon_attester_signing_domain(state_reader, data.target.epoch)?;
+    let domain = beacon_attester_signing_domain(state_reader)?;
     let signing_root = compute_signing_root(data, domain);
 
     let agg_pk = PublicKey::aggregate(&pubkeys)?;
@@ -205,7 +205,7 @@ pub fn get_shufflings_for_epoch<S: StateReader>(
     info!("Getting shufflings for epoch: {}", state);
 
     let indices = state_reader
-        .get_active_validator_indices(state, epoch)
+        .get_active_validator_indices(epoch)
         .map_err(|e| VerifyError::StateReaderError(e.to_string()))?
         .collect();
     let seed = state_reader
@@ -213,7 +213,7 @@ pub fn get_shufflings_for_epoch<S: StateReader>(
         .map_err(|e| VerifyError::StateReaderError(e.to_string()))?;
 
     let committees_per_slot = state_reader
-        .get_committee_count_per_slot(state, epoch)
+        .get_committee_count_per_slot(epoch)
         .map_err(|e| VerifyError::StateReaderError(e.to_string()))?;
 
     CommitteeCache::initialized(
@@ -230,11 +230,9 @@ pub fn get_shufflings_for_epoch<S: StateReader>(
 
 fn beacon_attester_signing_domain<S: StateReader>(
     state_reader: &S,
-    epoch: Epoch,
 ) -> Result<[u8; 32], VerifyError> {
     let domain_type = BEACON_ATTESTER_DOMAIN;
-    let fork_data_root =
-        fork_data_root(state_reader, state_reader.genesis_validators_root(), epoch)?;
+    let fork_data_root = fork_data_root(state_reader, state_reader.genesis_validators_root())?;
     let mut domain = [0_u8; 32];
     domain[..4].copy_from_slice(&domain_type);
     domain[4..].copy_from_slice(&fork_data_root.as_slice()[..28]);
@@ -260,7 +258,6 @@ fn compute_signing_root<T: TreeHash>(ssz_object: &T, domain: Domain) -> Root {
 fn fork_data_root<S: StateReader>(
     state_reader: &S,
     genesis_validators_root: Root,
-    epoch: Epoch,
 ) -> Result<Root, VerifyError> {
     #[derive(TreeHash)]
     struct ForkData {
@@ -269,7 +266,7 @@ fn fork_data_root<S: StateReader>(
     }
     Ok(ForkData {
         current_version: state_reader
-            .fork_current_version(epoch)
+            .fork_current_version()
             .map_err(|e| VerifyError::StateReaderError(e.to_string()))?,
         genesis_validators_root,
     }

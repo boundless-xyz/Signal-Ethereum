@@ -1,4 +1,3 @@
-use super::TrackingStateReader;
 use crate::HostReaderError::StateMissing;
 use crate::state_reader::state_provider::{BoxedStateProvider, FileProvider};
 use crate::{
@@ -99,47 +98,63 @@ impl HostStateReader {
         Ok(Self::new(provider.into(), context))
     }
 
-    pub fn track(&self, at_epoch: Epoch) -> TrackingStateReader<'_> {
-        TrackingStateReader::new(&self, at_epoch)
-    }
-
     pub fn get_beacon_state_by_epoch(&self, epoch: Epoch) -> Result<&BeaconState, HostReaderError> {
         self.state_cache.get(epoch)
     }
+
+    /// Obtain an HostEpochStateReader for a specific epoch
+    pub fn read_at_epoch<'a>(&'a self, epoch: Epoch) -> HostEpochStateReader<'a> {
+        HostEpochStateReader {
+            host_state_reader: self,
+            epoch,
+        }
+    }
 }
 
-impl StateReader for HostStateReader {
+pub struct HostEpochStateReader<'a> {
+    pub(crate) host_state_reader: &'a HostStateReader,
+    epoch: Epoch,
+}
+
+impl<'a> StateReader for HostEpochStateReader<'a> {
     type Error = HostReaderError;
     type Context = HostContext;
 
+    fn epoch(&self) -> Epoch {
+        self.epoch
+    }
+
     fn context(&self) -> &Self::Context {
-        &self.context
+        &self.host_state_reader.context
     }
 
     fn genesis_validators_root(&self) -> B256 {
-        let root = self.state_cache.genesis_validators_root().unwrap();
+        let root = self
+            .host_state_reader
+            .state_cache
+            .genesis_validators_root()
+            .unwrap();
         B256::from(root.0)
     }
 
-    fn fork_current_version(&self, epoch: Epoch) -> Result<Version, HostReaderError> {
-        let state = self.state_cache.get(epoch)?;
+    fn fork_current_version(&self) -> Result<Version, HostReaderError> {
+        let state = self.host_state_reader.state_cache.get(self.epoch)?;
         Ok(state.fork().current_version)
     }
 
     fn active_validators(
         &self,
-        state_epoch: Epoch,
         epoch: Epoch,
     ) -> Result<impl Iterator<Item = (ValidatorIndex, &ValidatorInfo)>, Self::Error> {
-        trace!("HostStateReader::active_validators({state_epoch},{epoch})");
-        assert!(state_epoch >= epoch, "Only historical epochs supported");
+        trace!("HostStateReader::active_validators({},{epoch})", self.epoch);
+        assert!(self.epoch >= epoch, "Only historical epochs supported");
 
-        let iter = match self.validator_cache.get(&state_epoch) {
+        let iter = match self.host_state_reader.validator_cache.get(&self.epoch) {
             Some(validators) => validators.iter(),
             None => {
-                let state = self.state_cache.get(state_epoch)?;
+                let state = self.host_state_reader.state_cache.get(self.epoch)?;
 
-                debug!("Caching validators for epoch {}...", state_epoch);
+                debug!("Caching validators for epoch {}...", self.epoch);
                 let validators: Vec<_> = state
                     .validators()
                     .iter()
@@ -149,7 +164,10 @@ impl StateReader for HostStateReader {
                     .collect();
                 debug!("Active validators: {}", validators.len());
 
-                self.validator_cache.insert(state_epoch, validators).iter()
+                self.host_state_reader
+                    .validator_cache
+                    .insert(self.epoch, validators)
+                    .iter()
             }
         };
 
@@ -158,7 +176,7 @@ impl StateReader for HostStateReader {
 
     fn randao_mix(&self, epoch: Epoch, idx: usize) -> Result<Option<B256>, Self::Error> {
         trace!("HostStateReader::randao_mix({epoch},{idx})");
-        let state = self.state_cache.get(epoch)?;
+        let state = self.host_state_reader.state_cache.get(epoch)?;
 
         Ok(state
             .randao_mixes()

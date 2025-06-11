@@ -24,12 +24,14 @@ async fn test_zkasper_sync(
 ) -> Result<ConsensusState, VerifyError> {
     let head_state = harness.chain.head_beacon_state_cloned();
 
-    let state_reader = HarnessStateReader::from(harness);
     let mut consensus_state = initial_consensus_state;
 
     println!("Pre consensus state: {:?}", consensus_state);
 
     loop {
+        let state_reader =
+            HarnessStateReader::new(harness, consensus_state.finalized_checkpoint.epoch);
+
         // Build the input and verify it
         match build_input(&state_reader, consensus_state.clone()).await {
             Ok(input) => {

@@ -31,7 +31,7 @@ pub enum HostReaderError {
     Other(#[from] anyhow::Error),
 }
 
-pub struct HostStateReader {
+pub struct HostReaderBuilder {
     context: HostContext,
     state_cache: StateCache,
     validator_cache: FrozenMap<Epoch, Vec<(ValidatorIndex, ValidatorInfo)>>,
@@ -82,7 +82,7 @@ impl StateCache {
     }
 }
 
-impl HostStateReader {
+impl HostReaderBuilder {
     pub fn new(provider: BoxedStateProvider, context: HostContext) -> Self {
         Self {
             context,
@@ -104,15 +104,15 @@ impl HostStateReader {
     }
 
     /// Obtain an HostEpochStateReader for a specific epoch
-    pub fn read_at_epoch<'a>(&'a self, epoch: Epoch) -> HostEpochStateReader<'a> {
-        HostEpochStateReader {
+    pub fn build_at_epoch<'a>(&'a self, epoch: Epoch) -> HostStateReader<'a> {
+        HostStateReader {
             host_state_reader: self,
             epoch,
         }
     }
 }
 
-impl StateProvider for HostStateReader {
+impl StateProvider for HostReaderBuilder {
     fn context(&self) -> &HostContext {
         &self.context
     }
@@ -125,12 +125,12 @@ impl StateProvider for HostStateReader {
     }
 }
 
-pub struct HostEpochStateReader<'a> {
-    pub(crate) host_state_reader: &'a HostStateReader,
+pub struct HostStateReader<'a> {
+    host_state_reader: &'a HostReaderBuilder,
     epoch: Epoch,
 }
 
-impl<'a> StateReader for HostEpochStateReader<'a> {
+impl<'a> StateReader for HostStateReader<'a> {
     type Error = HostReaderError;
     type Context = HostContext;
 
@@ -161,7 +161,6 @@ impl<'a> StateReader for HostEpochStateReader<'a> {
         epoch: Epoch,
     ) -> Result<impl Iterator<Item = (ValidatorIndex, &ValidatorInfo)>, Self::Error> {
         trace!("HostStateReader::active_validators({},{epoch})", self.epoch);
-        assert!(self.epoch >= epoch, "Only historical epochs supported");
 
         let iter = match self.host_state_reader.validator_cache.get(&self.epoch) {
             Some(validators) => validators.iter(),

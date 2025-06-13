@@ -12,7 +12,7 @@ use std::{
 use tracing::{info, warn};
 use url::Url;
 use z_core::{
-    build_input, verify, ChainReader, ConsensusState, GuestContext, HostStateReader, Input,
+    build_input, verify, ChainReader, ConsensusState, GuestContext, HostReaderBuilder, Input,
     PreflightStateReader, Root, StateInput,
 };
 use z_core_test_utils::AssertStateReader;
@@ -127,7 +127,7 @@ async fn main() -> anyhow::Result<()> {
         &context.clone().into(),
     )?;
 
-    let reader = HostStateReader::new(provider.clone().into(), context.clone().into());
+    let reader = HostReaderBuilder::new(provider.clone().into(), context.clone().into());
 
     match args.command {
         Command::Verify {
@@ -200,19 +200,19 @@ async fn main() -> anyhow::Result<()> {
 
 fn run_verify(
     mode: ExecMode,
-    host_reader: &HostStateReader,
+    host_reader: &HostReaderBuilder,
     input: Input,
 ) -> anyhow::Result<ConsensusState> {
     info!("Running Verification in mode: {mode}");
 
     info!("Performing the pre-flight");
-    let epoch_reader = host_reader.read_at_epoch(input.consensus_state.finalized_checkpoint.epoch);
+    let epoch_reader = host_reader.build_at_epoch(input.consensus_state.finalized_checkpoint.epoch);
     let reader = PreflightStateReader::new(&epoch_reader);
     let consensus_state = verify(&reader, input.clone()).unwrap(); // will panic if verification fails
     info!("pre-flight and native verification success!");
 
     if mode == ExecMode::Ssz || mode == ExecMode::R0vm {
-        let state_input = reader.to_input(host_reader);
+        let state_input = reader.to_input(host_reader)?;
         let ssz_reader = state_input
             .clone()
             .into_state_reader(Some(input.trusted_checkpoint_state_root), &GuestContext)?;

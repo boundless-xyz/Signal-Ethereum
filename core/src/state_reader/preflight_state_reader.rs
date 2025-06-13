@@ -16,9 +16,18 @@ use std::{
 use tracing::info;
 
 #[derive(Error, Debug)]
-pub enum TrackingReaderError {
+pub enum PreflightError {
     #[error("HostReaderError: {0}")]
-    HostReaderError(#[from] HostReaderError),
+    HostReader(#[from] HostReaderError),
+
+    #[error("StateProvider error: {0}")]
+    StateProviderError(#[from] anyhow::Error),
+
+    #[error("Provider returned None state for epoch: {0}")]
+    MissingState(Epoch),
+
+    #[error("Missing Randao mix for epoch: {0}, index: {1}")]
+    MissingRandao(Epoch, usize),
 }
 
 /// A PreflightStateReader wraps a state reader and records which pieces of data are read.
@@ -48,7 +57,7 @@ where
         &self.inner
     }
 
-    pub fn to_input<SP>(&self, state_provider: &SP) -> StateInput
+    pub fn to_input<SP>(&self, state_provider: &SP) -> Result<StateInput, PreflightError>
     where
         SP: StateProvider,
     {
@@ -59,31 +68,26 @@ where
         // These are unconstrained so no need to add them to the multiproof
         for (epoch, indices) in self.randao_reads.take() {
             let mix_state = state_provider
-                .get_state_at_epoch_boundary(epoch)
-                .unwrap()
-                .expect("StateProvider should provide state at epoch boundary");
+                .get_state_at_epoch_boundary(epoch)?
+                .ok_or(PreflightError::MissingState(epoch))?;
 
             for idx in indices {
+                let mix = mix_state
+                    .randao_mixes()
+                    .get(idx)
+                    .ok_or(PreflightError::MissingRandao(epoch, idx))?;
                 randao
                     .entry(epoch)
                     .or_default()
                     .entry(idx)
-                    .or_insert_with(|| {
-                        let mix = mix_state
-                            .randao_mixes()
-                            .get(idx)
-                            .expect("randao_mix should exist")
-                            .clone();
-                        B256::from_slice(mix.as_slice())
-                    });
+                    .or_insert_with(|| B256::from_slice(mix.as_slice()));
             }
         }
 
         info!("Building State multiproof");
         let state = state_provider
-            .get_state_at_epoch_boundary(self.inner.epoch())
-            .unwrap()
-            .expect("StateProvider should provide state at epoch boundary");
+            .get_state_at_epoch_boundary(self.inner.epoch())?
+            .ok_or(PreflightError::MissingState(self.inner.epoch()))?;
         let beacon_state_root = state.hash_tree_root().unwrap();
 
         let state_multiproof = match state {
@@ -150,12 +154,12 @@ where
             .map(|validator| validator.pubkey)
             .collect();
 
-        StateInput {
+        Ok(StateInput {
             beacon_state: state_multiproof,
             active_validators: validator_multiproof,
             public_keys,
             randao,
-        }
+        })
     }
 }
 
@@ -189,7 +193,7 @@ where
 
         // to be able to prove the inclusion, the randao value must exist
         let randao = self.inner.randao_mix(epoch, idx)?.unwrap();
-        self.mix_epochs
+        self.randao_reads
             .borrow_mut()
             .entry(epoch)
             .or_default()

@@ -28,8 +28,8 @@ pub enum StateReaderError {
 
 /// An abstraction for reading the state data required for a state transition.
 /// For reading active validators and balance this is relative to one single epoch, which is the current epoch of the state reader (self.epoch()).
-/// For reading RANDAO the caller also specifies which state epoch to read from. Implementors do not need to support any arbitrary state but will need to support sone number
-/// of epochs into the future, likely by storing the minimal diffs of the RANDAO values
+/// For reading RANDAO the caller is also able to specify which state (given by epoch) to read from. Implementors do not need to support any arbitrary state but will need to
+/// support reading RANDAO from a number of epochs other than the current epoch.
 pub trait StateReader {
     type Error: std::error::Error;
     type Context: Ctx;

@@ -52,48 +52,48 @@ pub enum SszReaderError {
         source: ssz_multiproofs::Error,
     },
     #[error("Missing state patch: {0}")]
-    MissingStatePatch(Epoch),
+    MissingRandao(Epoch),
+}
+
+trait WithContext<T> {
+    fn context(self, msg: &'static str) -> Result<T, SszReaderError>;
+}
+
+impl<T> WithContext<T> for Result<T, ssz_multiproofs::Error> {
+    fn context(self, msg: &'static str) -> Result<T, SszReaderError> {
+        self.map_err(|e| SszReaderError::SszMultiproof {
+            msg: msg.to_string(),
+            source: e.into(),
+        })
+    }
 }
 
 impl StateInput<'_> {
     /// Converts the `StateInput` into a `SszStateReader`
-    /// beacon_root is a known root of the beacon state which can optionally be used to verify the multiproof as a sanity check
+    /// beacon_root is a known root of the beacon state which can optionally be used to verify the
+    /// SSZ proof of all fields and allow the data to be trusted (if the beacon_root is trusted).
     pub fn into_state_reader(
         self,
         beacon_root: Option<B256>,
         context: &GuestContext,
     ) -> Result<SszStateReader, SszReaderError> {
         let (genesis_validators_root, state_epoch, fork_current_version, validators_root) =
-            extract_beacon_state_multiproof(context, &self.beacon_state).map_err(|e| {
-                SszReaderError::SszMultiproof {
-                    msg: "Failed to extract beacon state multiproof".to_string(),
-                    source: e,
-                }
-            })?;
+            extract_beacon_state_multiproof(context, &self.beacon_state)
+                .context("Failed to extract beacon state multiproof")?;
 
         if let Some(beacon_root) = beacon_root {
             self.beacon_state
                 .verify(&beacon_root)
-                .map_err(|e| SszReaderError::SszVerify {
-                    msg: "Beacon state root mismatch".to_string(),
-                    source: e,
-                })?;
+                .context("Beacon state root mismatch")?;
         }
 
         let validator_cache =
-            extract_validators_multiproof(self.public_keys, &self.active_validators).map_err(
-                |e| SszReaderError::SszMultiproof {
-                    msg: "Failed to extract active validators multiproof".to_string(),
-                    source: e,
-                },
-            )?;
+            extract_validators_multiproof(self.public_keys, &self.active_validators)
+                .context("Failed to extract active validators multiproof")?;
 
         self.active_validators
             .verify(&validators_root)
-            .map_err(|e| SszReaderError::SszVerify {
-                msg: "Validators root mismatch".to_string(),
-                source: e,
-            })?;
+            .context("Validators root mismatch")?;
 
         Ok(SszStateReader {
             context,
@@ -141,7 +141,7 @@ impl StateReader for SszStateReader<'_> {
         Ok(self
             .randao
             .get(&epoch)
-            .ok_or(Self::Error::MissingStatePatch(epoch))?
+            .ok_or(Self::Error::MissingRandao(epoch))?
             .get(&index)
             .cloned())
     }

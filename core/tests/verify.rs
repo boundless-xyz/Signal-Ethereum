@@ -5,8 +5,7 @@ use beacon_types::Keypair;
 use test_utils::{AssertStateReader, HarnessStateReader};
 use test_utils::{TestHarness, consensus_state_from_state, get_harness, get_spec};
 use z_core::{
-    ConsensusState, GuestContext, PreflightStateReader, StateProvider, VerifyError, build_input,
-    threshold, verify,
+    ConsensusState, GuestContext, PreflightStateReader, VerifyError, build_input, threshold, verify,
 };
 
 pub const VALIDATOR_COUNT: u64 = 48;
@@ -34,28 +33,24 @@ async fn test_zkasper_sync(
     loop {
         let state_reader =
             HarnessStateReader::new(harness, consensus_state.finalized_checkpoint.epoch);
-        let trusted_state = state_reader
-            .get_state_at_epoch_boundary(consensus_state.finalized_checkpoint.epoch)
-            .map_err(|e| VerifyError::StateReaderError(e.to_string()))?
-            .unwrap();
-
         let preflight_state_reader = PreflightStateReader::new(&state_reader);
 
         // Build the input and verify it
         match build_input(&state_reader, consensus_state.clone()).await {
             Ok(input) => {
-                // Perform a preflight verification
+                // Perform a preflight verification to record the state reads
                 let trusted_state_root = input.trusted_checkpoint_state_root;
                 _ = verify(&preflight_state_reader, input.clone())?;
 
-                // Verify again with the SSZ state reader
+                // build a self contained SSZ reader
                 let ssz_state_reader = preflight_state_reader
                     .to_input(&state_reader)
+                    .expect("Failed to build input")
                     .into_state_reader(Some(trusted_state_root), &GuestContext)
-                    .unwrap();
-                // Create this assert state reader to ensure a match between the preflight and ssz state readers
-                // for all values that are read
+                    .expect("Failed to convert to SSZ state reader");
+                // Merge into a single AssertStateReader that ensures identical data returned for each read
                 let assert_sr = AssertStateReader::new(&state_reader, &ssz_state_reader);
+                // Verify again
                 consensus_state = verify(&assert_sr, input)?;
 
                 println!("consensus state: {:?}", &consensus_state);

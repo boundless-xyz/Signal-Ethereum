@@ -70,8 +70,6 @@ impl StateCache {
                     }
                     root => *root = Some(genesis_validators_root),
                 }
-                // TODO: check that the states form a chain
-
                 Ok(self.state_cache.insert(epoch, state.into()))
             }
         }
@@ -103,7 +101,7 @@ impl HostReaderBuilder {
         self.state_cache.get(epoch)
     }
 
-    /// Obtain an HostEpochStateReader for a specific epoch
+    /// Obtain an HostStateReader for a specific epoch
     pub fn build_at_epoch<'a>(&'a self, epoch: Epoch) -> HostStateReader<'a> {
         HostStateReader {
             host_state_reader: self,

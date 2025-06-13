@@ -7,7 +7,6 @@ use alloy_primitives::B256;
 use serde::{Deserialize, Serialize};
 use ssz_multiproofs::Multiproof;
 use std::collections::BTreeMap;
-use tracing::info;
 
 /// A serializable structure that can be converted into a `SszStateReader`.
 #[derive(Clone, Deserialize, Serialize)]
@@ -23,7 +22,7 @@ pub struct StateInput<'a> {
     /// Public keys of all active validators.
     pub public_keys: Vec<PublicKey>,
 
-    /// Randao mixes for future epochs
+    /// Randao mixes. Double map epoch -> index -> mix.
     pub randao: BTreeMap<Epoch, BTreeMap<usize, B256>>,
 }
 
@@ -33,9 +32,8 @@ pub struct SszStateReader<'a> {
     fork_current_version: Version,
     epoch: Epoch,
     validators: BTreeMap<ValidatorIndex, ValidatorInfo>,
-    randao: BTreeMap<Epoch, B256>,
 
-    future_randao: BTreeMap<Epoch, BTreeMap<usize, B256>>,
+    randao: BTreeMap<Epoch, BTreeMap<usize, B256>>,
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -65,7 +63,7 @@ impl StateInput<'_> {
         beacon_root: Option<B256>,
         context: &GuestContext,
     ) -> Result<SszStateReader, SszReaderError> {
-        let (genesis_validators_root, state_epoch, fork_current_version, validators_root, randao) =
+        let (genesis_validators_root, state_epoch, fork_current_version, validators_root) =
             extract_beacon_state_multiproof(context, &self.beacon_state).map_err(|e| {
                 SszReaderError::SszMultiproof {
                     msg: "Failed to extract beacon state multiproof".to_string(),
@@ -103,8 +101,7 @@ impl StateInput<'_> {
             fork_current_version: fork_current_version[0..4].try_into().unwrap(),
             epoch: state_epoch,
             validators: validator_cache,
-            randao,
-            future_randao: self.randao,
+            randao: self.randao,
         })
     }
 }
@@ -141,16 +138,12 @@ impl StateReader for SszStateReader<'_> {
     }
 
     fn randao_mix(&self, epoch: Epoch, index: usize) -> Result<Option<B256>, Self::Error> {
-        let randao = if self.epoch == epoch {
-            self.randao.get(&(index as Epoch))
-        } else {
-            self.future_randao
-                .get(&epoch)
-                .ok_or(Self::Error::MissingStatePatch(epoch))?
-                .get(&index)
-        };
-
-        Ok(randao.cloned())
+        Ok(self
+            .randao
+            .get(&epoch)
+            .ok_or(Self::Error::MissingStatePatch(epoch))?
+            .get(&index)
+            .cloned())
     }
 }
 
@@ -160,11 +153,10 @@ impl StateReader for SszStateReader<'_> {
 /// - epoch
 /// - fork_current_version
 /// - validators_root
-/// - randao_mixes (only the ones used)
 fn extract_beacon_state_multiproof(
     ctx: &GuestContext,
     beacon_state: &Multiproof<'_>,
-) -> Result<(B256, Epoch, [u8; 4], B256, BTreeMap<Epoch, B256>), ssz_multiproofs::Error> {
+) -> Result<(B256, Epoch, [u8; 4], B256), ssz_multiproofs::Error> {
     let mut beacon_state_iter = beacon_state.values();
     let genesis_validators_root =
         beacon_state_iter.next_assert_gindex(ctx.genesis_validators_root_gindex())?;
@@ -173,25 +165,11 @@ fn extract_beacon_state_multiproof(
         beacon_state_iter.next_assert_gindex(ctx.fork_current_version_gindex())?;
     let validators_root = beacon_state_iter.next_assert_gindex(ctx.validators_gindex())?;
 
-    // the remaining values of the beacon state correspond to RANDAO
-    let randao_gindex_base = ctx.randao_mixes_0_gindex();
-    let randao = beacon_state_iter
-        .map(|(gindex, randao)| {
-            // 0 <= index <= EPOCHS_PER_HISTORICAL_VECTOR
-            assert!(gindex >= randao_gindex_base);
-            assert!(gindex <= randao_gindex_base + ctx.epochs_per_historical_vector());
-
-            let index = gindex - randao_gindex_base;
-            (index, B256::from(randao))
-        })
-        .collect();
-
     Ok((
         genesis_validators_root.into(),
         ctx.compute_epoch_at_slot(u64_from_chunk(slot)),
         fork_current_version[0..4].try_into().unwrap(),
         validators_root.into(),
-        randao,
     ))
 }
 

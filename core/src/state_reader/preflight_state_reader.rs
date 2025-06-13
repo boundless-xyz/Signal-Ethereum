@@ -29,7 +29,7 @@ pub struct PreflightStateReader<'a, SR> {
     inner: &'a SR,
     // The data used for recording the state data read from the StateReader
     validator_indices: RefCell<BTreeSet<ValidatorIndex>>,
-    mix_epochs: RefCell<BTreeMap<Epoch, BTreeSet<usize>>>,
+    randao_reads: RefCell<BTreeMap<Epoch, BTreeSet<usize>>>,
 }
 
 impl<'a, SR> PreflightStateReader<'a, SR>
@@ -40,7 +40,7 @@ where
         Self {
             inner: reader,
             validator_indices: Default::default(),
-            mix_epochs: Default::default(),
+            randao_reads: Default::default(),
         }
     }
 
@@ -52,46 +52,40 @@ where
     where
         SP: StateProvider,
     {
+        let mut randao: BTreeMap<Epoch, BTreeMap<usize, B256>> = BTreeMap::new();
+        let proof_builder: MultiproofBuilder = MultiproofBuilder::new();
+
+        // Retrieve all the data for every RANDO read
+        // These are unconstrained so no need to add them to the multiproof
+        for (epoch, indices) in self.randao_reads.take() {
+            let mix_state = state_provider
+                .get_state_at_epoch_boundary(epoch)
+                .unwrap()
+                .expect("StateProvider should provide state at epoch boundary");
+
+            for idx in indices {
+                randao
+                    .entry(epoch)
+                    .or_default()
+                    .entry(idx)
+                    .or_insert_with(|| {
+                        let mix = mix_state
+                            .randao_mixes()
+                            .get(idx)
+                            .expect("randao_mix should exist")
+                            .clone();
+                        B256::from_slice(mix.as_slice())
+                    });
+            }
+        }
+
+        info!("Building State multiproof");
         let state = state_provider
             .get_state_at_epoch_boundary(self.inner.epoch())
             .unwrap()
             .expect("StateProvider should provide state at epoch boundary");
         let beacon_state_root = state.hash_tree_root().unwrap();
 
-        let mut randao: BTreeMap<Epoch, BTreeMap<usize, B256>> = BTreeMap::new();
-        let mut proof_builder: MultiproofBuilder = MultiproofBuilder::new();
-
-        for (epoch, indices) in self.mix_epochs.take() {
-            let mix_state = state_provider
-                .get_state_at_epoch_boundary(epoch)
-                .unwrap()
-                .expect("StateProvider should provide state at epoch boundary");
-            if epoch == self.inner.epoch() {
-                // if the randao required is from the trusted state we can just read it directly and verify via the multiproof
-                for idx in indices {
-                    let path = ["randao_mixes".into(), idx.into()];
-                    proof_builder = proof_builder.with_path::<ElectraBeaconState>(&path);
-                }
-            } else {
-                // if it is from a future epoch we just need to include this directly as a free value
-                for idx in indices {
-                    randao
-                        .entry(epoch)
-                        .or_default()
-                        .entry(idx)
-                        .or_insert_with(|| {
-                            let mix = mix_state
-                                .randao_mixes()
-                                .get(idx)
-                                .expect("randao_mix should exist")
-                                .clone();
-                            B256::from_slice(mix.as_slice())
-                        });
-                }
-            }
-        }
-
-        info!("Building State multiproof");
         let state_multiproof = match state {
             BeaconState::Electra(ref state) => proof_builder
                 .with_path::<ElectraBeaconState>(&["genesis_validators_root".into()])

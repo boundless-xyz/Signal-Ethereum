@@ -14,7 +14,6 @@ mod guest_context;
 #[cfg(feature = "host")]
 mod input_builder;
 mod shuffle_list;
-mod state_patch;
 mod state_reader;
 mod threshold;
 mod verify;
@@ -29,7 +28,6 @@ pub use context::*;
 #[cfg(feature = "host")]
 pub use input_builder::*;
 use ssz_types::typenum::{U64, U131072};
-pub use state_patch::*;
 pub use state_reader::*;
 pub use threshold::*;
 use tree_hash_derive::TreeHash;

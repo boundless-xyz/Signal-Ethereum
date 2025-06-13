@@ -1,7 +1,7 @@
 use super::StateReader;
 use crate::{
-    Ctx, Epoch, GuestContext, PublicKey, StatePatch, VALIDATOR_LIST_TREE_DEPTH,
-    VALIDATOR_TREE_DEPTH, ValidatorIndex, ValidatorInfo, Version,
+    Ctx, Epoch, GuestContext, PublicKey, VALIDATOR_LIST_TREE_DEPTH, VALIDATOR_TREE_DEPTH,
+    ValidatorIndex, ValidatorInfo, Version,
 };
 use alloy_primitives::B256;
 use serde::{Deserialize, Serialize};
@@ -23,8 +23,8 @@ pub struct StateInput<'a> {
     /// Public keys of all active validators.
     pub public_keys: Vec<PublicKey>,
 
-    /// State patches to "look ahead" to future states.
-    pub patches: BTreeMap<Epoch, StatePatch>,
+    /// Randao mixes for future epochs
+    pub randao: BTreeMap<Epoch, BTreeMap<usize, B256>>,
 }
 
 pub struct SszStateReader<'a> {
@@ -35,7 +35,7 @@ pub struct SszStateReader<'a> {
     validators: BTreeMap<ValidatorIndex, ValidatorInfo>,
     randao: BTreeMap<Epoch, B256>,
 
-    patches: BTreeMap<Epoch, StatePatch>,
+    future_randao: BTreeMap<Epoch, BTreeMap<usize, B256>>,
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -97,12 +97,6 @@ impl StateInput<'_> {
                 source: e,
             })?;
 
-        // TODO: verify state patches
-        for (epoch, _patch) in &self.patches {
-            assert!(*epoch > state_epoch);
-        }
-        info!("{} State patches verified", self.patches.len());
-
         Ok(SszStateReader {
             context,
             genesis_validators_root: genesis_validators_root.into(),
@@ -110,7 +104,7 @@ impl StateInput<'_> {
             epoch: state_epoch,
             validators: validator_cache,
             randao,
-            patches: self.patches,
+            future_randao: self.randao,
         })
     }
 }
@@ -150,10 +144,9 @@ impl StateReader for SszStateReader<'_> {
         let randao = if self.epoch == epoch {
             self.randao.get(&(index as Epoch))
         } else {
-            self.patches
+            self.future_randao
                 .get(&epoch)
                 .ok_or(Self::Error::MissingStatePatch(epoch))?
-                .randao_mixes
                 .get(&index)
         };
 

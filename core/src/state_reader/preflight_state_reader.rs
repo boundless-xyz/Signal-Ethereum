@@ -5,7 +5,7 @@ use thiserror::Error;
 
 use super::{StateInput, host_state_reader::HostReaderError};
 use crate::{
-    Epoch, StatePatchBuilder, StateProvider, StateReader, ValidatorIndex, ValidatorInfo, Version,
+    Epoch, StateProvider, StateReader, ValidatorIndex, ValidatorInfo, Version,
     beacon_state::mainnet::BeaconState, mainnet::ElectraBeaconState,
 };
 use alloy_primitives::B256;
@@ -21,8 +21,8 @@ pub enum TrackingReaderError {
     HostReaderError(#[from] HostReaderError),
 }
 
-/// A PreflightStateReader functions identically to a StateReader. In fact it is just a wrapper around one.
-/// It is used to record the state data read from the StateReader as it is used. This data can then be packed into a `StateInput`
+/// A PreflightStateReader wraps a state reader and records which pieces of data are read.
+/// This data can then be packed into a `StateInput`
 /// This StateInput can be serialized and sent to another context for use where there is no access to a beacon API
 pub struct PreflightStateReader<'a, SR> {
     /// The wrapped StateReader
@@ -58,7 +58,7 @@ where
             .expect("StateProvider should provide state at epoch boundary");
         let beacon_state_root = state.hash_tree_root().unwrap();
 
-        let mut patch_builder: BTreeMap<Epoch, StatePatchBuilder<SR::Context>> = BTreeMap::new();
+        let mut randao: BTreeMap<Epoch, BTreeMap<usize, B256>> = BTreeMap::new();
         let mut proof_builder: MultiproofBuilder = MultiproofBuilder::new();
 
         for (epoch, indices) in self.mix_epochs.take() {
@@ -67,16 +67,26 @@ where
                 .unwrap()
                 .expect("StateProvider should provide state at epoch boundary");
             if epoch == self.inner.epoch() {
+                // if the randao required is from the trusted state we can just read it directly and verify via the multiproof
                 for idx in indices {
                     let path = ["randao_mixes".into(), idx.into()];
                     proof_builder = proof_builder.with_path::<ElectraBeaconState>(&path);
                 }
             } else {
-                let patch = patch_builder
-                    .entry(epoch)
-                    .or_insert(StatePatchBuilder::new(mix_state, self.context()));
+                // if it is from a future epoch we just need to include this directly as a free value
                 for idx in indices {
-                    patch.randao_mix(idx);
+                    randao
+                        .entry(epoch)
+                        .or_default()
+                        .entry(idx)
+                        .or_insert_with(|| {
+                            let mix = mix_state
+                                .randao_mixes()
+                                .get(idx)
+                                .expect("randao_mix should exist")
+                                .clone();
+                            B256::from_slice(mix.as_slice())
+                        });
                 }
             }
         }
@@ -146,16 +156,11 @@ where
             .map(|validator| validator.pubkey)
             .collect();
 
-        let patches = patch_builder
-            .into_iter()
-            .map(|(k, v)| (k, v.build()))
-            .collect();
-
         StateInput {
             beacon_state: state_multiproof,
             active_validators: validator_multiproof,
             public_keys,
-            patches,
+            randao,
         }
     }
 }

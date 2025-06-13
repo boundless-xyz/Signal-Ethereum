@@ -4,8 +4,11 @@ use std::fs;
 use std::path::PathBuf;
 use tracing::debug;
 
+/// A state provider is something that is able to provide a beacon state at a given slot or epoch.
+/// This could be an RPC, a cache on disk, or a node running in the same process
 pub trait StateProvider {
     fn context(&self) -> &HostContext;
+
     /// Returns the beacon state at the start of a given epoch. If the slot there is a skip slot,
     /// it will return the state at the latest block header slot that is less than to the epoch's start slot.
     fn get_state_at_epoch_boundary(
@@ -32,11 +35,14 @@ pub trait StateProvider {
             state
         }
     }
+
     fn get_state_at_slot(&self, slot: u64) -> Result<Option<BeaconState>, anyhow::Error>;
 }
 
 pub type BoxedStateProvider = Box<dyn StateProvider>;
 
+/// A disk-based state provider that saves and loads beacon states
+/// from a specified directory according to a specific naming convention
 #[derive(Clone)]
 pub struct FileProvider {
     directory: PathBuf,

@@ -1,5 +1,6 @@
 use crate::HostReaderError::StateMissing;
 use crate::state_reader::state_provider::{BoxedStateProvider, FileProvider};
+use crate::{Ctx, StateProvider};
 use crate::{
     Epoch, HostContext, Root, StateReader, ValidatorIndex, ValidatorInfo, Version,
     beacon_state::mainnet::BeaconState,
@@ -108,6 +109,19 @@ impl HostStateReader {
             host_state_reader: self,
             epoch,
         }
+    }
+}
+
+impl StateProvider for HostStateReader {
+    fn context(&self) -> &HostContext {
+        &self.context
+    }
+
+    fn get_state_at_slot(&self, slot: u64) -> Result<Option<BeaconState>, anyhow::Error> {
+        self.state_cache
+            .get(self.context.compute_epoch_at_slot(slot))
+            .map(|state| Some(state.clone()))
+            .map_err(|e| anyhow::anyhow!(e))
     }
 }
 

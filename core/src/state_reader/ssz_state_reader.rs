@@ -59,10 +59,10 @@ pub enum SszReaderError {
 
 impl StateInput<'_> {
     /// Converts the `StateInput` into a `SszStateReader`
-    /// beacon_root is a known root of the beacon state which is used to verify the multiproof as a sanity check
+    /// beacon_root is a known root of the beacon state which can optionally be used to verify the multiproof as a sanity check
     pub fn into_state_reader(
         self,
-        beacon_root: B256,
+        beacon_root: Option<B256>,
         context: &GuestContext,
     ) -> Result<SszStateReader, SszReaderError> {
         let (genesis_validators_root, state_epoch, fork_current_version, validators_root, randao) =
@@ -73,12 +73,14 @@ impl StateInput<'_> {
                 }
             })?;
 
-        self.beacon_state
-            .verify(&beacon_root)
-            .map_err(|e| SszReaderError::SszVerify {
-                msg: "Beacon state root mismatch".to_string(),
-                source: e,
-            })?;
+        if let Some(beacon_root) = beacon_root {
+            self.beacon_state
+                .verify(&beacon_root)
+                .map_err(|e| SszReaderError::SszVerify {
+                    msg: "Beacon state root mismatch".to_string(),
+                    source: e,
+                })?;
+        }
 
         let validator_cache =
             extract_validators_multiproof(self.public_keys, &self.active_validators).map_err(
@@ -137,8 +139,6 @@ impl StateReader for SszStateReader<'_> {
         &self,
         epoch: Epoch,
     ) -> Result<impl Iterator<Item = (ValidatorIndex, &ValidatorInfo)>, Self::Error> {
-        assert!(self.epoch >= epoch, "Only historical epochs supported");
-
         Ok(self
             .validators
             .iter()
@@ -164,7 +164,7 @@ impl StateReader for SszStateReader<'_> {
 /// Extracts the relevant fields from the multiproof of the BeaconState.
 /// Currently includes:
 /// - genesis_validators_root
-/// - slot
+/// - epoch
 /// - fork_current_version
 /// - validators_root
 /// - randao_mixes (only the ones used)

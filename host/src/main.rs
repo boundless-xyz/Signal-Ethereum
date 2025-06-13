@@ -205,20 +205,17 @@ fn run_verify(
 ) -> anyhow::Result<ConsensusState> {
     info!("Running Verification in mode: {mode}");
 
-    info!("Performign the pre-flight");
+    info!("Performing the pre-flight");
     let epoch_reader = host_reader.read_at_epoch(input.consensus_state.finalized_checkpoint.epoch);
     let reader = PreflightStateReader::new(&epoch_reader);
     let consensus_state = verify(&reader, input.clone()).unwrap(); // will panic if verification fails
     info!("pre-flight and native verification success!");
 
     if mode == ExecMode::Ssz || mode == ExecMode::R0vm {
-        let state_input = reader.to_input(
-            host_reader
-                .get_beacon_state_by_epoch(input.consensus_state.finalized_checkpoint.epoch)?,
-        );
+        let state_input = reader.to_input(host_reader);
         let ssz_reader = state_input
             .clone()
-            .into_state_reader(input.trusted_checkpoint_state_root, &GuestContext)?;
+            .into_state_reader(Some(input.trusted_checkpoint_state_root), &GuestContext)?;
         let ssz_consensus_state =
             verify(&AssertStateReader::new(&ssz_reader, &reader), input.clone()).unwrap(); // will panic if verification fails
         info!("Ssz Verification Success!");

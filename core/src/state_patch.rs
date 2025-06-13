@@ -18,7 +18,7 @@ mod host {
     use tracing::debug;
 
     pub struct StatePatchBuilder<'a, C> {
-        state: &'a BeaconState,
+        state: BeaconState,
         context: &'a C,
         patch: StatePatch,
     }
@@ -27,7 +27,7 @@ mod host {
     where
         C: Ctx,
     {
-        pub fn new(state: &'a BeaconState, context: &'a C) -> Self {
+        pub fn new(state: BeaconState, context: &'a C) -> Self {
             Self {
                 state,
                 context,

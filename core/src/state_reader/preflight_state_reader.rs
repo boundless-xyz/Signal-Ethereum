@@ -5,7 +5,7 @@ use thiserror::Error;
 
 use super::{StateInput, host_state_reader::HostReaderError};
 use crate::{
-    Epoch, StatePatchBuilder, StateReader, ValidatorIndex, ValidatorInfo, Version,
+    Epoch, StatePatchBuilder, StateProvider, StateReader, ValidatorIndex, ValidatorInfo, Version,
     beacon_state::mainnet::BeaconState, mainnet::ElectraBeaconState,
 };
 use alloy_primitives::B256;
@@ -48,13 +48,24 @@ where
         &self.inner
     }
 
-    pub fn to_input(&self, state: &BeaconState) -> StateInput {
+    pub fn to_input<SP>(&self, state_provider: &SP) -> StateInput
+    where
+        SP: StateProvider,
+    {
+        let state = state_provider
+            .get_state_at_epoch_boundary(self.inner.epoch())
+            .unwrap()
+            .expect("StateProvider should provide state at epoch boundary");
         let beacon_state_root = state.hash_tree_root().unwrap();
 
         let mut patch_builder: BTreeMap<Epoch, StatePatchBuilder<SR::Context>> = BTreeMap::new();
         let mut proof_builder: MultiproofBuilder = MultiproofBuilder::new();
 
         for (epoch, indices) in self.mix_epochs.take() {
+            let mix_state = state_provider
+                .get_state_at_epoch_boundary(epoch)
+                .unwrap()
+                .expect("StateProvider should provide state at epoch boundary");
             if epoch == self.inner.epoch() {
                 for idx in indices {
                     let path = ["randao_mixes".into(), idx.into()];
@@ -63,7 +74,7 @@ where
             } else {
                 let patch = patch_builder
                     .entry(epoch)
-                    .or_insert(StatePatchBuilder::new(state, self.context()));
+                    .or_insert(StatePatchBuilder::new(mix_state, self.context()));
                 for idx in indices {
                     patch.randao_mix(idx);
                 }
@@ -72,7 +83,7 @@ where
 
         info!("Building State multiproof");
         let state_multiproof = match state {
-            BeaconState::Electra(state) => proof_builder
+            BeaconState::Electra(ref state) => proof_builder
                 .with_path::<ElectraBeaconState>(&["genesis_validators_root".into()])
                 .with_path::<ElectraBeaconState>(&["slot".into()])
                 .with_path::<ElectraBeaconState>(&["fork".into(), "current_version".into()])

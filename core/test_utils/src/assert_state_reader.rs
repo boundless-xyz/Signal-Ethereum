@@ -35,14 +35,14 @@ impl<S: StateReader, R: StateReader> StateReader for AssertStateReader<'_, S, R>
     fn genesis_validators_root(&self) -> B256 {
         let a = self.reader_a.genesis_validators_root();
         let b = self.reader_b.genesis_validators_root();
-        assert_eq!(a, b);
+        assert_eq!(a, b, "Genesis validators root mismatch");
         a
     }
 
     fn fork_current_version(&self) -> Result<Version, Self::Error> {
         let a = self.reader_a.fork_current_version()?;
         let b = self.reader_b.fork_current_version().unwrap();
-        assert_eq!(a, b);
+        assert_eq!(a, b, "Fork version mismatch");
         Ok(a)
     }
 
@@ -51,12 +51,15 @@ impl<S: StateReader, R: StateReader> StateReader for AssertStateReader<'_, S, R>
         epoch: Epoch,
     ) -> Result<impl Iterator<Item = (ValidatorIndex, &ValidatorInfo)>, Self::Error> {
         let mut iter_a = self.reader_a.active_validators(epoch)?;
-        let mut iter_b = self.reader_b.active_validators(epoch).unwrap();
+        let mut iter_b = self.reader_b.active_validators(epoch).unwrap().enumerate();
         Ok(iter::from_fn(move || {
             match (iter_a.next(), iter_b.next()) {
                 (None, None) => None,
-                (Some(a), Some(b)) => {
-                    assert_eq!(a, b);
+                (Some(a), Some((i, b))) => {
+                    assert_eq!(
+                        a, b,
+                        "Active validator mismatch for validator {i} at epoch {epoch}"
+                    );
                     Some(a)
                 }
                 (a, b) => panic!("Wrong size: empty={}, empty={}", a.is_none(), b.is_none()),
@@ -67,7 +70,10 @@ impl<S: StateReader, R: StateReader> StateReader for AssertStateReader<'_, S, R>
     fn randao_mix(&self, state: Epoch, index: usize) -> Result<Option<B256>, Self::Error> {
         let a = self.reader_a.randao_mix(state, index)?;
         let b = self.reader_b.randao_mix(state, index).unwrap();
-        assert_eq!(a, b);
+        assert_eq!(
+            a, b,
+            "Randao mix mismatch for epoch {state} and index {index}",
+        );
         Ok(a)
     }
 }

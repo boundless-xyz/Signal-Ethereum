@@ -1,6 +1,6 @@
 use crate::HostReaderError::StateMissing;
 use crate::state_reader::state_provider::{BoxedStateProvider, FileProvider};
-use crate::{Ctx, StateProvider};
+use crate::{Ctx, StateProvider, ensure};
 use crate::{
     Epoch, HostContext, Root, StateReader, ValidatorIndex, ValidatorInfo, Version,
     beacon_state::mainnet::BeaconState,
@@ -25,6 +25,8 @@ pub enum HostReaderError {
     SszMerkleization(#[from] ssz_rs::MerkleizationError),
     #[error("State missing")]
     StateMissing,
+    #[error("Retrieved state does not match expected genesis validators root")]
+    GenesisValidatorRootMismatch { expected: Root, actual: Root },
     #[error("Not in cache")]
     NotInCache,
     #[error(transparent)]
@@ -63,9 +65,12 @@ impl StateCache {
                 let genesis_validators_root = state.genesis_validators_root();
                 match self.genesis_validators_root.borrow_mut().deref_mut() {
                     Some(root) => {
-                        assert_eq!(
-                            root, &genesis_validators_root,
-                            "Validator root not the same"
+                        ensure!(
+                            *root == genesis_validators_root,
+                            HostReaderError::GenesisValidatorRootMismatch {
+                                expected: *root,
+                                actual: genesis_validators_root
+                            }
                         );
                     }
                     root => *root = Some(genesis_validators_root),
@@ -116,10 +121,10 @@ impl StateProvider for HostReaderBuilder {
     }
 
     fn get_state_at_slot(&self, slot: u64) -> Result<Option<BeaconState>, anyhow::Error> {
-        self.state_cache
+        Ok(self
+            .state_cache
             .get(self.context.compute_epoch_at_slot(slot))
-            .map(|state| Some(state.clone()))
-            .map_err(|e| anyhow::anyhow!(e))
+            .map(|state| Some(state.clone()))?)
     }
 }
 

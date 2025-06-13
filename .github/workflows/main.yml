@@ -12,17 +12,24 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
+# this is needed to gain access via OIDC to the S3 bucket for caching
+permissions:
+  id-token: write
+  contents: read
+
 env:
   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
   RUST_BACKTRACE: "1"
 
 jobs:
   test:
-    runs-on: [ self-hosted, cluster, "${{ matrix.os }}", "${{ matrix.device }}" ]
+    runs-on: [ self-hosted, prod, "${{ matrix.os }}", "${{ matrix.arch }}", "${{ matrix.device }}" ]
     strategy:
       matrix:
         include:
           - os: Linux
+            arch: X64
+            feature: default
             device: cpu
     steps:
       # This is a workaround from: https://github.com/actions/checkout/issues/590#issuecomment-970586842
@@ -35,10 +42,10 @@ jobs:
           submodules: recursive
 
       - name: Install rust
-        uses: risc0/risc0/.github/actions/rustup@352dea62857ba57331053cd0986a12c1a4708732
+        uses: risc0/risc0/.github/actions/rustup@fbe1d0bb75c21fe36cefd87bae25f424b711b291
 
       - name: Install sccache
-        uses: risc0/risc0/.github/actions/sccache@352dea62857ba57331053cd0986a12c1a4708732
+        uses: risc0/risc0/.github/actions/sccache@fbe1d0bb75c21fe36cefd87bae25f424b711b291
         with:
           key: ${{ matrix.os }}-${{ matrix.feature }}
 
@@ -59,11 +66,13 @@ jobs:
         run: sccache --show-stats
 
   lint:
-    runs-on: [ self-hosted, cluster, "${{ matrix.os }}", "${{ matrix.device }}" ]
+    runs-on: [ self-hosted, prod, "${{ matrix.os }}", "${{ matrix.arch }}", "${{ matrix.device }}" ]
     strategy:
       matrix:
         include:
           - os: Linux
+            arch: X64
+            feature: default
             device: cpu
     steps:
       - name: checkout code
@@ -72,10 +81,10 @@ jobs:
           submodules: recursive
 
       - name: install rust
-        uses: risc0/risc0/.github/actions/rustup@352dea62857ba57331053cd0986a12c1a4708732
+        uses: risc0/risc0/.github/actions/rustup@fbe1d0bb75c21fe36cefd87bae25f424b711b291
 
       - name: Install sccache
-        uses: risc0/risc0/.github/actions/sccache@352dea62857ba57331053cd0986a12c1a4708732
+        uses: risc0/risc0/.github/actions/sccache@fbe1d0bb75c21fe36cefd87bae25f424b711b291
         with:
           key: ${{ matrix.os }}-${{ matrix.feature }}
 

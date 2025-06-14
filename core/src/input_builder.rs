@@ -41,7 +41,7 @@ pub enum InputBuilderError {
 pub async fn build_input<CR: ChainReader>(
     chain_reader: &CR,
     consensus_state: ConsensusState,
-) -> Result<Input, InputBuilderError> {
+) -> Result<(Input, Vec<ConsensusState>), InputBuilderError> {
     let trusted_block_root = consensus_state.finalized_checkpoint.root;
     let trusted_block_header = chain_reader.get_block_header(trusted_block_root).await?;
     let trusted_state_root = trusted_block_header.message.state_root;
@@ -77,12 +77,15 @@ pub async fn build_input<CR: ChainReader>(
 
     let (links, attestations) = links_and_attestations.into_iter().unzip();
 
-    Ok(Input {
-        consensus_state,
-        link: links,
-        attestations,
-        trusted_checkpoint_state_root: trusted_state_root,
-    })
+    Ok((
+        Input {
+            consensus_state,
+            link: links,
+            attestations,
+            trusted_checkpoint_state_root: trusted_state_root,
+        },
+        states,
+    ))
 }
 
 /// Starting at the trusted block header and the consensus state in which it is finalized,

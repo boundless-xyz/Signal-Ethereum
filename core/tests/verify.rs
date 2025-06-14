@@ -37,7 +37,7 @@ async fn test_zkasper_sync(
 
         // Build the input and verify it
         match build_input(&state_reader, consensus_state.clone()).await {
-            Ok(input) => {
+            Ok((input, _)) => {
                 // Perform a preflight verification to record the state reads
                 let trusted_state_root = input.trusted_checkpoint_state_root;
                 _ = verify(&preflight_state_reader, input.clone())?;

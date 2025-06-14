@@ -6,14 +6,15 @@ use risc0_zkvm::{default_executor, ExecutorEnv};
 use ssz_rs::prelude::*;
 use std::{
     fmt::{self, Display},
-    fs,
+    fs::{self, File},
+    io::Write,
     path::PathBuf,
 };
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 use url::Url;
 use z_core::{
     build_input, verify, ChainReader, ConsensusState, GuestContext, HostReaderBuilder, Input,
-    PreflightStateReader, Root, StateInput,
+    PreflightStateReader, Root, Slot, StateInput,
 };
 use z_core_test_utils::AssertStateReader;
 
@@ -27,10 +28,6 @@ use crate::{beacon_client::BeaconClient, state_provider::PersistentApiStateProvi
 #[derive(Parser, Debug)]
 #[clap(author, version, about, long_about = None)]
 struct Args {
-    /// Trusted epoch
-    #[clap(long)]
-    trusted_epoch: Epoch,
-
     /// Beacon API URL
     #[clap(long, env = "BEACON_RPC_URL")]
     beacon_api: Url,
@@ -46,6 +43,11 @@ struct Args {
     /// Directory to store data
     #[clap(long, short, default_value = "./data")]
     data_dir: PathBuf,
+
+    /// If true, enables HTTP caching for the Beacon API client
+    /// This will cache all calls to the Beacon API
+    #[clap(long, default_value_t = false)]
+    http_cache: bool,
 
     #[clap(subcommand)]
     command: Command,
@@ -83,6 +85,25 @@ enum Command {
         /// If the provided trusted epoch does not have its state cached, use this block root to find the state
         #[clap(long)]
         trusted_block_root: Option<Root>,
+        /// Trusted epoch
+        #[clap(long)]
+        trusted_epoch: Epoch,
+    },
+    /// Attempts to sync a trusted block root to the latest state available on the Beacon API
+    /// Optionally can log any places the resulting consensus state diverges from the chain for debugging
+    #[clap(name = "sync")]
+    Sync {
+        /// If true, runs in R0VM as well, otherwise runs natively
+        #[clap(long, default_value_t = ExecMode::Native)]
+        mode: ExecMode,
+
+        /// Boostrap from the consensus state that is part of the beacon state at this slot
+        #[clap(long)]
+        start_slot: Slot,
+
+        /// Optional log file to write sync status to
+        #[clap(long, short)]
+        log_path: Option<PathBuf>,
     },
 }
 
@@ -113,10 +134,13 @@ async fn main() -> anyhow::Result<()> {
     // Note: The part of the context we use for mainnet and sepolia is the same.
     let context = Context::for_mainnet();
 
-    let beacon_client = BeaconClient::builder(args.beacon_api)
-        .with_cache(args.data_dir.join("http"))
-        .with_rate_limit(args.rps)
-        .build();
+    let beacon_client = {
+        let mut builder = BeaconClient::builder(args.beacon_api).with_rate_limit(args.rps);
+        if args.http_cache {
+            builder = builder.with_cache(args.data_dir.join("http"));
+        }
+        builder.build()
+    };
 
     let state_dir = args.data_dir.join(args.network.to_string()).join("states");
     fs::create_dir_all(&state_dir)?;
@@ -134,21 +158,22 @@ async fn main() -> anyhow::Result<()> {
             mode,
             iterations,
             trusted_block_root,
+            trusted_epoch,
         } => {
-            let trusted_state = match reader.get_beacon_state_by_epoch(args.trusted_epoch) {
+            let trusted_state = match reader.get_beacon_state_by_epoch(trusted_epoch) {
                 Ok(state) => state,
                 Err(_) => {
                     let block = if let Some(root) = trusted_block_root {
                         warn!(
                             "No state found for epoch {}, trying to fetch via trusted block root: {}",
-                            args.trusted_epoch, root
+                            trusted_epoch, root
                         );
 
                         beacon_client.get_block(BlockId::Root(root)).await?
                     } else {
                         return Err(anyhow::anyhow!(
                             "No state found for epoch {}, and no trusted block root provided",
-                            args.trusted_epoch
+                            trusted_epoch
                         ));
                     };
 
@@ -156,7 +181,7 @@ async fn main() -> anyhow::Result<()> {
 
                     // TODO(ec2): We should check if the state corresponds to the trusted epoch
                     reader
-                        .get_beacon_state_by_epoch(args.trusted_epoch)
+                        .get_beacon_state_by_epoch(trusted_epoch)
                         .expect("Failed to establish trusted state")
                 }
             };
@@ -170,7 +195,7 @@ async fn main() -> anyhow::Result<()> {
                 .step_by(context.slots_per_epoch as usize)
             {
                 let curr_state = beacon_client.get_consensus_state(StateId::Slot(i)).await?;
-                if curr_state.finalized_checkpoint.epoch == args.trusted_epoch {
+                if curr_state.finalized_checkpoint.epoch == trusted_epoch {
                     consensus_state = curr_state;
                     break;
                 }
@@ -187,12 +212,80 @@ async fn main() -> anyhow::Result<()> {
 
             for i in 0..iterations {
                 tracing::info!("Iteration: {}", i);
-                let input = build_input(&beacon_client, consensus_state.clone()).await?;
+                let (input, _) = build_input(&beacon_client, consensus_state.clone()).await?;
                 tracing::debug!("Input: {:?}", input);
 
                 consensus_state = run_verify(mode, &reader, input.clone())?; // will panic if verification fails
             }
         }
+        Command::Sync {
+            mode,
+            start_slot,
+            log_path,
+        } => {
+            run_sync(
+                &provider,
+                context,
+                start_slot,
+                &beacon_client,
+                mode,
+                log_path,
+            )
+            .await?;
+        }
+    }
+
+    Ok(())
+}
+
+async fn run_sync(
+    provider: &PersistentApiStateProvider,
+    context: Context,
+    start_slot: Slot,
+    beacon_client: &BeaconClient,
+    mode: ExecMode,
+    log_path: Option<PathBuf>,
+) -> anyhow::Result<()> {
+    info!("Running Sync in mode: {mode}");
+    let logfile = log_path.map(|path| {
+        fs::create_dir_all(&path.parent().unwrap()).expect("Failed to create log directory");
+        let file = File::create(&path).expect("Failed to create log file");
+        info!("Logging sync progress to: {}", path.display());
+        file
+    });
+
+    let mut consensus_state = beacon_client
+        .get_consensus_state(StateId::Slot(start_slot))
+        .await?;
+    info!("Initial Consensus State: {:#?}", consensus_state);
+    let sr_builder = HostReaderBuilder::new(provider.clone().into(), context.clone().into());
+
+    loop {
+        let (input, states) = build_input(beacon_client, consensus_state.clone()).await?;
+        let expected_state = states.last().expect("No states returned").clone();
+        tracing::debug!("Input: {:?}", input);
+        let msg = match run_verify(mode, &sr_builder, input.clone()) {
+            Ok(state) => {
+                info!("Verification successful. New state: {:#?}", &state);
+                if state != expected_state {
+                    format!("New state mismatch: expected {expected_state:?}, got {state:?}")
+                } else {
+                    "Ok".to_string()
+                }
+            }
+            Err(e) => {
+                return Err(anyhow::anyhow!(e));
+                format!("Verification failed: {e}")
+            }
+        };
+        if let Some(logfile) = &logfile {
+            log_sync(logfile, &consensus_state, &expected_state, &msg);
+        };
+
+        consensus_state = expected_state;
+
+        // uncache old states
+        // provider.clear_states_before(consensus_state.finalized_checkpoint.epoch)?;
     }
 
     Ok(())
@@ -206,6 +299,10 @@ fn run_verify(
     info!("Running Verification in mode: {mode}");
 
     info!("Performing the pre-flight");
+    debug!(
+        "Building PreflightStateReader for epoch: {}",
+        input.consensus_state.finalized_checkpoint.epoch
+    );
     let epoch_reader = host_reader.build_at_epoch(input.consensus_state.finalized_checkpoint.epoch);
     let reader = PreflightStateReader::new(&epoch_reader);
     let consensus_state = verify(&reader, input.clone()).unwrap(); // will panic if verification fails
@@ -230,8 +327,6 @@ fn run_verify(
         }
     }
 
-    tracing::info!("Consensus state: {:#?}", consensus_state);
-
     Ok(consensus_state)
 }
 
@@ -253,4 +348,10 @@ fn execute_guest_program(state_input: &StateInput, input: Input) -> Vec<u8> {
         .expect("failed to execute guest program");
     info!("{} user cycles executed.", session_info.cycles());
     session_info.journal.bytes
+}
+
+fn log_sync(file: &File, from: &ConsensusState, to: &ConsensusState, message: &str) {
+    let mut file = file;
+    writeln!(file, "{:?} -> {:?}\t{}", from, to, message).expect("Failed to write to log file");
+    warn!("Sync status logged: {}", message);
 }

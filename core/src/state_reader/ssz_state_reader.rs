@@ -11,6 +11,9 @@ use std::collections::BTreeMap;
 /// A serializable structure that can be converted into a `SszStateReader`.
 #[derive(Clone, Deserialize, Serialize)]
 pub struct StateInput<'a> {
+    /// The epoch this input is created for. Note this field is unconstrained
+    pub epoch: Epoch,
+
     /// Used fields of the BeaconState plus their inclusion proof against the state root.
     #[serde(borrow)]
     pub beacon_state: Multiproof<'a>,
@@ -77,7 +80,7 @@ impl StateInput<'_> {
         beacon_root: Option<B256>,
         context: &GuestContext,
     ) -> Result<SszStateReader, SszReaderError> {
-        let (genesis_validators_root, state_epoch, fork_current_version, validators_root) =
+        let (genesis_validators_root, _, fork_current_version, validators_root) =
             extract_beacon_state_multiproof(context, &self.beacon_state)
                 .context("Failed to extract beacon state multiproof")?;
 
@@ -99,7 +102,7 @@ impl StateInput<'_> {
             context,
             genesis_validators_root: genesis_validators_root.into(),
             fork_current_version: fork_current_version[0..4].try_into().unwrap(),
-            epoch: state_epoch,
+            epoch: self.epoch,
             validators: validator_cache,
             randao: self.randao,
         })

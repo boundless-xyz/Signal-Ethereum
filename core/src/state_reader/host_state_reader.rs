@@ -120,6 +120,16 @@ impl StateProvider for HostReaderBuilder {
         &self.context
     }
 
+    fn get_state_at_epoch_boundary(
+        &self,
+        epoch: Epoch,
+    ) -> Result<Option<BeaconState>, anyhow::Error> {
+        Ok(self
+            .state_cache
+            .get(epoch)
+            .map(|state| Some(state.clone()))?)
+    }
+
     fn get_state_at_slot(&self, slot: u64) -> Result<Option<BeaconState>, anyhow::Error> {
         Ok(self
             .state_cache

@@ -155,6 +155,7 @@ where
             .collect();
 
         Ok(StateInput {
+            epoch: self.inner.epoch(),
             beacon_state: state_multiproof,
             active_validators: validator_multiproof,
             public_keys,

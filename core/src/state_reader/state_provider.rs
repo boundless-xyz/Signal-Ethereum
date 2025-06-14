@@ -75,6 +75,32 @@ impl FileProvider {
         fs::write(&file, ssz_rs::serialize(state)?)?;
         Ok(())
     }
+    pub fn clear_state(&self, epoch: Epoch) -> Result<(), anyhow::Error> {
+        let file = self.directory.join(format!("{}_beacon_state.ssz", epoch));
+        if file.exists() {
+            debug!("Clearing beacon state for epoch: {}", epoch);
+            fs::remove_file(file)?;
+        }
+        Ok(())
+    }
+    pub fn clear_states_before(&self, epoch: Epoch) -> Result<(), anyhow::Error> {
+        debug!("Clearing all beacon states before epoch: {}", epoch);
+        for entry in fs::read_dir(&self.directory)? {
+            let entry = entry?;
+            if let Some(file_epoch) = entry.file_name().to_str() {
+                if let Some(file_epoch) = file_epoch
+                    .split('_')
+                    .next()
+                    .and_then(|s| s.parse::<Epoch>().ok())
+                {
+                    if file_epoch < epoch {
+                        fs::remove_file(entry.path())?;
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
 }
 
 impl StateProvider for FileProvider {

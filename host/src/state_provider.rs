@@ -44,6 +44,9 @@ impl PersistentApiStateProvider {
             state
         }
     }
+    pub(crate) fn clear_states_before(&self, epoch: u64) -> Result<(), anyhow::Error> {
+        self.file_provider.clear_states_before(epoch)
+    }
 }
 
 impl StateProvider for PersistentApiStateProvider {

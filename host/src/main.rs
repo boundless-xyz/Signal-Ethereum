@@ -274,7 +274,6 @@ async fn run_sync(
                 }
             }
             Err(e) => {
-                return Err(anyhow::anyhow!(e));
                 format!("Verification failed: {e}")
             }
         };
@@ -285,7 +284,7 @@ async fn run_sync(
         consensus_state = expected_state;
 
         // uncache old states
-        // provider.clear_states_before(consensus_state.finalized_checkpoint.epoch)?;
+        provider.clear_states_before(consensus_state.finalized_checkpoint.epoch)?;
     }
 
     Ok(())

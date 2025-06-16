@@ -206,8 +206,7 @@ pub fn compute_committee_index_in_epoch(
     committees_per_slot: usize,
     committee_index: CommitteeIndex,
 ) -> CommitteeIndex {
-    (slot % slots_per_epoch as u64) as CommitteeIndex * committees_per_slot
-        + committee_index as CommitteeIndex
+    (slot % slots_per_epoch as u64) as CommitteeIndex * committees_per_slot + committee_index
 }
 
 /// Computes the range for slicing the shuffled indices to determine the members of a committee.

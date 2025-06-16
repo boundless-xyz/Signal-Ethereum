@@ -217,10 +217,15 @@ fn extract_validators_multiproof(
             let exit_epoch = u64_from_chunk(exit_epoch);
 
             // We are calculating the validator index from the gindex.
-            let validator_index =
-                (exit_epoch_gindex >> VALIDATOR_TREE_DEPTH) - (1 << VALIDATOR_LIST_TREE_DEPTH);
+            let validator_index = exit_epoch_gindex
+                .checked_shr(VALIDATOR_TREE_DEPTH)
+                .expect("Validator gindex should fit in u64")
+                .checked_sub(1 << VALIDATOR_LIST_TREE_DEPTH)
+                .expect("Validator index underflow");
+
             // NOTE: This should not fail until there are more than 2^32 validators.
-            let validator_index = usize::try_from(validator_index).unwrap();
+            let validator_index =
+                usize::try_from(validator_index).expect("Validator index overflow");
 
             Ok((
                 validator_index,

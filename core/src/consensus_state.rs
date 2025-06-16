@@ -47,7 +47,7 @@ impl ConsensusState {
             // where they are adjacent checkpoints.
             // This applies when the source checkpoint is the current justified checkpoint or the previous justified checkpoint
             Link { source, target }
-                if target.epoch == source.epoch + 1
+                if target.epoch == source.epoch.checked_add(1).expect("Epoch overflow")
                     && (*source == self.current_justified_checkpoint
                         || *source == self.previous_justified_checkpoint) =>
             {
@@ -68,9 +68,10 @@ impl ConsensusState {
             // Case 3: 2-finality. Finalizes the source checkpoint and justifies the target checkpoint
             // with a link that skips over an intermediate justified checkpoint
             Link { source, target }
-                if target.epoch == source.epoch + 2
+                if target.epoch == source.epoch.checked_add(2).expect("Epoch overflow")
                     && *source == self.previous_justified_checkpoint
-                    && self.current_justified_checkpoint.epoch == source.epoch + 1 =>
+                    && self.current_justified_checkpoint.epoch
+                        == source.epoch.checked_add(1).expect("Epoch overflow") =>
             {
                 Ok(ConsensusState {
                     finalized_checkpoint: link.source,
@@ -82,7 +83,7 @@ impl ConsensusState {
             // This occurs when the source is justified but the link skips over one or more unjustified epochs when justifying the target
             // The result is that the target becomes justified but the source does not finalize.
             Link { source, target }
-                if target.epoch > source.epoch + 1
+                if target.epoch > source.epoch.checked_add(1).expect("Epoch overflow")
                     && (*source == self.current_justified_checkpoint
                         || *source == self.previous_justified_checkpoint) =>
             {

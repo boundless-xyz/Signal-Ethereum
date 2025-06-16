@@ -64,8 +64,7 @@ pub fn verify<S: StateReader>(
         link.len() == attestations.len(),
         VerifyError::Other("Link and attestations must be the same length".to_string())
     );
-    // TODO(ec2): I think we need to enforce here that the trusted state is less than or equal to state.finalized_checkpoint epoch
-    // TODO(ec2): We can also bound the number of state patches to the k in k-finality case
+
     let context = state_reader.context();
 
     let trusted_epoch = consensus_state.finalized_checkpoint.epoch;
@@ -83,6 +82,7 @@ pub fn verify<S: StateReader>(
                 let data = &attestation.data;
                 debug!("Processing attestation: {:?}", data);
 
+                // introduced in Electra requires this to be 0
                 assert_eq!(data.index, 0);
 
                 let attestation_epoch = data.target.epoch;
@@ -120,9 +120,10 @@ pub fn verify<S: StateReader>(
                     })
                     .collect::<Result<Vec<_>, _>>()?;
 
-                let attesting_balance = attesting_validators
-                    .iter()
-                    .fold(0u64, |acc, e| acc + e.effective_balance);
+                let attesting_balance = attesting_validators.iter().fold(0u64, |acc, e| {
+                    acc.checked_add(e.effective_balance)
+                        .expect("attesting balance overflow")
+                });
 
                 ensure!(
                     is_valid_indexed_attestation(
@@ -144,7 +145,14 @@ pub fn verify<S: StateReader>(
 
         // In the worst case attestations can arrive one epoch after their target and because we don't have information about which epoch they belong to in the chain
         // (if any) we need to assume the worst case
-        let lookahead = link.target.epoch + 1 - trusted_epoch;
+        let lookahead = link
+            .target
+            .epoch
+            .checked_add(1)
+            .expect("Epoch overflow")
+            .checked_sub(trusted_epoch)
+            .expect("Epoch underflow");
+
         let threshold = threshold(lookahead, total_active_balance);
 
         ensure!(

@@ -3,9 +3,9 @@ use ssz_multiproofs::MultiproofBuilder;
 use ssz_rs::prelude::*;
 use thiserror::Error;
 
-use super::{HostStateReader, StateInput, host_state_reader::HostReaderError};
+use super::{StateInput, host_state_reader::HostReaderError};
 use crate::{
-    Epoch, HostContext, StatePatchBuilder, StateReader, ValidatorIndex, ValidatorInfo, Version,
+    Epoch, StatePatchBuilder, StateProvider, StateReader, ValidatorIndex, ValidatorInfo, Version,
     beacon_state::mainnet::BeaconState, mainnet::ElectraBeaconState,
 };
 use alloy_primitives::B256;
@@ -16,21 +16,24 @@ use std::{
 use tracing::info;
 
 #[derive(Error, Debug)]
-pub enum TrackingReaderError {
+pub enum PreflightReaderError {
     #[error("HostReaderError: {0}")]
     HostReaderError(#[from] HostReaderError),
 }
 
-pub struct TrackingStateReader<'a> {
+pub struct PreflightStateReader<'a, SR> {
     trusted_epoch: Epoch,
-    inner: &'a HostStateReader,
+    inner: &'a SR,
     validator_indices: RefCell<BTreeSet<ValidatorIndex>>,
     validator_epochs: RefCell<BTreeSet<Epoch>>,
     mix_epochs: RefCell<BTreeMap<Epoch, BTreeSet<usize>>>,
 }
 
-impl<'a> TrackingStateReader<'a> {
-    pub fn new(reader: &'a HostStateReader, trusted_epoch: Epoch) -> Self {
+impl<'a, SR> PreflightStateReader<'a, SR>
+where
+    SR: StateReader,
+{
+    pub fn new(reader: &'a SR, trusted_epoch: Epoch) -> Self {
         Self {
             trusted_epoch,
             inner: reader,
@@ -40,18 +43,21 @@ impl<'a> TrackingStateReader<'a> {
         }
     }
 
-    pub fn host_reader(&self) -> &HostStateReader {
+    pub fn host_reader(&self) -> &SR {
         &self.inner
     }
 
-    pub fn to_input(&self) -> StateInput {
-        let state = self
-            .inner
-            .get_beacon_state_by_epoch(self.trusted_epoch)
+    pub fn to_input<SP>(&self, state_provider: &SP) -> StateInput
+    where
+        SP: StateProvider,
+    {
+        let state = state_provider
+            .get_state_at_epoch_boundary(self.trusted_epoch)
+            .unwrap()
             .unwrap();
         let beacon_state_root = state.hash_tree_root().unwrap();
 
-        let mut patch_builder: BTreeMap<Epoch, StatePatchBuilder> = BTreeMap::new();
+        let mut patch_builder: BTreeMap<Epoch, StatePatchBuilder<SR::Context>> = BTreeMap::new();
         let mut proof_builder: MultiproofBuilder = MultiproofBuilder::new();
 
         for (epoch, indices) in self.mix_epochs.take() {
@@ -63,7 +69,7 @@ impl<'a> TrackingStateReader<'a> {
             } else {
                 let patch = patch_builder
                     .entry(epoch)
-                    .or_insert(self.patch_builder(epoch).unwrap());
+                    .or_insert(self.patch_builder(epoch, state_provider).unwrap());
                 for idx in indices {
                     patch.randao_mix(idx);
                 }
@@ -72,7 +78,7 @@ impl<'a> TrackingStateReader<'a> {
 
         info!("Building State multiproof");
         let state_multiproof = match state {
-            BeaconState::Electra(state) => proof_builder
+            BeaconState::Electra(ref state) => proof_builder
                 .with_path::<ElectraBeaconState>(&["genesis_validators_root".into()])
                 .with_path::<ElectraBeaconState>(&["slot".into()])
                 .with_path::<ElectraBeaconState>(&["fork".into(), "current_version".into()])
@@ -148,17 +154,27 @@ impl<'a> TrackingStateReader<'a> {
         }
     }
 
-    fn patch_builder(&self, epoch: Epoch) -> Result<StatePatchBuilder, HostReaderError> {
-        let state = self.inner.get_beacon_state_by_epoch(epoch)?;
+    fn patch_builder<SP>(
+        &self,
+        epoch: Epoch,
+        state_provider: &SP,
+    ) -> Result<StatePatchBuilder<SR::Context>, HostReaderError>
+    where
+        SP: StateProvider,
+    {
+        let state = state_provider.get_state_at_epoch_boundary(epoch)?.unwrap();
         let context = self.inner.context();
 
         Ok(StatePatchBuilder::new(state, context))
     }
 }
 
-impl<'a> StateReader for TrackingStateReader<'a> {
-    type Error = TrackingReaderError;
-    type Context = HostContext;
+impl<'a, SR> StateReader for PreflightStateReader<'a, SR>
+where
+    SR: StateReader,
+{
+    type Error = SR::Error;
+    type Context = SR::Context;
 
     fn context(&self) -> &Self::Context {
         self.inner.context()

@@ -2,9 +2,11 @@ use std::sync::LazyLock;
 
 use beacon_chain::test_utils::{AttestationStrategy, BlockStrategy};
 use beacon_types::Keypair;
-use test_utils::HarnessStateReader;
+use test_utils::{AssertStateReader, HarnessStateReader};
 use test_utils::{TestHarness, consensus_state_from_state, get_harness, get_spec};
-use z_core::{ConsensusState, VerifyError, build_input, threshold, verify};
+use z_core::{
+    ConsensusState, GuestContext, PreflightStateReader, VerifyError, build_input, threshold, verify,
+};
 
 pub const VALIDATOR_COUNT: u64 = 48;
 const ETH_PER_VALIDATOR: u64 = 32;
@@ -24,16 +26,32 @@ async fn test_zkasper_sync(
 ) -> Result<ConsensusState, VerifyError> {
     let head_state = harness.chain.head_beacon_state_cloned();
 
-    let state_reader = HarnessStateReader::from(harness);
     let mut consensus_state = initial_consensus_state;
 
     println!("Pre consensus state: {:?}", consensus_state);
 
     loop {
+        let state_reader = HarnessStateReader::from(harness);
+        let preflight_state_reader =
+            PreflightStateReader::new(&state_reader, consensus_state.finalized_checkpoint.epoch);
+
         // Build the input and verify it
         match build_input(&state_reader, consensus_state.clone()).await {
             Ok(input) => {
-                consensus_state = verify(&state_reader, input)?;
+                // Perform a preflight verification to record the state reads
+                let trusted_state_root = input.trusted_checkpoint_state_root;
+                _ = verify(&preflight_state_reader, input.clone())?;
+
+                // build a self contained SSZ reader
+                let ssz_state_reader = preflight_state_reader
+                    .to_input(&state_reader)
+                    .into_state_reader(trusted_state_root, &GuestContext)
+                    .expect("Failed to convert to SSZ state reader");
+                // Merge into a single AssertStateReader that ensures identical data returned for each read
+                let assert_sr = AssertStateReader::new(&state_reader, &ssz_state_reader);
+                // Verify again
+                consensus_state = verify(&assert_sr, input)?;
+
                 println!("consensus state: {:?}", &consensus_state);
             }
             Err(e) => {

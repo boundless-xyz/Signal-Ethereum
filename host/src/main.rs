@@ -210,7 +210,7 @@ fn run_verify(
     info!("Native Verification Success!");
 
     if mode == ExecMode::Ssz || mode == ExecMode::R0vm {
-        let state_input = reader.to_input();
+        let state_input = reader.to_input(host_reader);
         let ssz_reader = state_input
             .clone()
             .into_state_reader(input.trusted_checkpoint_state_root, &GuestContext)?;

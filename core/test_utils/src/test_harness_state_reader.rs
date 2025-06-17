@@ -12,13 +12,14 @@ use elsa::FrozenMap;
 use std::str::FromStr;
 use thiserror::Error;
 use z_core::{
-    ChainReader, ConsensusState, Epoch, GuestContext, StateReader, ValidatorIndex, ValidatorInfo,
-    Version,
+    ChainReader, ConsensusState, Epoch, GuestContext, HostContext, StateProvider, StateReader,
+    ValidatorIndex, ValidatorInfo, Version, mainnet::BeaconState as ZKBeaconState,
 };
 
 pub struct HarnessStateReader<'a, T: BeaconChainTypes> {
     inner: &'a BeaconChainHarness<T>,
     validator_cache: FrozenMap<Epoch, Vec<(ValidatorIndex, ValidatorInfo)>>,
+    context: HostContext,
 }
 
 impl<T> HarnessStateReader<'_, T>
@@ -41,6 +42,7 @@ where
         Self {
             inner,
             validator_cache: FrozenMap::new(),
+            context: HostContext::from(ethereum_consensus::state_transition::Context::for_mainnet()),
         }
     }
 }
@@ -201,6 +203,24 @@ where
         }
         .map_err(|e| anyhow::anyhow!("Failed retrieving state: {:?}", e))?;
         Ok(consensus_state_from_state(&state))
+    }
+}
+
+impl<T> StateProvider for HarnessStateReader<'_, T>
+where
+    T: BeaconChainTypes,
+{
+    fn context(&self) -> &HostContext {
+        &self.context
+    }
+
+    fn get_state_at_slot(&self, slot: u64) -> Result<Option<ZKBeaconState>, anyhow::Error> {
+        let state = self
+            .inner
+            .chain
+            .state_at_slot(slot.into(), StateSkipConfig::WithStateRoots)
+            .unwrap();
+        Ok(Some(convert_via_json(state)?))
     }
 }
 

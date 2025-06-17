@@ -39,6 +39,8 @@ ethereum_ssz = "0.8.3"
 tokio = { workspace = true }
 tracing-test = { version = "0.2.5", features = ["no-env-filter"] }
 test_utils = { path = "test_utils" }
+bls = { git = "https://github.com/sigp/lighthouse.git", rev = "7759cb8f91c01a7d335469d317b5787368656064" } 
+state_processing = { git = "https://github.com/sigp/lighthouse.git", rev = "7759cb8f91c01a7d335469d317b5787368656064" } 
 
 [features]
 default = ["host"]

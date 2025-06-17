@@ -87,6 +87,12 @@ pub async fn get_harness(
         );
     }
     harness.advance_slot();
+    assert!(
+        harness
+            .get_current_state()
+            .fork_name_unchecked()
+            .electra_enabled()
+    );
     harness
 }
 

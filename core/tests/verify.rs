@@ -1,14 +1,22 @@
-use std::sync::LazyLock;
+use std::sync::{Arc, LazyLock};
 
+use beacon_chain::BlockError;
 use beacon_chain::test_utils::{AttestationStrategy, BlockStrategy};
-use beacon_types::Keypair;
+use beacon_types::{
+    BlobsList, Epoch, EthSpec, Keypair, KzgProofs, MainnetEthSpec, SignedBeaconBlock, Slot,
+};
 use test_utils::HarnessStateReader;
 use test_utils::{TestHarness, consensus_state_from_state, get_harness, get_spec};
 use z_core::{ConsensusState, VerifyError, build_input, threshold, verify};
 
-pub const VALIDATOR_COUNT: u64 = 48;
+pub const VALIDATOR_COUNT: u64 = 12;
 const ETH_PER_VALIDATOR: u64 = 32;
 const GWEI_PER_ETH: u64 = 10_u64.pow(9);
+
+pub type SignedBlockContentsTuple<E> = (
+    Arc<SignedBeaconBlock<E>>,
+    Option<(KzgProofs<E>, BlobsList<E>)>,
+);
 
 /// A cached set of keys.
 static KEYPAIRS: LazyLock<Vec<Keypair>> = LazyLock::new(|| {
@@ -64,7 +72,7 @@ async fn test_zkasper_sync(
 #[tokio::test]
 async fn simple_finalize_epoch() {
     let spec = get_spec();
-    let harness = get_harness(KEYPAIRS[..].to_vec(), spec).await;
+    let harness = get_harness(KEYPAIRS[..].to_vec(), spec, Slot::new(0)).await;
 
     // Grab our bootstrap consensus state from there
     let head_state = harness.chain.head_beacon_state_cloned();
@@ -87,7 +95,7 @@ async fn simple_finalize_epoch() {
 #[tokio::test]
 async fn finalizes_with_threshold_participation() {
     let spec = get_spec();
-    let harness = get_harness(KEYPAIRS[..].to_vec(), spec).await;
+    let harness = get_harness(KEYPAIRS[..].to_vec(), spec, Slot::new(0)).await;
     let num_blocks_produced = harness.slots_per_epoch() * 3;
 
     let required_threshold = threshold(3, VALIDATOR_COUNT * ETH_PER_VALIDATOR * GWEI_PER_ETH);
@@ -144,7 +152,7 @@ async fn finalizes_with_threshold_participation() {
 #[tokio::test]
 async fn does_not_finalize_with_less_than_two_thirds_participation() {
     let spec = get_spec();
-    let harness = get_harness(KEYPAIRS[..].to_vec(), spec).await;
+    let harness = get_harness(KEYPAIRS[..].to_vec(), spec, Slot::new(0)).await;
     let num_blocks_produced = harness.slots_per_epoch() * 5;
 
     let two_thirds = (VALIDATOR_COUNT / 3) * 2;
@@ -201,7 +209,7 @@ async fn does_not_finalize_with_less_than_two_thirds_participation() {
 #[tokio::test]
 async fn finalize_after_one_empty_epoch() {
     let spec = get_spec();
-    let harness = get_harness(KEYPAIRS[..].to_vec(), spec).await;
+    let harness = get_harness(KEYPAIRS[..].to_vec(), spec, Slot::new(0)).await;
 
     // Grab our bootstrap consensus state from there
     let head_state = harness.chain.head_beacon_state_cloned();
@@ -246,7 +254,7 @@ async fn finalize_after_one_empty_epoch() {
 #[tokio::test]
 async fn finalize_after_inactivity_leak() {
     let spec = get_spec();
-    let harness = get_harness(KEYPAIRS[..].to_vec(), spec.clone()).await;
+    let harness = get_harness(KEYPAIRS[..].to_vec(), spec.clone(), Slot::new(0)).await;
 
     // Grab our bootstrap consensus state from there
     let head_state = harness.chain.head_beacon_state_cloned();
@@ -339,7 +347,7 @@ async fn finalize_after_inactivity_leak() {
 #[tokio::test]
 async fn chain_finalizes_but_zkcasper_does_not() {
     let spec = get_spec();
-    let harness = get_harness(KEYPAIRS[..].to_vec(), spec).await;
+    let harness = get_harness(KEYPAIRS[..].to_vec(), spec, Slot::new(0)).await;
     let num_blocks_produced = harness.slots_per_epoch() * 3;
 
     let required_threshold = threshold(3, VALIDATOR_COUNT * ETH_PER_VALIDATOR * GWEI_PER_ETH);
@@ -397,4 +405,90 @@ async fn chain_finalizes_but_zkcasper_does_not() {
         }),
         "Expected threshold not met error, but got a different result"
     );
+}
+
+/// Have one validator exit occur after the trusted state and still be able to finalize
+#[tokio::test]
+async fn finalize_when_validator_exits() {
+    let spec = get_spec();
+    let harness = get_harness(
+        KEYPAIRS[..].to_vec(),
+        spec,
+        (256u64 * MainnetEthSpec::slots_per_epoch()).into(), // need to start past epoch 256 or else exits are not allowed
+    )
+    .await;
+
+    harness.advance_slot();
+    let state = harness.get_current_state();
+    let slot = harness.get_current_slot();
+    let exit_valid_at = state.current_epoch() - 1;
+    let validator_to_exit = 0;
+
+    // build a block with an exit and process it
+    let (block, _) = harness
+        .make_block_with_modifier(harness.get_current_state(), slot, |block| {
+            harness.add_voluntary_exit(block, validator_to_exit, exit_valid_at);
+        })
+        .await;
+    process_block(&harness, slot, block).await.unwrap();
+
+    let expected_exit_epoch = Epoch::new(261); // validator will be exited at this epoch (current_epoch + 1 + MAX_SEED_LOOKAHEAD)
+    // Verify exit was processed correctly
+    assert_eq!(
+        harness
+            .get_current_state()
+            .validators()
+            .get(validator_to_exit as usize)
+            .unwrap()
+            .exit_epoch,
+        expected_exit_epoch
+    );
+
+    // Grab our bootstrap consensus state from the state just before the exit so the exit happens as part of the
+    // ZKasper consensus state update
+    harness
+        .extend_slots((MainnetEthSpec::slots_per_epoch() * 4) as usize)
+        .await;
+    assert_eq!(
+        harness
+            .get_current_slot()
+            .epoch(MainnetEthSpec::slots_per_epoch()),
+        expected_exit_epoch - 1
+    );
+
+    let head_state = harness.chain.head_beacon_state_cloned();
+    let consensus_state = consensus_state_from_state(&head_state);
+    println!("Current slot: {}", head_state.slot());
+    println!("Pre consensus state: {:?}", consensus_state);
+
+    // progress the chain 3 epochs past our last state so there are attestations to process
+    harness
+        .extend_slots((MainnetEthSpec::slots_per_epoch() * 3) as usize)
+        .await;
+
+    test_zkasper_sync(&harness, consensus_state).await.unwrap();
+}
+
+async fn process_block(
+    harness: &TestHarness,
+    slot: Slot,
+    mut block: SignedBlockContentsTuple<MainnetEthSpec>,
+) -> Result<(), BlockError> {
+    // From Lighthouse test: on first try, the state root will mismatch due to our modification
+    // thankfully, the correct state root is reported back, so we just take that one :^)
+    // there probably is a better way...
+    let Err(BlockError::StateRootMismatch { local, .. }) = harness
+        .process_block(slot, block.0.canonical_root(), block.clone())
+        .await
+    else {
+        panic!("unexpected match of state root");
+    };
+    let mut new_block = block.0.message_electra().unwrap().clone();
+    new_block.state_root = local;
+    block.0 = Arc::new(harness.sign_beacon_block(new_block.into(), &harness.get_current_state()));
+    harness
+        .process_block(slot, block.0.canonical_root(), block.clone())
+        .await
+        .unwrap();
+    Ok(())
 }

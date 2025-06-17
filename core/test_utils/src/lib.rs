@@ -5,7 +5,9 @@ use beacon_chain::{
     ChainConfig,
     test_utils::{BeaconChainHarness, EphemeralHarnessType},
 };
-use beacon_types::{ChainSpec, Epoch, EthSpec, Keypair, MainnetEthSpec};
+use beacon_types::{
+    ChainSpec, Epoch, EthSpec, FixedBytesExtended, Hash256, Keypair, MainnetEthSpec, Slot,
+};
 pub use test_harness_state_reader::HarnessStateReader;
 use z_core::ConsensusState;
 
@@ -14,8 +16,6 @@ mod test_harness_state_reader;
 
 type E = MainnetEthSpec;
 pub type TestHarness = BeaconChainHarness<EphemeralHarnessType<E>>;
-
-pub const VALIDATOR_COUNT: usize = 16;
 
 pub fn get_spec() -> Arc<ChainSpec> {
     let altair_fork_epoch = Epoch::new(0);
@@ -33,7 +33,12 @@ pub fn get_spec() -> Arc<ChainSpec> {
     Arc::new(spec)
 }
 
-pub async fn get_harness(keypairs: Vec<Keypair>, spec: Arc<ChainSpec>) -> TestHarness {
+pub async fn get_harness(
+    keypairs: Vec<Keypair>,
+    spec: Arc<ChainSpec>,
+    start_slot: Slot,
+) -> TestHarness {
+    let validator_count = keypairs.len();
     let harness = BeaconChainHarness::builder(MainnetEthSpec)
         .spec(spec.clone())
         .chain_config(ChainConfig {
@@ -60,14 +65,28 @@ pub async fn get_harness(keypairs: Vec<Keypair>, spec: Arc<ChainSpec>) -> TestHa
         .execution_block_generator()
         .move_to_terminal_block()
         .unwrap();
-    // grow the chain past the Electra fork upgrade by 3 epochs so we don't accidentally
-    // read prior to the fork
-    harness
-        .extend_to_slot(electra_fork_slot + harness.slots_per_epoch() * 3)
-        .await;
-
+    harness.extend_to_slot(electra_fork_slot).await;
     harness.advance_slot();
-
+    if start_slot > harness.get_current_slot() {
+        let state = harness.get_current_state();
+        harness
+            .add_attested_blocks_at_slots(
+                state,
+                Hash256::zero(),
+                (harness.get_current_slot().as_u64()..start_slot.as_u64())
+                    .map(Slot::new)
+                    .collect::<Vec<_>>()
+                    .as_slice(),
+                (0..validator_count).collect::<Vec<_>>().as_slice(),
+            )
+            .await;
+    } else {
+        panic!(
+            "start_slot must be greater than {} or else Electra fork will not be applied",
+            harness.get_current_slot()
+        );
+    }
+    harness.advance_slot();
     harness
 }
 

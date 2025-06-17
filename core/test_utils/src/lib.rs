@@ -73,7 +73,7 @@ pub async fn get_harness(
             .add_attested_blocks_at_slots(
                 state,
                 Hash256::zero(),
-                (harness.get_current_slot().as_u64()..start_slot.as_u64())
+                (harness.get_current_slot().as_u64()..=start_slot.as_u64())
                     .map(Slot::new)
                     .collect::<Vec<_>>()
                     .as_slice(),

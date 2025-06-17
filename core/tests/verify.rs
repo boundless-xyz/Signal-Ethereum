@@ -75,7 +75,7 @@ async fn test_zkasper_sync(
 #[tokio::test]
 async fn simple_finalize_epoch() {
     let spec = get_spec();
-    let harness = get_harness(KEYPAIRS[..].to_vec(), spec, Slot::new(160)).await;
+    let harness = get_harness(KEYPAIRS[..].to_vec(), spec, Slot::new(224)).await;
 
     // Grab our bootstrap consensus state from there
     let head_state = harness.chain.head_beacon_state_cloned();
@@ -98,7 +98,7 @@ async fn simple_finalize_epoch() {
 #[tokio::test]
 async fn finalizes_with_threshold_participation() {
     let spec = get_spec();
-    let harness = get_harness(KEYPAIRS[..].to_vec(), spec, Slot::new(256)).await;
+    let harness = get_harness(KEYPAIRS[..].to_vec(), spec, Slot::new(224)).await;
     let num_blocks_produced = harness.slots_per_epoch() * 3;
 
     let required_threshold = threshold(3, VALIDATOR_COUNT * ETH_PER_VALIDATOR * GWEI_PER_ETH);
@@ -155,7 +155,7 @@ async fn finalizes_with_threshold_participation() {
 #[tokio::test]
 async fn does_not_finalize_with_less_than_two_thirds_participation() {
     let spec = get_spec();
-    let harness = get_harness(KEYPAIRS[..].to_vec(), spec, Slot::new(256)).await;
+    let harness = get_harness(KEYPAIRS[..].to_vec(), spec, Slot::new(224)).await;
     let num_blocks_produced = harness.slots_per_epoch() * 5;
 
     let two_thirds = (VALIDATOR_COUNT / 3) * 2;
@@ -212,7 +212,7 @@ async fn does_not_finalize_with_less_than_two_thirds_participation() {
 #[tokio::test]
 async fn finalize_after_one_empty_epoch() {
     let spec = get_spec();
-    let harness = get_harness(KEYPAIRS[..].to_vec(), spec, Slot::new(256)).await;
+    let harness = get_harness(KEYPAIRS[..].to_vec(), spec, Slot::new(224)).await;
 
     // Grab our bootstrap consensus state from there
     let head_state = harness.chain.head_beacon_state_cloned();
@@ -257,7 +257,7 @@ async fn finalize_after_one_empty_epoch() {
 #[tokio::test]
 async fn finalize_after_inactivity_leak() {
     let spec = get_spec();
-    let harness = get_harness(KEYPAIRS[..].to_vec(), spec.clone(), Slot::new(256)).await;
+    let harness = get_harness(KEYPAIRS[..].to_vec(), spec.clone(), Slot::new(224)).await;
 
     // Grab our bootstrap consensus state from there
     let head_state = harness.chain.head_beacon_state_cloned();
@@ -350,7 +350,7 @@ async fn finalize_after_inactivity_leak() {
 #[tokio::test]
 async fn chain_finalizes_but_zkcasper_does_not() {
     let spec = get_spec();
-    let harness = get_harness(KEYPAIRS[..].to_vec(), spec, Slot::new(256)).await;
+    let harness = get_harness(KEYPAIRS[..].to_vec(), spec, Slot::new(224)).await;
     let num_blocks_produced = harness.slots_per_epoch() * 3;
 
     let required_threshold = threshold(3, VALIDATOR_COUNT * ETH_PER_VALIDATOR * GWEI_PER_ETH);
@@ -476,7 +476,7 @@ async fn finalize_when_validator_exits() {
 #[tokio::test]
 async fn finalize_when_validator_enters() {
     let spec = get_spec();
-    let mut harness = get_harness(KEYPAIRS[..].to_vec(), spec.clone(), Slot::new(256)).await;
+    let mut harness = get_harness(KEYPAIRS[..].to_vec(), spec.clone(), Slot::new(224)).await;
 
     harness.advance_slot();
     let slot = harness.get_current_slot();

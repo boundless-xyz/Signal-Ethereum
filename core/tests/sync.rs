@@ -1,10 +1,13 @@
+//! Tests the ability of ZKasper to sync with a beacon chain through various scenarios.
+//!
+//! This test suite makes heavy use of the Lighthouse test harness to create a valid beacon chain in different states
 use std::sync::{Arc, LazyLock};
 
 use beacon_chain::BlockError;
 use beacon_chain::test_utils::{AttestationStrategy, BlockStrategy};
 use beacon_types::{
-    BlobsList, DepositData, DepositRequest, EthSpec, Hash256, Keypair, KzgProofs, MainnetEthSpec,
-    PublicKeyBytes, SignatureBytes, SignedBeaconBlock, Slot, VariableList,
+    BlobsList, DepositData, DepositRequest, Epoch, EthSpec, Hash256, Keypair, KzgProofs,
+    MainnetEthSpec, PublicKeyBytes, SignatureBytes, SignedBeaconBlock, Slot, VariableList,
 };
 use bls::get_withdrawal_credentials;
 use state_processing::per_block_processing::is_valid_deposit_signature;
@@ -419,6 +422,63 @@ async fn chain_finalizes_but_zkcasper_does_not() {
         }),
         "Expected threshold not met error, but got a different result"
     );
+}
+
+/// Have one validator exit occur after the trusted state and still be able to finalize
+#[tokio::test]
+async fn finalize_when_validator_exits() {
+    let spec = get_spec();
+    let harness = get_harness(
+        KEYPAIRS[..].to_vec(),
+        spec,
+        (256u64 * MainnetEthSpec::slots_per_epoch()).into(), // need to start past epoch 256 or else exits are not allowed
+    )
+    .await;
+
+    harness.advance_slot();
+    let state = harness.get_current_state();
+    let slot = harness.get_current_slot();
+    let exit_valid_at = state.current_epoch() - 1;
+    let validator_to_exit = 0;
+
+    // build a block with an exit and process it
+    let (block, _) = harness
+        .make_block_with_modifier(harness.get_current_state(), slot, |block| {
+            harness.add_voluntary_exit(block, validator_to_exit, exit_valid_at);
+        })
+        .await;
+    process_block(&harness, block).await.unwrap();
+
+    let expected_exit_epoch = Epoch::new(261); // validator will be exited at this epoch (current_epoch + 1 + MAX_SEED_LOOKAHEAD)
+    // Verify exit was processed correctly
+    assert_eq!(
+        harness
+            .get_current_state()
+            .validators()
+            .get(validator_to_exit as usize)
+            .unwrap()
+            .exit_epoch,
+        expected_exit_epoch
+    );
+
+    // Grab our bootstrap consensus state from the state just before the exit so the exit happens as part of the
+    // ZKasper consensus state update
+    harness
+        .extend_slots((MainnetEthSpec::slots_per_epoch() * 6) as usize)
+        .await;
+    let consensus_state = consensus_state_from_state(&harness.get_current_state());
+    assert_eq!(
+        consensus_state.finalized_checkpoint.epoch,
+        expected_exit_epoch.as_u64() - 1,
+        "consensus state should be one epoch before the new validator stops participating"
+    );
+
+    // progress the chain 3 epochs past our last state so there are attestations to process
+    harness
+        .extend_slots((MainnetEthSpec::slots_per_epoch() * 3) as usize)
+        .await;
+
+    test_zkasper_sync(&harness, consensus_state).await.unwrap();
 }
 
 /// Have one validator join and attest in the next epochs and still be able to finalize

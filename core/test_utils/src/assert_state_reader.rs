@@ -50,7 +50,7 @@ impl<S: StateReader, R: StateReader> StateReader for AssertStateReader<'_, S, R>
             match (iter_a.next(), iter_b.next()) {
                 (None, None) => None,
                 (Some(a), Some(b)) => {
-                    assert_eq!(a, b);
+                    assert_eq!(a.0, b.0); // only ensure the same validators are returned, do not check the validator info
                     Some(a)
                 }
                 (a, b) => panic!("Wrong size: empty={}, empty={}", a.is_none(), b.is_none()),

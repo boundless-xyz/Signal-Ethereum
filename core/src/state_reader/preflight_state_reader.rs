@@ -123,6 +123,7 @@ where
                 &[idx.into(), "effective_balance".into()],
                 &[idx.into(), "activation_epoch".into()],
                 &[idx.into(), "exit_epoch".into()],
+                &[idx.into(), "slashed".into()],
             ];
 
             let g_indices = public_key_path

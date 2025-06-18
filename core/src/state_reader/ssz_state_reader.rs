@@ -271,6 +271,9 @@ fn extract_validators_multiproof(
                 values.next().ok_or(ssz_multiproofs::Error::MissingValue)?;
             let exit_epoch = u64_from_chunk(exit_epoch);
 
+            let (_, slashed) = values.next().ok_or(ssz_multiproofs::Error::MissingValue)?;
+            let slashed = slashed != &[0; 32];
+
             // We are calculating the validator index from the gindex.
             let validator_index =
                 (exit_epoch_gindex >> VALIDATOR_TREE_DEPTH) - (1 << VALIDATOR_LIST_TREE_DEPTH);
@@ -284,6 +287,7 @@ fn extract_validators_multiproof(
                     effective_balance,
                     activation_epoch,
                     exit_epoch,
+                    slashed,
                 },
             ))
         })

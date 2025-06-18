@@ -100,6 +100,7 @@ pub struct ValidatorInfo {
     pub effective_balance: u64,
     pub activation_epoch: u64,
     pub exit_epoch: u64,
+    pub slashed: bool,
 }
 
 impl ValidatorInfo {
@@ -117,6 +118,7 @@ impl From<&ethereum_consensus::phase0::Validator> for ValidatorInfo {
             effective_balance: v.effective_balance,
             activation_epoch: v.activation_epoch,
             exit_epoch: v.exit_epoch,
+            slashed: v.slashed,
         }
     }
 }
@@ -129,6 +131,7 @@ impl From<&beacon_types::Validator> for ValidatorInfo {
             effective_balance: v.effective_balance,
             activation_epoch: v.activation_epoch.into(),
             exit_epoch: v.exit_epoch.into(),
+            slashed: v.slashed,
         }
     }
 }

@@ -7,7 +7,7 @@ use beacon_chain::BlockError;
 use beacon_chain::test_utils::{AttestationStrategy, BlockStrategy};
 use beacon_types::test_utils::generate_deterministic_keypair;
 use beacon_types::{
-    BlobsList, DepositData, DepositRequest, Epoch, EthSpec, Hash256, Keypair, KzgProofs,
+    BlobsList, ChainSpec, DepositData, DepositRequest, Epoch, EthSpec, Hash256, Keypair, KzgProofs,
     MainnetEthSpec, PublicKeyBytes, SignatureBytes, SignedBeaconBlock, Slot, VariableList,
 };
 use bls::get_withdrawal_credentials;
@@ -540,28 +540,7 @@ async fn finalize_when_validator_activates() {
     // Signature must be valid or it will silently be rejected when the pending deposits are processed
     let new_keypair = generate_deterministic_keypair(VALIDATOR_COUNT as usize);
     let deposit_index = 0;
-
-    let mut deposit_data = DepositData {
-        pubkey: PublicKeyBytes::from(new_keypair.pk.clone()),
-        withdrawal_credentials: Hash256::from_slice(
-            &get_withdrawal_credentials(&new_keypair.pk, spec.bls_withdrawal_prefix_byte)[..],
-        ),
-        amount: 32 * GWEI_PER_ETH,
-        signature: SignatureBytes::empty(),
-    };
-    deposit_data.signature = deposit_data.create_signature(&new_keypair.sk, &spec);
-    assert!(
-        is_valid_deposit_signature(&deposit_data, &spec).is_ok(),
-        "Deposit signature should be valid"
-    );
-
-    let deposit_request = DepositRequest {
-        pubkey: deposit_data.pubkey,
-        withdrawal_credentials: deposit_data.withdrawal_credentials,
-        amount: deposit_data.amount,
-        signature: deposit_data.signature,
-        index: deposit_index,
-    };
+    let deposit_request = build_signed_deposit_request(deposit_index, &new_keypair, spec.clone());
 
     let (block, _) = harness
         .make_block_with_modifier(harness.get_current_state(), slot, |block| {
@@ -661,4 +640,32 @@ async fn process_block(
     }
 
     Ok(())
+}
+
+fn build_signed_deposit_request(
+    deposit_index: u64,
+    keypair: &Keypair,
+    spec: Arc<ChainSpec>,
+) -> DepositRequest {
+    let mut deposit_data = DepositData {
+        pubkey: PublicKeyBytes::from(keypair.pk.clone()),
+        withdrawal_credentials: Hash256::from_slice(
+            &get_withdrawal_credentials(&keypair.pk, spec.bls_withdrawal_prefix_byte)[..],
+        ),
+        amount: 32 * GWEI_PER_ETH,
+        signature: SignatureBytes::empty(),
+    };
+    deposit_data.signature = deposit_data.create_signature(&keypair.sk, &spec);
+    assert!(
+        is_valid_deposit_signature(&deposit_data, &spec).is_ok(),
+        "Deposit signature should be valid"
+    );
+
+    DepositRequest {
+        pubkey: deposit_data.pubkey,
+        withdrawal_credentials: deposit_data.withdrawal_credentials,
+        amount: deposit_data.amount,
+        signature: deposit_data.signature,
+        index: deposit_index,
+    }
 }

@@ -45,7 +45,7 @@ impl DepositData {
         verify_signature(&public_key, msg.as_slice(), &signature)
     }
 
-    pub fn deposit_pubkey_signature_message<S: StateReader>(
+    fn deposit_pubkey_signature_message<S: StateReader>(
         &self,
         state_reader: &S,
     ) -> Result<(PublicKey, Signature, B256), VerifyError> {

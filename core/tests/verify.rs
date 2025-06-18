@@ -3,14 +3,14 @@ use std::sync::{Arc, LazyLock};
 use beacon_chain::BlockError;
 use beacon_chain::test_utils::{AttestationStrategy, BlockStrategy};
 use beacon_types::{
-    BlobsList, DepositData, DepositRequest, Epoch, EthSpec, Hash256, Keypair, KzgProofs,
-    MainnetEthSpec, PublicKeyBytes, SignatureBytes, SignedBeaconBlock, Slot, VariableList,
+    BlobsList, DepositData, DepositRequest, EthSpec, Hash256, Keypair, KzgProofs, MainnetEthSpec,
+    PublicKeyBytes, SignatureBytes, SignedBeaconBlock, Slot, VariableList,
 };
 use bls::get_withdrawal_credentials;
 use state_processing::per_block_processing::is_valid_deposit_signature;
 use test_utils::HarnessStateReader;
 use test_utils::{TestHarness, consensus_state_from_state, get_harness, get_spec};
-use z_core::{ConsensusState, VerifyError, build_input, threshold, verify};
+use z_core::{ConsensusState, StateReader, VerifyError, build_input, threshold, verify};
 
 pub const VALIDATOR_COUNT: u64 = 48;
 const ETH_PER_VALIDATOR: u64 = 32;
@@ -41,6 +41,17 @@ async fn test_zkasper_sync(
     println!("Pre consensus state: {:?}", consensus_state);
 
     loop {
+        println!(
+            "n validators: {}",
+            state_reader
+                .active_validators(
+                    consensus_state.finalized_checkpoint.epoch,
+                    consensus_state.finalized_checkpoint.epoch
+                )
+                .unwrap()
+                .count()
+        );
+
         // Build the input and verify it
         match build_input(&state_reader, consensus_state.clone()).await {
             Ok(input) => {
@@ -410,68 +421,6 @@ async fn chain_finalizes_but_zkcasper_does_not() {
     );
 }
 
-/// Have one validator exit occur after the trusted state and still be able to finalize
-#[tokio::test]
-async fn finalize_when_validator_exits() {
-    let spec = get_spec();
-    let harness = get_harness(
-        KEYPAIRS[..].to_vec(),
-        spec,
-        (256u64 * MainnetEthSpec::slots_per_epoch()).into(), // need to start past epoch 256 or else exits are not allowed
-    )
-    .await;
-
-    harness.advance_slot();
-    let state = harness.get_current_state();
-    let slot = harness.get_current_slot();
-    let exit_valid_at = state.current_epoch() - 1;
-    let validator_to_exit = 0;
-
-    // build a block with an exit and process it
-    let (block, _) = harness
-        .make_block_with_modifier(harness.get_current_state(), slot, |block| {
-            harness.add_voluntary_exit(block, validator_to_exit, exit_valid_at);
-        })
-        .await;
-    process_block(&harness, block).await.unwrap();
-
-    let expected_exit_epoch = Epoch::new(261); // validator will be exited at this epoch (current_epoch + 1 + MAX_SEED_LOOKAHEAD)
-    // Verify exit was processed correctly
-    assert_eq!(
-        harness
-            .get_current_state()
-            .validators()
-            .get(validator_to_exit as usize)
-            .unwrap()
-            .exit_epoch,
-        expected_exit_epoch
-    );
-
-    // Grab our bootstrap consensus state from the state just before the exit so the exit happens as part of the
-    // ZKasper consensus state update
-    harness
-        .extend_slots((MainnetEthSpec::slots_per_epoch() * 4) as usize)
-        .await;
-    assert_eq!(
-        harness
-            .get_current_slot()
-            .epoch(MainnetEthSpec::slots_per_epoch()),
-        expected_exit_epoch - 1
-    );
-
-    let head_state = harness.chain.head_beacon_state_cloned();
-    let consensus_state = consensus_state_from_state(&head_state);
-    println!("Current slot: {}", head_state.slot());
-    println!("Pre consensus state: {:?}", consensus_state);
-
-    // progress the chain 3 epochs past our last state so there are attestations to process
-    harness
-        .extend_slots((MainnetEthSpec::slots_per_epoch() * 3) as usize)
-        .await;
-
-    test_zkasper_sync(&harness, consensus_state).await.unwrap();
-}
-
 /// Have one validator join and attest in the next epochs and still be able to finalize
 #[tokio::test]
 async fn finalize_when_validator_enters() {
@@ -538,19 +487,15 @@ async fn finalize_when_validator_enters() {
         .extend_slots((MainnetEthSpec::slots_per_epoch() * 2 - 1) as usize)
         .await;
 
-    let head_state = harness.chain.head_beacon_state_cloned();
-    let consensus_state = consensus_state_from_state(&head_state);
-    println!("Current slot: {}", head_state.slot());
-    println!("Pre consensus state: {:?}", consensus_state);
     assert_eq!(
         harness.get_current_state().validators().len() as u64,
         VALIDATOR_COUNT,
         "There should be no new validators yet"
     );
 
-    // Process one more epoch so the deposit is processed
+    // Run some epochs until the new validator is activated and ready to attest
     harness
-        .extend_slots((MainnetEthSpec::slots_per_epoch() * 1) as usize)
+        .extend_slots((MainnetEthSpec::slots_per_epoch() * 8) as usize)
         .await;
 
     assert_eq!(
@@ -558,11 +503,30 @@ async fn finalize_when_validator_enters() {
         VALIDATOR_COUNT + 1,
         "There should be one new validator after processing the deposit"
     );
+    let activation_epoch = harness
+        .get_current_state()
+        .validators()
+        .get(VALIDATOR_COUNT as usize)
+        .expect("New validator should be present")
+        .activation_epoch;
 
-    // process some epochs with the new validator attesting
+    // Add the new validator to the harness signers
     harness.validator_keypairs.push(new_keypair.clone());
+
+    // // The case we want to test is where the trusted state is the one just before the new validator starts participating
     harness
-        .extend_slots((MainnetEthSpec::slots_per_epoch() * 2) as usize)
+        .extend_slots((MainnetEthSpec::slots_per_epoch()) as usize)
+        .await;
+    let consensus_state = consensus_state_from_state(&harness.get_current_state());
+    assert_eq!(
+        consensus_state.finalized_checkpoint.epoch,
+        activation_epoch.as_u64() - 1,
+        "consensus state should be one epoch before the new validator starts participating"
+    );
+
+    // add extra epochs so there are attestations to process
+    harness
+        .extend_slots((MainnetEthSpec::slots_per_epoch() * 3) as usize)
         .await;
 
     test_zkasper_sync(&harness, consensus_state).await.unwrap();

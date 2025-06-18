@@ -241,7 +241,7 @@ fn beacon_attester_signing_domain<S: StateReader>(
     Ok(domain)
 }
 
-fn compute_signing_root<T: TreeHash>(ssz_object: &T, domain: Domain) -> Root {
+pub(crate) fn compute_signing_root<T: TreeHash>(ssz_object: &T, domain: Domain) -> Root {
     let object_root = ssz_object.tree_hash_root();
 
     #[derive(TreeHash)]
@@ -257,7 +257,7 @@ fn compute_signing_root<T: TreeHash>(ssz_object: &T, domain: Domain) -> Root {
     s.tree_hash_root()
 }
 
-fn fork_data_root<S: StateReader>(
+pub fn fork_data_root<S: StateReader>(
     state_reader: &S,
     genesis_validators_root: Root,
     epoch: Epoch,

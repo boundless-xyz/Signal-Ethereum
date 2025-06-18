@@ -10,6 +10,7 @@ mod bls;
 mod committee_cache;
 mod consensus_state;
 mod context;
+mod deposit_data;
 mod guest_context;
 #[cfg(feature = "host")]
 mod input_builder;
@@ -26,6 +27,7 @@ pub use bls::*;
 pub use committee_cache::*;
 pub use consensus_state::*;
 pub use context::*;
+pub use deposit_data::*;
 #[cfg(feature = "host")]
 pub use input_builder::*;
 use ssz_types::typenum::{U64, U131072};
@@ -50,6 +52,7 @@ pub type Domain = [u8; 32];
 pub type MaxValidatorsPerSlot = U131072; // 2**11
 pub type MaxCommitteesPerSlot = U64; // 2**6
 pub const BEACON_ATTESTER_DOMAIN: [u8; 4] = 1u32.to_le_bytes();
+pub const BEACON_DEPOSIT_DOMAIN: [u8; 4] = 3u32.to_le_bytes();
 pub const VALIDATOR_REGISTRY_LIMIT: u64 = 2u64.pow(40);
 pub const VALIDATOR_LIST_TREE_DEPTH: u32 = VALIDATOR_REGISTRY_LIMIT.ilog2() + 1; // 41
 pub const VALIDATOR_TREE_DEPTH: u32 = 3;

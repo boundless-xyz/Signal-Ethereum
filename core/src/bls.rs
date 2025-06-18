@@ -3,6 +3,7 @@ use alloc::vec::Vec;
 use blst::BLST_ERROR;
 use blst::min_pk as bls;
 use serde::{Deserialize, Serialize};
+use tree_hash_derive::TreeHash;
 
 // domain string, must match what is used in signing. This one should be good for beacon chain
 const DST: &[u8] = b"BLS_SIG_BLS12381G2_XMD:SHA-256_SSWU_RO_POP_";

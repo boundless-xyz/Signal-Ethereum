@@ -1,6 +1,7 @@
-use super::TrackingStateReader;
+use super::PreflightStateReader;
 use crate::HostReaderError::StateMissing;
 use crate::state_reader::state_provider::{BoxedStateProvider, FileProvider};
+use crate::{Ctx, StateProvider};
 use crate::{
     Epoch, HostContext, Root, StateReader, ValidatorIndex, ValidatorInfo, Version,
     beacon_state::mainnet::BeaconState,
@@ -99,8 +100,8 @@ impl HostStateReader {
         Ok(Self::new(provider.into(), context))
     }
 
-    pub fn track(&self, at_epoch: Epoch) -> TrackingStateReader<'_> {
-        TrackingStateReader::new(&self, at_epoch)
+    pub fn track(&self, at_epoch: Epoch) -> PreflightStateReader<'_, Self> {
+        PreflightStateReader::new(&self, at_epoch)
     }
 
     pub fn get_beacon_state_by_epoch(&self, epoch: Epoch) -> Result<&BeaconState, HostReaderError> {
@@ -170,4 +171,27 @@ impl StateReader for HostStateReader {
 /// Check if `validator` is active.
 fn is_active_validator(validator: &Validator, epoch: Epoch) -> bool {
     validator.activation_epoch <= epoch && epoch < validator.exit_epoch
+}
+
+impl StateProvider for HostStateReader {
+    fn context(&self) -> &HostContext {
+        &self.context
+    }
+
+    fn get_state_at_epoch_boundary(
+        &self,
+        epoch: Epoch,
+    ) -> Result<Option<BeaconState>, anyhow::Error> {
+        Ok(self
+            .state_cache
+            .get(epoch)
+            .map(|state| Some(state.clone()))?)
+    }
+
+    fn get_state_at_slot(&self, slot: u64) -> Result<Option<BeaconState>, anyhow::Error> {
+        Ok(self
+            .state_cache
+            .get(self.context.compute_epoch_at_slot(slot))
+            .map(|state| Some(state.clone()))?)
+    }
 }

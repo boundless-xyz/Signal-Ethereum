@@ -10,14 +10,14 @@ use crate::{ValidatorIndex, ValidatorInfo};
 
 #[cfg(feature = "host")]
 mod host_state_reader;
+#[cfg(feature = "host")]
+mod preflight_state_reader;
 mod ssz_state_reader;
 #[cfg(feature = "host")]
 mod state_provider;
-#[cfg(feature = "host")]
-mod tracking_state_reader;
 
 #[cfg(feature = "host")]
-pub use self::{host_state_reader::*, state_provider::*, tracking_state_reader::*};
+pub use self::{host_state_reader::*, preflight_state_reader::*, state_provider::*};
 pub use ssz_state_reader::*;
 
 #[derive(Error, Debug)]

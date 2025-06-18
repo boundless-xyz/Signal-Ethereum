@@ -463,14 +463,17 @@ async fn chain_finalizes_but_zkcasper_does_not() {
     );
 }
 
-/// Have one validator exit occur after the trusted state and still be able to finalize
+/// Have one validator exit occur during sync and still be able to finalize
+///
+/// Note this does NOT test the state patching functionality as the lookahead to finalize is smaller than the difference between
+/// when the exit epoch is set and the epoch it is set to (1 + MAX_SEED_LOOKAHEAD).
 #[test(tokio::test)]
 async fn finalize_when_validator_exits() {
     let spec = get_spec();
     let harness = get_harness(
         KEYPAIRS[..].to_vec(),
         spec,
-        (256u64 * MainnetEthSpec::slots_per_epoch()).into(), // need to start past epoch 256 or else exits are not allowed
+        (256u64 * MainnetEthSpec::slots_per_epoch()).into(), // need to start past epoch 256 or else exits are not allowed. Sorry this makes the test slow
     )
     .await;
 
@@ -515,7 +518,12 @@ async fn finalize_when_validator_exits() {
     test_zkasper_sync(&harness, consensus_state).await.unwrap();
 }
 
-/// Have one validator activate and attest in the next epochs and still be able to finalize
+/// Have one validator deposit, activate and then start attesting to new blocks
+///
+/// Note this does NOT test the state patching functionality as the validator is added to the validator set
+/// and its activation epoch value is set ahead of time.
+/// As long as the lookahead to finalize is smaller than the difference between when the activation epoch is set and the value it is set to
+/// ZKasper will be able to handle it correctly.
 #[tokio::test]
 async fn finalize_when_validator_activates() {
     let spec = get_spec();

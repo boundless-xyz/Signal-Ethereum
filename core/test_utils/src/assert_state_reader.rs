@@ -53,7 +53,11 @@ impl<S: StateReader, R: StateReader> StateReader for AssertStateReader<'_, S, R>
                     assert_eq!(a.0, b.0); // only ensure the same validators are returned, do not check the validator info
                     Some(a)
                 }
-                (a, b) => panic!("Wrong size: empty={}, empty={}", a.is_none(), b.is_none()),
+                (a, b) => panic!(
+                    "Activate validator set size mismatch. Left={:?}, Right={:?}",
+                    a.map(|v| v.0),
+                    b.map(|v| v.0)
+                ),
             }
         }))
     }

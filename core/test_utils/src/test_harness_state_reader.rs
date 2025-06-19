@@ -12,10 +12,10 @@ use beacon_types::{EthSpec, Hash256};
 use ethereum_consensus::electra;
 use ethereum_consensus::phase0::SignedBeaconBlockHeader;
 use ethereum_consensus::types::mainnet::BeaconBlock;
-use tracing::trace;
 use std::ops::{Deref, DerefMut};
 use std::str::FromStr;
 use std::sync::LazyLock;
+use tracing::trace;
 use z_core::{
     ChainReader, ConsensusState, HostContext, Root, Slot, StateProvider, StateProviderError,
     StateRef,

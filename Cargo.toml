@@ -18,7 +18,7 @@ overflow-checks = false # Skip overflow checks for better performance
 [workspace.dependencies]
 methods = { path = "./methods" }
 
-alloy-primitives = { version = "0.8" , default-features = false}
+alloy-primitives = { version = "0.8.25" , default-features = false}
 bincode = { version = "1.3" }
 hex = { version = "0.4" }
 bytemuck = { version = "1.14" }
@@ -37,8 +37,8 @@ anyhow = "1.0.57"
 thiserror = "2.0"
 tokio = { version = "1.45", features = ["full"] }
 
-beacon_chain = { git = "https://github.com/ec2/lighthouse.git", rev = "1c72cc671de001bf96cca212c8d0c25e22603907" }
-beacon_types = { package = "types", git = "https://github.com/ec2/lighthouse.git", rev = "1c72cc671de001bf96cca212c8d0c25e22603907", default-features = false, features = ["legacy-arith"] }
+beacon_chain = { git = "https://github.com/ec2/lighthouse.git", rev = "68f38bd1bf06149579ec369116e509ecddabebec" }
+beacon_types = { package = "types", git = "https://github.com/ec2/lighthouse.git", rev = "68f38bd1bf06149579ec369116e509ecddabebec", default-features = false, features = ["legacy-arith"] }
 
 [patch."https://github.com/ralexstokes/ssz-rs"]
 # Get the merkle tree empty node virtualization so non-trivial merkle trees actually fit in memory

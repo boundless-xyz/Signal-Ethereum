@@ -50,11 +50,11 @@ impl<S: StateReader, R: StateReader> StateReader for AssertStateReader<'_, S, R>
             match (iter_a.next(), iter_b.next()) {
                 (None, None) => None,
                 (Some(a), Some(b)) => {
-                    assert_eq!(a.0, b.0); // only ensure the same validators are returned, do not check the validator info
+                    assert_eq!(a.0, b.0); // only ensure the same validator indices are returned, do not check the validator info
                     Some(a)
                 }
                 (a, b) => panic!(
-                    "Activate validator set size mismatch. Left={:?}, Right={:?}",
+                    "One active validator iterator ended while the other has remaining validators. Left={:?}, Right={:?}",
                     a.map(|v| v.0),
                     b.map(|v| v.0)
                 ),

@@ -55,7 +55,7 @@ impl<S: StateReader, R: StateReader> StateReader for AssertStateReader<'_, S, R>
                     Some(a)
                 }
                 (a, b) => panic!(
-                    "Activate validator set size mismatch. Left={:?}, Right={:?}",
+                    "One active validator iterator ended while the other has remaining validators. Left={:?}, Right={:?}",
                     a.map(|v| v.0),
                     b.map(|v| v.0)
                 ),

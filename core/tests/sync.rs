@@ -1,6 +1,11 @@
 //! Tests the ability of ZKasper to sync with a beacon chain through various scenarios.
 //!
-//! This test suite makes heavy use of the Lighthouse test harness to create a valid beacon chain in different states
+//! The basic breakdown of each of these tests is to create a test harness and call various functions to create a chain that
+//! has experienced certain events (e.g. finalization, validator exits, etc) that are valid in a beacon chain.
+//! The function `test_zkasper_sync` is then called to check if the ZKasper input building and state transition process is able
+//! to handle these scenarios correctly.
+use std::sync::{Arc, LazyLock};
+
 use anyhow::anyhow;
 use beacon_chain::BlockError;
 use beacon_chain::test_utils::{AttestationStrategy, BlockStrategy};
@@ -338,13 +343,6 @@ async fn finalize_after_inactivity_leak() {
     )
     .await
     .unwrap();
-    // harness
-    //     .extend_chain(
-    //         (((target_epoch - current_epoch) * harness.slots_per_epoch()) - 1).into(),
-    //         BlockStrategy::OnCanonicalHead,
-    //         AttestationStrategy::SomeValidators(attesters),
-    //     )
-    //     .await;
 
     assert!(
         harness
@@ -476,7 +474,7 @@ async fn chain_finalizes_but_zkcasper_does_not() {
 #[test(tokio::test)]
 async fn finalize_when_validator_exits() {
     let spec = get_spec();
-    let harness = get_harness(
+    let mut harness = get_harness(
         KEYPAIRS[..].to_vec(),
         spec,
         (256u64 * MainnetEthSpec::slots_per_epoch()).into(), // need to start past epoch 256 or else exits are not allowed. Sorry this makes the test slow
@@ -485,13 +483,14 @@ async fn finalize_when_validator_exits() {
 
     let consensus_state = consensus_state_from_state(&harness.get_current_state());
 
+    let validator_to_exit = 0;
+
+    // build a block with an exit and process it
     harness.advance_slot();
     let state = harness.get_current_state();
     let slot = harness.get_current_slot();
     let exit_valid_at = state.current_epoch() - 1;
-    let validator_to_exit = 0;
 
-    // build a block with an exit and process it
     let (block, _) = harness
         .make_block_with_modifier(harness.get_current_state(), slot, |block| {
             harness.add_voluntary_exit(block, validator_to_exit, exit_valid_at);
@@ -512,9 +511,7 @@ async fn finalize_when_validator_exits() {
     );
 
     // Run until the exit epoch plus a few more so post-exit attestations are processed
-    harness
-        .extend_slots((MainnetEthSpec::slots_per_epoch() * 8) as usize)
-        .await;
+    advance_finalizing(&mut harness, Epochs(8)).await.unwrap();
     assert_eq!(
         harness.get_current_state().current_epoch(),
         expected_exit_epoch.as_u64() + 3,
@@ -712,6 +709,64 @@ async fn finalize_with_validator_activation_and_delayed_finality() {
     advance_non_finalizing(&mut harness, Epochs(8))
         .await
         .unwrap();
+
+    // Then start finalizing again
+    advance_finalizing(&mut harness, Epochs(3)).await.unwrap();
+
+    test_zkasper_sync(&harness, consensus_state).await.unwrap();
+}
+
+/// Have one validator exit occur during sync and have finality delayed by long enough such that
+/// the a checkpoint doesn't finalize until after the validator has exited. This means the attestations committees
+/// occurring after the exit be different to if the exit hadn't happened and ZKasper must be able to handle this
+#[tokio::test]
+async fn finalize_when_validator_exits_and_delayed_finality() {
+    let spec = get_spec();
+    let mut harness = get_harness(
+        KEYPAIRS[..].to_vec(),
+        spec,
+        (256u64 * MainnetEthSpec::slots_per_epoch()).into(), // need to start past epoch 256 or else exits are not allowed. Sorry this makes the test slow
+    )
+    .await;
+
+    let consensus_state = consensus_state_from_state(&harness.get_current_state());
+    let validator_to_exit = 0;
+
+    // ensure we are in the middle of a non-finalizing period
+    advance_non_finalizing(&mut harness, Epochs(5))
+        .await
+        .unwrap();
+
+    // build a block with an exit and process it
+    harness.advance_slot();
+    let state = harness.get_current_state();
+    let slot = harness.get_current_slot();
+    let exit_valid_at = state.current_epoch() - 1;
+
+    let (block, _) = harness
+        .make_block_with_modifier(harness.get_current_state(), slot, |block| {
+            harness.add_voluntary_exit(block, validator_to_exit, exit_valid_at);
+        })
+        .await;
+    process_block(&harness, block).await.unwrap();
+
+    let expected_exit_epoch = Epoch::new(266); // validator will be exited at this epoch (current_epoch + 1 + MAX_SEED_LOOKAHEAD)
+    // Verify exit was processed correctly
+    assert_eq!(
+        harness
+            .get_current_state()
+            .validators()
+            .get(validator_to_exit as usize)
+            .unwrap()
+            .exit_epoch,
+        expected_exit_epoch
+    );
+
+    // Advance beyond `expected_exit_epoch` without finalizing
+    advance_non_finalizing(&mut harness, Epochs(8))
+        .await
+        .unwrap();
+    assert!(harness.get_current_state().current_epoch() > expected_exit_epoch);
 
     // Then start finalizing again
     advance_finalizing(&mut harness, Epochs(3)).await.unwrap();

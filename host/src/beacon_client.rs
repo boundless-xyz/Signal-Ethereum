@@ -12,30 +12,22 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// TODO(ec2): Maybe we just redefine this so we can remove the beacon_api_client dependency altogether
-use beacon_api_client::FinalityCheckpoints;
-
-use crate::beacon_client::middleware::RateLimitMiddleware;
 use ethereum_consensus::{
-    deneb::{Epoch, Slot},
-    phase0::SignedBeaconBlockHeader,
-    primitives::Root,
-    serde::as_str,
-    types::mainnet::BeaconBlock,
+    phase0::SignedBeaconBlockHeader, primitives::Root, serde::as_str, types::mainnet::BeaconBlock,
     Fork,
 };
-use futures::{Stream, StreamExt};
+use http::StatusCode;
 use http_cache_reqwest::{CACacheManager, Cache, CacheMode, HttpCache, HttpCacheOptions};
-use reqwest::header::{HeaderMap, HeaderValue};
-use reqwest_eventsource::{Event, EventSource};
+use middleware::RateLimitMiddleware;
 use reqwest_middleware::{ClientBuilder, ClientWithMiddleware};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::fmt::{self, Display};
+use std::fmt::Display;
 use std::path::PathBuf;
-use tracing::{info, warn};
+use std::result::Result as StdResult;
+use tracing::warn;
 use url::Url;
-use z_core::{mainnet::BeaconState, ChainReader};
+use z_core::{mainnet::BeaconState, ChainReader, Checkpoint, ConsensusState};
 
 /// Errors returned by the [BeaconClient].
 #[derive(Debug, thiserror::Error)]
@@ -52,9 +44,12 @@ pub enum Error {
     SszDeserialize(#[from] ssz_rs::DeserializeError),
 }
 
+/// Alias for Results returned by client methods.
+pub type Result<T> = StdResult<T, Error>;
+
 /// Response returned by the `get_block_header` API.
 #[derive(Debug, Serialize, Deserialize)]
-pub struct GetBlockHeaderResponse {
+pub struct BlockHeaderResponse {
     pub root: Root,
     pub canonical: bool,
     pub header: SignedBeaconBlockHeader,
@@ -62,12 +57,26 @@ pub struct GetBlockHeaderResponse {
 
 /// Response returned by the `get_block_header` API.
 #[derive(Debug, Serialize, Deserialize)]
-pub struct GetBlockResponse {
+pub struct BlockResponse {
     pub message: BeaconBlock,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CheckpointResponse {
+    pub root: Root,
+    #[serde(with = "as_str")]
+    pub epoch: u64,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct FinalizedCheckpointResponse {
+    pub previous_justified: CheckpointResponse,
+    pub current_justified: CheckpointResponse,
+    pub finalized: CheckpointResponse,
+}
+
 /// Wrapper returned by the API calls.
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 struct Response<T> {
     data: T,
     #[serde(flatten)]
@@ -87,76 +96,6 @@ struct VersionedResponse<T> {
 pub struct BeaconClient {
     http: ClientWithMiddleware,
     endpoint: Url,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum EventTopic {
-    Head,
-    Block,
-    FinalizedCheckpoint,
-}
-
-impl fmt::Display for EventTopic {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            EventTopic::Head => write!(f, "head"),
-            EventTopic::Block => write!(f, "block"),
-            EventTopic::FinalizedCheckpoint => write!(f, "finalized_checkpoint"),
-        }
-    }
-}
-
-#[derive(PartialEq, Debug, Serialize, Clone)]
-pub enum EventKind {
-    Head(SseHead),
-    Block(SseBlock),
-    FinalizedCheckpoint(SseFinalizedCheckpoint),
-}
-
-impl EventKind {
-    pub fn from_sse_bytes(event: &str, data: &str) -> Result<Self, String> {
-        match event {
-            "block" => Ok(EventKind::Block(
-                serde_json::from_str(data).map_err(|e| format!("Block: {:?}", e))?,
-            )),
-            "finalized_checkpoint" => Ok(EventKind::FinalizedCheckpoint(
-                serde_json::from_str(data).map_err(|e| format!("Finalized Checkpoint: {:?}", e))?,
-            )),
-            "head" => Ok(EventKind::Head(
-                serde_json::from_str(data).map_err(|e| format!("Head: {:?}", e))?,
-            )),
-            _ => Err("Could not parse event tag".to_string()),
-        }
-    }
-}
-
-#[derive(PartialEq, Debug, Serialize, Deserialize, Clone)]
-pub struct SseFinalizedCheckpoint {
-    pub block: Root,
-    pub state: Root,
-    #[serde(with = "as_str")]
-    pub epoch: Epoch,
-    pub execution_optimistic: bool,
-}
-
-#[derive(PartialEq, Debug, Serialize, Deserialize, Clone)]
-pub struct SseHead {
-    #[serde(with = "as_str")]
-    pub slot: Slot,
-    pub block: Root,
-    pub state: Root,
-    pub current_duty_dependent_root: Root,
-    pub previous_duty_dependent_root: Root,
-    pub epoch_transition: bool,
-    pub execution_optimistic: bool,
-}
-#[derive(PartialEq, Debug, Serialize, Deserialize, Clone)]
-pub struct SseBlock {
-    #[serde(with = "as_str")]
-    pub slot: Slot,
-    pub block: Root,
-    pub execution_optimistic: bool,
 }
 
 mod middleware {
@@ -263,53 +202,52 @@ impl BeaconClient {
         BeaconClientBuilder::new(endpoint)
     }
 
-    async fn http_get<T: serde::de::DeserializeOwned>(&self, path: &str) -> Result<T, Error> {
+    async fn get_json<T: serde::de::DeserializeOwned>(&self, path: &str) -> Result<T> {
         let target = self.endpoint.join(path)?;
         let resp = self.http.get(target).send().await?;
         let value = resp.error_for_status()?.json().await?;
         Ok(value)
     }
 
-    async fn http_get_ssz(&self, path: &str) -> Result<Vec<u8>, Error> {
-        let target = self.endpoint.join(path)?;
-        let mut headers = HeaderMap::new();
-        headers.insert(
-            reqwest::header::ACCEPT,
-            HeaderValue::from_static("application/octet-stream"),
-        );
-        let resp = self.http.get(target).headers(headers).send().await?;
-        let value = resp
-            .error_for_status()?
-            .bytes()
-            .await?
-            .into_iter()
-            .collect();
-        Ok(value)
-    }
-
-    /// Retrieves block details for given block id.
+    /// Retrieves block details for the given block ID.
+    ///
+    /// Block ID can be 'head', 'genesis', 'finalized', <slot>, or <root>.
     #[tracing::instrument(skip(self), fields(block_id = %block_id))]
     pub async fn get_block_header(
         &self,
         block_id: impl Display,
-    ) -> Result<SignedBeaconBlockHeader, Error> {
+    ) -> Result<Option<BlockHeaderResponse>> {
         let path = format!("eth/v1/beacon/headers/{block_id}");
-        let result: Response<GetBlockHeaderResponse> = self.http_get(&path).await?;
-        Ok(result.data.header)
+        match self.get_json::<Response<_>>(&path).await {
+            Ok(resp) => Ok(Some(resp.data)),
+            Err(Error::Http(err)) => match err.status() {
+                Some(StatusCode::NOT_FOUND) => Ok(None),
+                _ => Err(err.into()),
+            },
+            Err(err) => Err(err),
+        }
     }
 
     /// Retrieves block details for given block id.
+    ///
+    /// Block ID can be 'head', 'genesis', 'finalized', <slot>, or <root>.
     #[tracing::instrument(skip(self), fields(block_id = %block_id))]
-    pub async fn get_block(&self, block_id: impl Display) -> Result<BeaconBlock, Error> {
+    pub async fn get_block(&self, block_id: impl Display) -> Result<Option<BeaconBlock>> {
         let path = format!("eth/v2/beacon/blocks/{block_id}");
-        let result: Response<GetBlockResponse> = self.http_get(&path).await?;
-        Ok(result.data.message)
+        match self.get_json::<Response<BlockResponse>>(&path).await {
+            Ok(resp) => Ok(Some(resp.data.message)),
+            Err(Error::Http(err)) => match err.status() {
+                Some(StatusCode::NOT_FOUND) => Ok(None),
+                _ => Err(err.into()),
+            },
+            Err(err) => Err(err),
+        }
     }
 
     #[tracing::instrument(skip(self), fields(state_id = %state_id))]
-    pub async fn get_beacon_state(&self, state_id: impl Display) -> Result<BeaconState, Error> {
+    pub async fn get_beacon_state(&self, state_id: impl Display) -> Result<BeaconState> {
         let path = format!("eth/v2/debug/beacon/states/{state_id}");
-        let result: VersionedResponse<BeaconState> = self.http_get(&path).await?;
+        let result: VersionedResponse<BeaconState> = self.get_json(&path).await?;
         if result.version.to_string() != result.inner.data.version().to_string() {
             warn!(
                 "FORK: {:?}, Version mismatch: {} != {}",
@@ -323,73 +261,23 @@ impl BeaconClient {
     }
 
     #[tracing::instrument(skip(self), fields(state_id = %state_id))]
-    pub async fn get_beacon_state_ssz_bytes(
-        &self,
-        state_id: impl Display,
-    ) -> Result<Vec<u8>, Error> {
-        let path = format!("eth/v2/debug/beacon/states/{state_id}");
-        let result: Vec<u8> = self.http_get_ssz(&path).await?;
-        Ok(result)
-    }
-
-    #[tracing::instrument(skip(self), fields(state_id = %state_id))]
-    pub async fn get_beacon_state_ssz(&self, state_id: impl Display) -> Result<BeaconState, Error> {
-        info!("Get beacon state ssz: {}", state_id);
-        let state_bytes = self.get_beacon_state_ssz_bytes(state_id).await?;
-        let state: BeaconState = ssz_rs::deserialize(&state_bytes)?;
-        Ok(state)
-    }
-
-    #[tracing::instrument(skip(self), fields(state_id = %state_id))]
     pub async fn get_finality_checkpoints(
         &self,
         state_id: impl Display,
-    ) -> Result<FinalityCheckpoints, Error> {
+    ) -> Result<FinalizedCheckpointResponse> {
         let path = format!("eth/v1/beacon/states/{state_id}/finality_checkpoints");
-        let result: Response<FinalityCheckpoints> = self.http_get(&path).await?;
+        let result: Response<FinalizedCheckpointResponse> = self.get_json(&path).await?;
 
         Ok(result.data)
     }
+}
 
-    /// `GET events?topics`
-    pub async fn get_events(
-        &self,
-        topic: &[EventTopic],
-    ) -> Result<impl Stream<Item = Result<EventKind, String>>, String> {
-        let mut path = format!("eth/v1/events");
-
-        let topic_string = topic
-            .iter()
-            .map(|i| i.to_string())
-            .collect::<Vec<_>>()
-            .join(",");
-        path = format!("{path}?topics={}", topic_string.as_str());
-
-        info!("Get Events: {path}");
-
-        let mut es = EventSource::get(self.endpoint.join(&path).unwrap());
-        // If we don't await `Event::Open` here, then the consumer
-        // will not get any Message events until they start awaiting the stream.
-        // This is a way to register the stream with the sse server before
-        // message events start getting emitted.
-        while let Some(event) = es.next().await {
-            match event {
-                Ok(Event::Open) => break,
-                Err(err) => return Err(format!("{:?}", err)),
-                // This should never happen as we are guaranteed to get the
-                // Open event before any message starts coming through.
-                Ok(Event::Message(_)) => continue,
-            }
+impl From<CheckpointResponse> for Checkpoint {
+    fn from(response: CheckpointResponse) -> Self {
+        Self {
+            epoch: response.epoch,
+            root: response.root,
         }
-        Ok(Box::pin(es.filter_map(|event| async move {
-            match event {
-                Ok(Event::Open) => None,
-                Ok(Event::Message(message)) => {
-                    Some(EventKind::from_sse_bytes(&message.event, &message.data))
-                }
-                Err(err) => Some(Err(format!("{:?}", err))),
-            }
-        })))
     }
 }
 
@@ -397,43 +285,21 @@ impl ChainReader for BeaconClient {
     async fn get_block_header(
         &self,
         block_id: impl Display,
-    ) -> Result<SignedBeaconBlockHeader, anyhow::Error> {
-        self.get_block_header(block_id)
-            .await
-            .map_err(|e| anyhow::anyhow!(e))
+    ) -> anyhow::Result<Option<SignedBeaconBlockHeader>> {
+        let resp = self.get_block_header(block_id).await?;
+        Ok(resp.map(|resp| resp.header))
     }
 
-    async fn get_block(&self, block_id: impl Display) -> Result<BeaconBlock, anyhow::Error> {
-        self.get_block(block_id)
-            .await
-            .map_err(|e| anyhow::anyhow!(e))
+    async fn get_block(&self, block_id: impl Display) -> anyhow::Result<Option<BeaconBlock>> {
+        Ok(self.get_block(block_id).await?)
     }
 
-    async fn get_consensus_state(
-        &self,
-        state_id: impl Display,
-    ) -> Result<z_core::ConsensusState, anyhow::Error> {
-        let FinalityCheckpoints {
-            finalized,
-            current_justified,
-            previous_justified,
-        } = self
-            .get_finality_checkpoints(state_id)
-            .await
-            .map_err(|e| anyhow::anyhow!(e))?;
-        Ok(z_core::ConsensusState {
-            finalized_checkpoint: z_core::Checkpoint {
-                epoch: finalized.epoch,
-                root: finalized.root,
-            },
-            current_justified_checkpoint: z_core::Checkpoint {
-                epoch: current_justified.epoch,
-                root: current_justified.root,
-            },
-            previous_justified_checkpoint: z_core::Checkpoint {
-                epoch: previous_justified.epoch,
-                root: previous_justified.root,
-            },
+    async fn get_consensus_state(&self, state_id: impl Display) -> anyhow::Result<ConsensusState> {
+        let resp = self.get_finality_checkpoints(state_id).await?;
+        Ok(ConsensusState {
+            previous_justified_checkpoint: resp.previous_justified.into(),
+            current_justified_checkpoint: resp.current_justified.into(),
+            finalized_checkpoint: resp.finalized.into(),
         })
     }
 }

@@ -1,7 +1,10 @@
 use crate::{Checkpoint, Link, ensure};
+use alloy_rlp::{RlpDecodable, RlpEncodable};
 use thiserror::Error;
 
-#[derive(Debug, Clone, Eq, PartialEq, serde::Serialize, serde::Deserialize, Default)]
+#[derive(
+    Debug, Clone, Eq, PartialEq, serde::Serialize, serde::Deserialize, RlpEncodable, RlpDecodable,
+)]
 pub struct ConsensusState {
     pub previous_justified_checkpoint: Checkpoint,
     pub current_justified_checkpoint: Checkpoint,
@@ -23,6 +26,60 @@ impl ConsensusState {
     pub fn is_consistent(&self) -> bool {
         self.finalized_checkpoint.epoch < self.current_justified_checkpoint.epoch
             && self.current_justified_checkpoint.epoch >= self.previous_justified_checkpoint.epoch
+    }
+
+    /// Returns the justification which lead to the transition self->other if any.
+    pub fn justification(&self, other: &Self) -> Option<Link> {
+        assert!(self.is_consistent() && other.is_consistent());
+        // other must be newer or equal
+        assert!(
+            self.finalized_checkpoint.epoch < other.finalized_checkpoint.epoch
+                || self.finalized_checkpoint == other.finalized_checkpoint
+        );
+        assert!(
+            self.previous_justified_checkpoint.epoch < other.previous_justified_checkpoint.epoch
+                || self.previous_justified_checkpoint == other.previous_justified_checkpoint
+        );
+        assert!(
+            self.current_justified_checkpoint.epoch < other.current_justified_checkpoint.epoch
+                || self.current_justified_checkpoint == other.current_justified_checkpoint
+        );
+
+        // any new justification will change current_justified_checkpoint
+        if self.current_justified_checkpoint == other.current_justified_checkpoint {
+            assert_eq!(self.finalized_checkpoint, other.finalized_checkpoint);
+
+            return None;
+        }
+
+        let target = other.current_justified_checkpoint;
+
+        // if a finalization has happened this must have been the source
+        if self.finalized_checkpoint != other.finalized_checkpoint {
+            assert!(
+                other.finalized_checkpoint == self.current_justified_checkpoint
+                    || other.finalized_checkpoint == self.previous_justified_checkpoint
+            );
+
+            return Some(Link {
+                source: other.finalized_checkpoint,
+                target,
+            });
+        }
+
+        // if nothing was finalized, we have at least one skipped epoch
+        assert_eq!(
+            self.current_justified_checkpoint,
+            self.previous_justified_checkpoint
+        );
+        assert!(
+            other.current_justified_checkpoint.epoch - self.current_justified_checkpoint.epoch > 1
+        );
+
+        Some(Link {
+            source: self.current_justified_checkpoint,
+            target,
+        })
     }
 
     /// Apply a supermajority link to the current consensus state to obtain a new consensus state.
@@ -54,7 +111,7 @@ impl ConsensusState {
                 Ok(ConsensusState {
                     finalized_checkpoint: link.source,
                     current_justified_checkpoint: link.target,
-                    previous_justified_checkpoint: link.source,
+                    previous_justified_checkpoint: self.current_justified_checkpoint,
                 })
             }
             // Case 2: Justification only. This occurs when the source is an already finalized checkpoint

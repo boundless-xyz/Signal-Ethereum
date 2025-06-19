@@ -1,6 +1,5 @@
-use beacon_api_client::{BlockId, StateId};
 use clap::{Parser, ValueEnum};
-use ethereum_consensus::electra::{Context, Epoch};
+use ethereum_consensus::electra;
 use methods::BEACON_GUEST_ELF;
 use risc0_zkvm::{default_executor, ExecutorEnv};
 use ssz_rs::prelude::*;
@@ -9,11 +8,12 @@ use std::{
     fs,
     path::PathBuf,
 };
-use tracing::{info, warn};
+use tracing::info;
 use url::Url;
 use z_core::{
-    build_input, verify, ChainReader, ConsensusState, GuestContext, HostStateReader, Input, Root,
-    StateInput,
+    verify, CacheStateProvider, Checkpoint, ConsensusState, Ctx, Epoch, GuestContext, HostContext,
+    HostStateReader, Input, InputBuilder, PreflightStateReader, StateInput, StateProvider,
+    StateReader,
 };
 use z_core_test_utils::AssertStateReader;
 
@@ -80,9 +80,6 @@ enum Command {
         /// Number of iterations to run
         #[clap(short('i'), long, default_value_t = 1)]
         iterations: u64,
-        /// If the provided trusted epoch does not have its state cached, use this block root to find the state
-        #[clap(long)]
-        trusted_block_root: Option<Root>,
     },
 }
 
@@ -111,7 +108,7 @@ async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
 
     // Note: The part of the context we use for mainnet and sepolia is the same.
-    let context = Context::for_mainnet();
+    let context: HostContext = electra::Context::for_mainnet().into();
 
     let beacon_client = BeaconClient::builder(args.beacon_api)
         .with_cache(args.data_dir.join("http"))
@@ -127,70 +124,33 @@ async fn main() -> anyhow::Result<()> {
         &context.clone().into(),
     )?;
 
-    let reader = HostStateReader::new(provider.clone().into(), context.clone().into());
+    let reader = HostStateReader::new(CacheStateProvider::new(provider));
 
     match args.command {
-        Command::Verify {
-            mode,
-            iterations,
-            trusted_block_root,
-        } => {
-            let trusted_state = match reader.get_beacon_state_by_epoch(args.trusted_epoch) {
-                Ok(state) => state,
-                Err(_) => {
-                    let block = if let Some(root) = trusted_block_root {
-                        warn!(
-                            "No state found for epoch {}, trying to fetch via trusted block root: {}",
-                            args.trusted_epoch, root
-                        );
-
-                        beacon_client.get_block(BlockId::Root(root)).await?
-                    } else {
-                        return Err(anyhow::anyhow!(
-                            "No state found for epoch {}, and no trusted block root provided",
-                            args.trusted_epoch
-                        ));
-                    };
-
-                    provider.cache_state_at(StateId::Root(block.state_root()))?;
-
-                    // TODO(ec2): We should check if the state corresponds to the trusted epoch
-                    reader
-                        .get_beacon_state_by_epoch(args.trusted_epoch)
-                        .expect("Failed to establish trusted state")
-                }
-            };
-
-            // Find the first ConsensusState in which the trusted epoch is the finalized checkpoint
-            // This will be our initial consensus state
-            let mut consensus_state = ConsensusState::default();
-            let trusted_state_slot = trusted_state.slot();
-            for i in (trusted_state_slot + context.slots_per_epoch
-                ..=trusted_state_slot + context.slots_per_epoch * 3)
-                .step_by(context.slots_per_epoch as usize)
-            {
-                let curr_state = beacon_client.get_consensus_state(StateId::Slot(i)).await?;
-                if curr_state.finalized_checkpoint.epoch == args.trusted_epoch {
-                    consensus_state = curr_state;
-                    break;
-                }
-            }
-            assert!(
-                consensus_state != ConsensusState::default(),
-                "No consensus state found for trusted epoch"
-            );
-            info!(
-                "Trusted Beacon State slot: {}, root: {}",
-                trusted_state.slot(),
+        Command::Verify { mode, iterations } => {
+            let trusted_state = reader
+                .get_state_at_slot(context.compute_start_slot_at_epoch(args.trusted_epoch))?;
+            let epoch_boundary_slot = trusted_state.latest_block_header().slot;
+            let trusted_beacon_block = beacon_client.get_block(epoch_boundary_slot).await?.unwrap();
+            assert_eq!(
+                trusted_beacon_block.state_root(),
                 trusted_state.hash_tree_root().unwrap()
             );
+            let mut trusted_checkpoint = Checkpoint {
+                epoch: args.trusted_epoch,
+                root: trusted_beacon_block.hash_tree_root()?,
+            };
+            info!("Trusted checkpoint: {}", trusted_checkpoint);
+
+            let builder = InputBuilder::new(context, beacon_client.clone());
 
             for i in 0..iterations {
                 tracing::info!("Iteration: {}", i);
-                let input = build_input(&beacon_client, consensus_state.clone()).await?;
+                let input = builder.build(trusted_checkpoint).await?;
                 tracing::debug!("Input: {:?}", input);
 
-                consensus_state = run_verify(mode, &reader, input.clone())?; // will panic if verification fails
+                let consensus_state = run_verify(mode, &reader, input.clone())?; // will panic if verification fails
+                trusted_checkpoint = consensus_state.finalized_checkpoint;
             }
         }
     }
@@ -198,22 +158,22 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn run_verify(
+fn run_verify<R: StateReader + StateProvider>(
     mode: ExecMode,
-    host_reader: &HostStateReader,
+    host_reader: &R,
     input: Input,
 ) -> anyhow::Result<ConsensusState> {
     info!("Running Verification in mode: {mode}");
 
-    let reader = host_reader.track(input.consensus_state.finalized_checkpoint.epoch);
+    let reader = PreflightStateReader::new(host_reader, input.state.finalized_checkpoint);
     let consensus_state = verify(&reader, input.clone()).unwrap(); // will panic if verification fails
     info!("Native Verification Success!");
 
     if mode == ExecMode::Ssz || mode == ExecMode::R0vm {
-        let state_input = reader.to_input(host_reader);
+        let state_input = reader.to_input();
         let ssz_reader = state_input
             .clone()
-            .into_state_reader(input.trusted_checkpoint_state_root, &GuestContext)?;
+            .into_state_reader(&GuestContext, input.state.finalized_checkpoint)?;
         let ssz_consensus_state =
             verify(&AssertStateReader::new(&ssz_reader, &reader), input.clone()).unwrap(); // will panic if verification fails
         info!("Ssz Verification Success!");

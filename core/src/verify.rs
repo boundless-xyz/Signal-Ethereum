@@ -1,8 +1,8 @@
 use crate::{
     AttestationData, BEACON_ATTESTER_DOMAIN, BlsError, CommitteeCache, Domain, Epoch, Input,
     PublicKey, Root, ShuffleData, Signature, StateReader, StateTransitionError, ValidatorIndex,
-    ValidatorInfo, Version, consensus_state::ConsensusState, ensure,
-    fast_aggregate_verify_pre_aggregated, threshold::threshold,
+    ValidatorInfo, consensus_state::ConsensusState, ensure, fast_aggregate_verify_pre_aggregated,
+    threshold::threshold,
 };
 use alloc::collections::BTreeMap;
 use tracing::{debug, info};
@@ -55,22 +55,18 @@ pub fn verify<S: StateReader>(
     input: Input,
 ) -> Result<ConsensusState, VerifyError> {
     let Input {
-        consensus_state,
-        link,
+        mut state,
+        links: link,
         attestations,
-        ..
     } = input;
     ensure!(
         link.len() == attestations.len(),
         VerifyError::Other("Link and attestations must be the same length".to_string())
     );
-    // TODO(ec2): I think we need to enforce here that the trusted state is less than or equal to state.finalized_checkpoint epoch
-    // TODO(ec2): We can also bound the number of state patches to the k in k-finality case
+
     let context = state_reader.context();
+    let trusted_checkpoint = state.finalized_checkpoint;
 
-    let trusted_epoch = consensus_state.finalized_checkpoint.epoch;
-
-    // 1. Attestation processing
     let mut validator_cache: BTreeMap<Epoch, BTreeMap<ValidatorIndex, &ValidatorInfo>> =
         BTreeMap::new();
 
@@ -91,12 +87,7 @@ pub fn verify<S: StateReader>(
                     committee_caches
                         .entry(attestation_epoch)
                         .or_insert_with(|| {
-                            get_shufflings_for_epoch(
-                                state_reader,
-                                attestation_epoch,
-                                attestation_epoch,
-                            )
-                            .unwrap()
+                            get_shufflings_for_epoch(state_reader, attestation_epoch).unwrap()
                         });
 
                 let attesting_indices =
@@ -105,7 +96,7 @@ pub fn verify<S: StateReader>(
                 let state_validators =
                     validator_cache.entry(attestation_epoch).or_insert_with(|| {
                         state_reader
-                            .active_validators(attestation_epoch, attestation_epoch)
+                            .active_validators(attestation_epoch)
                             .map_err(|e| VerifyError::StateReaderError(e.to_string()))
                             .unwrap()
                             .collect()
@@ -128,7 +119,7 @@ pub fn verify<S: StateReader>(
                     is_valid_indexed_attestation(
                         state_reader,
                         attesting_validators.into_iter(),
-                        &data,
+                        data,
                         attestation.signature,
                     )?,
                     VerifyError::InvalidAttestation("Invalid indexed attestation".to_string(),)
@@ -144,7 +135,8 @@ pub fn verify<S: StateReader>(
 
         // In the worst case attestations can arrive one epoch after their target and because we don't have information about which epoch they belong to in the chain
         // (if any) we need to assume the worst case
-        let lookahead = link.target.epoch + 1 - trusted_epoch;
+        // TODO: Fix
+        let lookahead = link.target.epoch + 1 - trusted_checkpoint.epoch;
         let threshold = threshold(lookahead, total_active_balance);
 
         ensure!(
@@ -155,20 +147,13 @@ pub fn verify<S: StateReader>(
                 threshold,
             }
         );
-    }
 
-    /////////// 2. State update calculation  //////////////
-    info!("2. State update calculation start");
-    ensure!(
-        consensus_state.is_consistent(),
-        VerifyError::InconsistentState
-    );
-
-    let mut state = consensus_state;
-
-    for link in link.iter() {
         state = state.state_transition(link)?;
+        ensure!(state.is_consistent(), VerifyError::InconsistentState);
+
+        debug!("state: {:?}", state)
     }
+
     Ok(state)
 }
 
@@ -185,35 +170,37 @@ fn is_valid_indexed_attestation<'a, S: StateReader>(
     if pubkeys.is_empty() {
         return Ok(false);
     }
-    let domain = beacon_attester_signing_domain(state_reader, data.target.epoch)?;
+    let domain = state_reader
+        .get_domain(BEACON_ATTESTER_DOMAIN, data.target.epoch)
+        .map_err(|e| VerifyError::StateReaderError(e.to_string()))?;
     let signing_root = compute_signing_root(data, domain);
 
-    let agg_pk = PublicKey::aggregate(&pubkeys)?;
-
-    fast_aggregate_verify_pre_aggregated(&agg_pk, signing_root.as_ref(), &signature)
-        .map(|_| true)
-        .map_err(|e| VerifyError::BlsError(e))
+    Ok(fast_aggregate_verify_pre_aggregated(
+        &PublicKey::aggregate(&pubkeys)?,
+        signing_root.as_ref(),
+        &signature,
+    )
+    .is_ok())
 }
 
 // this can compute validators for up to
 // 1 epoch ahead of the epoch the state_reader can read from
 pub fn get_shufflings_for_epoch<S: StateReader>(
     state_reader: &S,
-    state: Epoch,
     epoch: Epoch,
 ) -> Result<CommitteeCache, VerifyError> {
-    info!("Getting shufflings for epoch: {}", state);
+    info!("Getting shufflings for epoch: {}", epoch);
 
     let indices = state_reader
-        .get_active_validator_indices(state, epoch)
+        .get_active_validator_indices(epoch)
         .map_err(|e| VerifyError::StateReaderError(e.to_string()))?
         .collect();
     let seed = state_reader
-        .get_seed(state, epoch, BEACON_ATTESTER_DOMAIN.into())
+        .get_seed(epoch, BEACON_ATTESTER_DOMAIN.into())
         .map_err(|e| VerifyError::StateReaderError(e.to_string()))?;
 
     let committees_per_slot = state_reader
-        .get_committee_count_per_slot(state, epoch)
+        .get_committee_count_per_slot(epoch)
         .map_err(|e| VerifyError::StateReaderError(e.to_string()))?;
 
     CommitteeCache::initialized(
@@ -222,23 +209,10 @@ pub fn get_shufflings_for_epoch<S: StateReader>(
             indices,
             committees_per_slot,
         },
-        state,
+        epoch,
         state_reader.context(),
     )
     .map_err(Into::into)
-}
-
-fn beacon_attester_signing_domain<S: StateReader>(
-    state_reader: &S,
-    epoch: Epoch,
-) -> Result<[u8; 32], VerifyError> {
-    let domain_type = BEACON_ATTESTER_DOMAIN;
-    let fork_data_root =
-        fork_data_root(state_reader, state_reader.genesis_validators_root(), epoch)?;
-    let mut domain = [0_u8; 32];
-    domain[..4].copy_from_slice(&domain_type);
-    domain[4..].copy_from_slice(&fork_data_root.as_slice()[..28]);
-    Ok(domain)
 }
 
 fn compute_signing_root<T: TreeHash>(ssz_object: &T, domain: Domain) -> Root {
@@ -255,23 +229,4 @@ fn compute_signing_root<T: TreeHash>(ssz_object: &T, domain: Domain) -> Root {
         domain,
     };
     s.tree_hash_root()
-}
-
-fn fork_data_root<S: StateReader>(
-    state_reader: &S,
-    genesis_validators_root: Root,
-    epoch: Epoch,
-) -> Result<Root, VerifyError> {
-    #[derive(TreeHash)]
-    struct ForkData {
-        pub current_version: Version,
-        pub genesis_validators_root: Root,
-    }
-    Ok(ForkData {
-        current_version: state_reader
-            .fork_current_version(epoch)
-            .map_err(|e| VerifyError::StateReaderError(e.to_string()))?,
-        genesis_validators_root,
-    }
-    .tree_hash_root())
 }

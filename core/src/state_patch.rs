@@ -4,21 +4,23 @@ use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct StatePatch {
-    pub randao_mixes: BTreeMap<usize, B256>,
+    pub randao_mixes: BTreeMap<RandaoMixIndex, B256>,
 }
 
+use crate::RandaoMixIndex;
 #[cfg(feature = "host")]
 pub use host::StatePatchBuilder;
 
 #[cfg(feature = "host")]
 mod host {
     use super::*;
-    use crate::Ctx;
     use crate::beacon_state::mainnet::BeaconState;
+    use crate::{Ctx, RandaoMixIndex};
+    use std::sync::Arc;
     use tracing::debug;
 
     pub struct StatePatchBuilder<'a, CTX> {
-        state: BeaconState,
+        state: Arc<BeaconState>,
         context: &'a CTX,
         patch: StatePatch,
     }
@@ -27,7 +29,7 @@ mod host {
     where
         CTX: Ctx,
     {
-        pub fn new(state: BeaconState, context: &'a CTX) -> Self {
+        pub fn new(state: Arc<BeaconState>, context: &'a CTX) -> Self {
             Self {
                 state,
                 context,
@@ -35,8 +37,8 @@ mod host {
             }
         }
 
-        pub fn randao_mix(&mut self, idx: usize) {
-            let randao = self.state.randao_mixes().get(idx).unwrap().clone();
+        pub fn randao_mix(&mut self, idx: RandaoMixIndex) {
+            let randao = self.state.randao_mixes().get(idx as usize).unwrap().clone();
             self.patch
                 .randao_mixes
                 .insert(idx, B256::from_slice(randao.as_slice()));

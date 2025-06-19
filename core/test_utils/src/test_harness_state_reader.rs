@@ -3,177 +3,124 @@
 //! and have its data read directly by the verify function
 //!
 //!
+
+use anyhow::anyhow;
 use beacon_chain::{
-    BeaconChainError, BeaconChainTypes, StateSkipConfig, WhenSlotSkipped,
-    test_utils::BeaconChainHarness,
+    BeaconChainTypes, StateSkipConfig, WhenSlotSkipped, test_utils::BeaconChainHarness,
 };
-use beacon_types::{BeaconState, EthSpec, Hash256, Validator};
-use elsa::FrozenMap;
+use beacon_types::{EthSpec, Hash256};
+use ethereum_consensus::electra;
+use ethereum_consensus::phase0::SignedBeaconBlockHeader;
+use ethereum_consensus::types::mainnet::BeaconBlock;
+use tracing::trace;
+use std::ops::{Deref, DerefMut};
 use std::str::FromStr;
-use thiserror::Error;
+use std::sync::LazyLock;
 use z_core::{
-    ChainReader, ConsensusState, Epoch, GuestContext, HostContext, StateProvider, StateReader,
-    ValidatorIndex, ValidatorInfo, Version, mainnet::BeaconState as ZKBeaconState,
+    ChainReader, ConsensusState, HostContext, Root, Slot, StateProvider, StateProviderError,
+    StateRef,
 };
 
-pub struct HarnessStateReader<'a, T: BeaconChainTypes> {
-    inner: &'a BeaconChainHarness<T>,
-    validator_cache: FrozenMap<Epoch, Vec<(ValidatorIndex, ValidatorInfo)>>,
-    context: HostContext,
+static CONTEXT: LazyLock<HostContext> = LazyLock::new(|| electra::Context::for_mainnet().into());
+
+pub struct TestHarness<T: BeaconChainTypes>(BeaconChainHarness<T>);
+
+impl<T: BeaconChainTypes> Deref for TestHarness<T> {
+    type Target = BeaconChainHarness<T>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
 }
 
-impl<T> HarnessStateReader<'_, T>
-where
-    T: BeaconChainTypes,
-{
-    fn state_at_epoch(&self, epoch: Epoch) -> Result<BeaconState<T::EthSpec>, BeaconChainError> {
-        let slot = epoch * T::EthSpec::slots_per_epoch();
-        self.inner
+impl<T: BeaconChainTypes> DerefMut for TestHarness<T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+impl<T: BeaconChainTypes> From<BeaconChainHarness<T>> for TestHarness<T> {
+    fn from(value: BeaconChainHarness<T>) -> Self {
+        Self(value)
+    }
+}
+
+impl<T: BeaconChainTypes> StateProvider for &TestHarness<T> {
+    fn context(&self) -> &HostContext {
+        &CONTEXT
+    }
+
+    fn genesis_validators_root(&self) -> Result<Root, StateProviderError> {
+        Ok(self.0.chain.genesis_validators_root)
+    }
+
+    fn get_state_at_slot(&self, slot: Slot) -> Result<StateRef, StateProviderError> {
+        let state = self
+            .0
             .chain
             .state_at_slot(slot.into(), StateSkipConfig::WithStateRoots)
+            .map_err(|e| anyhow!("Failed to get state: {:?}", e))?;
+        Ok(convert_via_json(state).unwrap())
     }
 }
 
-impl<'a, T> From<&'a BeaconChainHarness<T>> for HarnessStateReader<'a, T>
-where
-    T: BeaconChainTypes,
-{
-    fn from(inner: &'a BeaconChainHarness<T>) -> Self {
-        Self {
-            inner,
-            validator_cache: FrozenMap::new(),
-            context: HostContext::from(ethereum_consensus::state_transition::Context::for_mainnet()),
-        }
-    }
-}
-
-#[derive(Error, Debug)]
-pub enum HarnessStateReaderError {
-    #[error("BeaconChainError: {0:?}")]
-    LighthouseError(beacon_chain::BeaconChainError),
-}
-
-impl From<beacon_chain::BeaconChainError> for HarnessStateReaderError {
-    fn from(err: beacon_chain::BeaconChainError) -> Self {
-        HarnessStateReaderError::LighthouseError(err)
-    }
-}
-
-impl<T> StateReader for HarnessStateReader<'_, T>
-where
-    T: BeaconChainTypes,
-{
-    type Error = HarnessStateReaderError;
-
-    type Context = GuestContext;
-
-    fn context(&self) -> &Self::Context {
-        &GuestContext
-    }
-
-    fn genesis_validators_root(&self) -> alloy_primitives::B256 {
-        self.inner.chain.genesis_validators_root
-    }
-
-    fn fork_current_version(&self, state_epoch: Epoch) -> Result<Version, Self::Error> {
-        let state = self.state_at_epoch(state_epoch)?;
-        Ok(state.fork().current_version)
-    }
-
-    fn active_validators(
-        &self,
-        state_epoch: Epoch,
-        epoch: Epoch,
-    ) -> Result<impl Iterator<Item = (ValidatorIndex, &ValidatorInfo)>, Self::Error> {
-        assert!(state_epoch >= epoch, "Only historical epochs supported");
-
-        let iter = match self.validator_cache.get(&state_epoch) {
-            Some(validators) => validators.iter(),
-            None => {
-                let state = self.state_at_epoch(state_epoch)?;
-
-                let validators: Vec<_> = state
-                    .validators()
-                    .iter()
-                    .enumerate()
-                    .filter(move |(_, validator)| is_active_validator(validator, epoch))
-                    .map(move |(idx, validator)| (idx, ValidatorInfo::from(validator)))
-                    .collect();
-
-                self.validator_cache.insert(state_epoch, validators).iter()
-            }
-        };
-        Ok(iter.map(|(idx, validator)| (*idx, validator)))
-    }
-
-    fn randao_mix(
-        &self,
-        state_epoch: Epoch,
-        idx: usize,
-    ) -> Result<Option<alloy_primitives::B256>, Self::Error> {
-        Ok(self
-            .state_at_epoch(state_epoch)?
-            .randao_mixes()
-            .get(idx)
-            .copied())
-    }
-}
-
-/// Check if `validator` is active.
-fn is_active_validator(validator: &Validator, epoch: Epoch) -> bool {
-    validator.activation_epoch <= epoch && epoch < validator.exit_epoch.into()
-}
-
-impl<T> ChainReader for HarnessStateReader<'_, T>
-where
-    T: BeaconChainTypes,
-{
+impl<T: BeaconChainTypes> ChainReader for &TestHarness<T> {
     async fn get_block_header(
         &self,
         block_id: impl std::fmt::Display,
-    ) -> Result<ethereum_consensus::deneb::SignedBeaconBlockHeader, anyhow::Error> {
-        let header = match SlotOrRoot::from_str(&block_id.to_string()) {
-            Ok(SlotOrRoot::Slot(slot)) => self
-                .inner
+    ) -> Result<Option<SignedBeaconBlockHeader>, anyhow::Error> {
+        trace!("ChainReader:get_block_header({})", block_id);
+        let block = match SlotOrRoot::from_str(&block_id.to_string())? {
+            SlotOrRoot::Slot(slot) => self
+                .0
                 .chain
                 .block_at_slot(slot.into(), WhenSlotSkipped::None),
-            Ok(SlotOrRoot::Root(root)) => self.inner.chain.get_blinded_block(&root),
-            Err(e) => return Err(e),
+            SlotOrRoot::Root(root) => self.0.chain.get_blinded_block(&root),
         }
-        .unwrap()
-        .unwrap()
-        .signed_block_header();
+        .map_err(|err| anyhow::anyhow!("Failed to get block: {:?}", err))?;
 
-        Ok(convert_via_json(header)?)
+        match block {
+            Some(block) => Ok(convert_via_json(&block.signed_block_header())?),
+            None => Ok(None),
+        }
     }
 
     async fn get_block(
         &self,
         block_id: impl std::fmt::Display,
-    ) -> Result<ethereum_consensus::types::mainnet::BeaconBlock, anyhow::Error> {
-        let root = match SlotOrRoot::from_str(&block_id.to_string()) {
-            Ok(SlotOrRoot::Slot(slot)) => self
-                .inner
-                .chain
-                .block_root_at_slot(slot.into(), WhenSlotSkipped::None)
-                .map_err(|_| anyhow::anyhow!("Failed to get block"))?
-                .ok_or(anyhow::anyhow!("Block not found at slot {}", slot))?,
-            Ok(SlotOrRoot::Root(root)) => root,
-            Err(e) => return Err(e),
+    ) -> Result<Option<BeaconBlock>, anyhow::Error> {
+        trace!("ChainReader:get_block({})", block_id);
+        let root = match SlotOrRoot::from_str(&block_id.to_string())? {
+            SlotOrRoot::Slot(slot) => {
+                let root = self
+                    .0
+                    .chain
+                    .block_root_at_slot(slot.into(), WhenSlotSkipped::None)
+                    .map_err(|err| anyhow::anyhow!("Failed to get block root: {:?}", err))?;
+                match root {
+                    None => return Ok(None),
+                    Some(root) => root,
+                }
+            }
+            SlotOrRoot::Root(root) => root,
         };
 
         let signed_block = self
-            .inner
+            .0
             .chain
             .get_block(&root)
             .await
-            .transpose()
-            .ok_or(anyhow::anyhow!("Block not found at root {}", root))?;
+            .map_err(|e| anyhow::anyhow!("Failed to get block: {:?}", e))?;
 
-        let (block, _) = signed_block
-            .map_err(|e| anyhow::anyhow!("Failed retrieving block: {:?}", e))?
-            .deconstruct();
-        Ok(convert_via_json(block.as_electra().expect("electra only"))?)
+        let beacon_block: BeaconBlock = match signed_block {
+            None => return Ok(None),
+            Some(signed_block) => {
+                let (block, _) = signed_block.deconstruct();
+                convert_via_json(block.as_electra().expect("electra only"))?
+            }
+        };
+
+        Ok(Some(beacon_block))
     }
 
     async fn get_consensus_state(
@@ -182,19 +129,19 @@ where
     ) -> Result<z_core::ConsensusState, anyhow::Error> {
         let state = match SlotOrRoot::from_str(&state_id.to_string()) {
             Ok(SlotOrRoot::Slot(slot)) => {
-                if slot > self.inner.chain.head().head_slot().as_u64() {
+                if slot > self.0.chain.head().head_slot().as_u64() {
                     return Err(anyhow::anyhow!(
                         "Requested slot {} is beyond the head slot {}",
                         slot,
-                        self.inner.chain.head().head_slot().as_u64()
+                        self.0.chain.head().head_slot().as_u64()
                     ));
                 }
-                self.inner
+                self.0
                     .chain
                     .state_at_slot(slot.into(), StateSkipConfig::WithStateRoots)
             }
             Ok(SlotOrRoot::Root(root)) => self
-                .inner
+                .0
                 .chain
                 .get_state(&root, None, true)
                 .transpose()
@@ -203,24 +150,6 @@ where
         }
         .map_err(|e| anyhow::anyhow!("Failed retrieving state: {:?}", e))?;
         Ok(consensus_state_from_state(&state))
-    }
-}
-
-impl<T> StateProvider for HarnessStateReader<'_, T>
-where
-    T: BeaconChainTypes,
-{
-    fn context(&self) -> &HostContext {
-        &self.context
-    }
-
-    fn get_state_at_slot(&self, slot: u64) -> Result<Option<ZKBeaconState>, anyhow::Error> {
-        let state = self
-            .inner
-            .chain
-            .state_at_slot(slot.into(), StateSkipConfig::WithStateRoots)
-            .unwrap();
-        Ok(Some(convert_via_json(state)?))
     }
 }
 

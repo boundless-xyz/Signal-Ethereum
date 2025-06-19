@@ -26,6 +26,8 @@ pub struct Attestation {
 }
 
 impl Attestation {
+    /// Return the
+    /// See: https://github.com/ethereum/consensus-specs/blob/dev/specs/electra/beacon-chain.md#new-get_committee_indices
     pub fn get_committee_indices(&self) -> Vec<u64> {
         self.committee_bits
             .iter()
@@ -34,8 +36,9 @@ impl Attestation {
             .collect()
     }
 
-    // get_attesting_indices
-    // see: https://github.com/ethereum/consensus-specs/blob/dev/specs/electra/beacon-chain.md#modified-get_attesting_indices
+    /// Return the set of attesting indices corresponding to `aggregation_bits` and `committee_bits`.
+    ///
+    /// See: https://github.com/ethereum/consensus-specs/blob/dev/specs/electra/beacon-chain.md#modified-get_attesting_indices
     pub fn get_attesting_indices<C: Ctx>(
         &self,
         ctx: &C,

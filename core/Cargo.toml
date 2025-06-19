@@ -10,37 +10,38 @@ bench = false
 required-features = ["host"]
 
 [dependencies]
-alloy-primitives = { workspace = true, default-features = false }
-ssz_rs = { workspace = true, default-features = true, optional = true, features = ["serde"] }
+alloy-primitives = { workspace = true, features = ["rlp"] }
+alloy-rlp = { version = "=0.3.11", features = ["derive"] }
+anyhow = { workspace = true }
+beacon_chain = { git = "https://github.com/sigp/lighthouse.git", rev = "7759cb8f91c01a7d335469d317b5787368656064", optional = true }
+beacon_types = { package = "types", git = "https://github.com/sigp/lighthouse.git", rev = "7759cb8f91c01a7d335469d317b5787368656064", optional = true }
+blst = { version = "0.3.14", default-features = false, features = ["serde"] }
+elsa = { version = "1.11", optional = true }
 ethereum-consensus = { workspace = true, default-features = false, optional = true }
-futures = { version = "0.3", optional = true}
+ethereum_ssz = "0.8.3"
+futures = { version = "0.3", optional = true }
+prettyplease = { version = "0.2", optional = true }
+proc-macro2 = { version = "1.0", optional = true }
+quote = { version = "1.0", optional = true }
 serde = { workspace = true }
-tracing = "0.1.41"
+serde_arrays = { version = "0.2.0" }
 serde_json = "1.0.133"
 sha2 = { workspace = true, default-features = false }
-anyhow = { workspace = true }
 ssz-multiproofs = { path = "../ssz-multiproofs" }
-thiserror = { workspace = true }
-blst = { version = "0.3.14", default-features = false, features = ["serde"]}
-serde_arrays = { version = "0.2.0" }
-elsa = { version = "1.11", optional = true }
-quote = { version = "1.0", optional = true }
+ssz_rs = { workspace = true, default-features = true, optional = true, features = ["serde"] }
+ssz_types = { version = "0.10.0" }
 syn = { version = "2.0", optional = true }
-proc-macro2 = { version = "1.0", optional = true }
-prettyplease = { version = "0.2", optional = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
 tree_hash = { version = "0.9" }
 tree_hash_derive = { version = "0.9.0" }
-ssz_types = { version = "0.10.0" }
-beacon_chain = { git = "https://github.com/sigp/lighthouse.git", rev = "7759cb8f91c01a7d335469d317b5787368656064", optional = true } 
-beacon_types = { package = "types", git = "https://github.com/sigp/lighthouse.git", rev = "7759cb8f91c01a7d335469d317b5787368656064", optional = true } 
-ethereum_ssz = "0.8.3"
 
 [dev-dependencies]
-tokio = { workspace = true }
-tracing-test = { version = "0.2.5", features = ["no-env-filter"] }
+bls = { git = "https://github.com/sigp/lighthouse.git", rev = "7759cb8f91c01a7d335469d317b5787368656064" }
+state_processing = { git = "https://github.com/sigp/lighthouse.git", rev = "7759cb8f91c01a7d335469d317b5787368656064" }
+test-log = { version = "0.2", features = ["trace"] }
 test_utils = { path = "test_utils" }
-bls = { git = "https://github.com/sigp/lighthouse.git", rev = "7759cb8f91c01a7d335469d317b5787368656064" } 
-state_processing = { git = "https://github.com/sigp/lighthouse.git", rev = "7759cb8f91c01a7d335469d317b5787368656064" } 
+tokio = { workspace = true }
 
 [features]
 default = ["host"]

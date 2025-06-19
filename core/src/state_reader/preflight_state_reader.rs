@@ -5,13 +5,16 @@ use thiserror::Error;
 
 use super::{StateInput, host_state_reader::HostReaderError};
 use crate::{
-    Epoch, StatePatchBuilder, StateProvider, StateReader, ValidatorIndex, ValidatorInfo, Version,
-    beacon_state::mainnet::BeaconState, mainnet::ElectraBeaconState,
+    Checkpoint, Ctx, Epoch, RandaoMixIndex, Root, StatePatchBuilder, StateProvider, StateReader,
+    ValidatorIndex, ValidatorInfo, Version, beacon_state::mainnet::BeaconState,
+    mainnet::ElectraBeaconState,
 };
 use alloy_primitives::B256;
+use ethereum_consensus::phase0::BeaconBlockHeader;
 use std::{
     cell::RefCell,
     collections::{BTreeMap, BTreeSet},
+    ops::Deref,
 };
 use tracing::info;
 
@@ -22,20 +25,20 @@ pub enum PreflightReaderError {
 }
 
 pub struct PreflightStateReader<'a, SR> {
-    trusted_epoch: Epoch,
+    trusted_checkpoint: Checkpoint,
     inner: &'a SR,
     validator_indices: RefCell<BTreeSet<ValidatorIndex>>,
     validator_epochs: RefCell<BTreeSet<Epoch>>,
-    mix_epochs: RefCell<BTreeMap<Epoch, BTreeSet<usize>>>,
+    mix_epochs: RefCell<BTreeMap<Epoch, BTreeSet<RandaoMixIndex>>>,
 }
 
-impl<'a, SR> PreflightStateReader<'a, SR>
+impl<'a, S> PreflightStateReader<'a, S>
 where
-    SR: StateReader,
+    S: StateReader + StateProvider,
 {
-    pub fn new(reader: &'a SR, trusted_epoch: Epoch) -> Self {
+    pub fn new(reader: &'a S, trusted_checkpoint: Checkpoint) -> Self {
         Self {
-            trusted_epoch,
+            trusted_checkpoint,
             inner: reader,
             validator_indices: Default::default(),
             validator_epochs: Default::default(),
@@ -43,42 +46,47 @@ where
         }
     }
 
-    pub fn host_reader(&self) -> &SR {
-        &self.inner
-    }
-
-    pub fn to_input<SP>(&self, state_provider: &SP) -> StateInput
-    where
-        SP: StateProvider,
-    {
-        let state = state_provider
-            .get_state_at_epoch_boundary(self.trusted_epoch)
-            .unwrap()
+    pub fn to_input(&self) -> StateInput {
+        let trusted_state = self
+            .inner
+            .get_state_at_checkpoint(self.trusted_checkpoint)
             .unwrap();
-        let beacon_state_root = state.hash_tree_root().unwrap();
+        let beacon_state_root = trusted_state.hash_tree_root().unwrap();
 
-        let mut patch_builder: BTreeMap<Epoch, StatePatchBuilder<SR::Context>> = BTreeMap::new();
+        info!("Building beacon block multiproof");
+        let mut epoch_boundary_block = trusted_state.latest_block_header().clone();
+        epoch_boundary_block.state_root = beacon_state_root;
+        let block_multiproof = MultiproofBuilder::new()
+            .with_path::<BeaconBlockHeader>(&["slot".into()])
+            .with_path::<BeaconBlockHeader>(&["state_root".into()])
+            .build(&epoch_boundary_block)
+            .unwrap();
+        block_multiproof
+            .verify(&self.trusted_checkpoint.root)
+            .unwrap();
+        info!("Beacon block multiproof finished");
+
+        let mut patch_builder: BTreeMap<Epoch, StatePatchBuilder<S::Context>> = BTreeMap::new();
         let mut proof_builder: MultiproofBuilder = MultiproofBuilder::new();
 
         for (epoch, indices) in self.mix_epochs.take() {
-            if epoch == self.trusted_epoch {
+            if epoch == self.trusted_checkpoint.epoch {
                 for idx in indices {
-                    let path = ["randao_mixes".into(), idx.into()];
+                    let path = ["randao_mixes".into(), (idx as usize).into()];
                     proof_builder = proof_builder.with_path::<ElectraBeaconState>(&path);
                 }
             } else {
                 let patch = patch_builder
                     .entry(epoch)
-                    .or_insert(self.patch_builder(epoch, state_provider).unwrap());
+                    .or_insert(self.patch_builder(epoch).unwrap());
                 for idx in indices {
                     patch.randao_mix(idx);
                 }
             }
         }
 
-        info!("Building State multiproof");
-        let state_multiproof = match state {
-            BeaconState::Electra(ref state) => proof_builder
+        let state_multiproof = match trusted_state.deref() {
+            BeaconState::Electra(state) => proof_builder
                 .with_path::<ElectraBeaconState>(&["genesis_validators_root".into()])
                 .with_path::<ElectraBeaconState>(&["slot".into()])
                 .with_path::<ElectraBeaconState>(&["fork".into(), "current_version".into()])
@@ -92,17 +100,17 @@ where
         state_multiproof.verify(&beacon_state_root).unwrap();
         info!("State multiproof finished");
 
-        let validators_root = state.validators().hash_tree_root().unwrap();
+        let validators_root = trusted_state.validators().hash_tree_root().unwrap();
 
         let mut validators = BTreeMap::new();
         for idx in self.validator_indices.take() {
-            let validator = ValidatorInfo::from(state.validators().get(idx).unwrap());
+            let validator = ValidatorInfo::from(trusted_state.validators().get(idx).unwrap());
             validators.insert(idx, validator);
         }
         info!(
             "Used validators: {}/{}",
             validators.len(),
-            state.validators().len()
+            trusted_state.validators().len()
         );
 
         let g_indices = validators.keys().flat_map(|&idx| {
@@ -131,7 +139,7 @@ where
         info!("Building Validator multiproof");
         let validator_multiproof = MultiproofBuilder::new()
             .with_gindices(g_indices)
-            .build(state.validators())
+            .build(trusted_state.validators())
             .unwrap();
         validator_multiproof.verify(&validators_root).unwrap();
         info!("Validator multiproof finished");
@@ -147,6 +155,7 @@ where
             .collect();
 
         StateInput {
+            beacon_block: block_multiproof,
             beacon_state: state_multiproof,
             active_validators: validator_multiproof,
             public_keys,
@@ -154,22 +163,20 @@ where
         }
     }
 
-    fn patch_builder<SP>(
+    fn patch_builder(
         &self,
         epoch: Epoch,
-        state_provider: &SP,
-    ) -> Result<StatePatchBuilder<SR::Context>, HostReaderError>
-    where
-        SP: StateProvider,
-    {
-        let state = state_provider.get_state_at_epoch_boundary(epoch)?.unwrap();
-        let context = self.inner.context();
+    ) -> Result<StatePatchBuilder<S::Context>, HostReaderError> {
+        let context = StateReader::context(self.inner);
+        let state = self
+            .inner
+            .get_state_at_slot(context.compute_start_slot_at_epoch(epoch))?;
 
         Ok(StatePatchBuilder::new(state, context))
     }
 }
 
-impl<'a, SR> StateReader for PreflightStateReader<'a, SR>
+impl<SR> StateReader for PreflightStateReader<'_, SR>
 where
     SR: StateReader,
 {
@@ -180,24 +187,29 @@ where
         self.inner.context()
     }
 
+    fn genesis_validators_root(&self) -> Result<Root, Self::Error> {
+        self.inner.genesis_validators_root()
+    }
+
+    fn fork_current_version(&self, epoch: Epoch) -> Result<Version, Self::Error> {
+        self.inner.fork_current_version(epoch)
+    }
+
     fn active_validators(
         &self,
-        state: Epoch,
         epoch: Epoch,
     ) -> Result<impl Iterator<Item = (ValidatorIndex, &ValidatorInfo)>, Self::Error> {
-        assert!(state >= self.trusted_epoch);
+        assert!(epoch >= self.trusted_checkpoint.epoch);
 
-        let iter = self.inner.active_validators(state, epoch)?;
-        self.validator_epochs.borrow_mut().insert(state);
+        let iter = self.inner.active_validators(epoch)?;
+        self.validator_epochs.borrow_mut().insert(epoch);
 
         Ok(iter.inspect(|(idx, _)| {
             self.validator_indices.borrow_mut().insert(*idx);
         }))
     }
 
-    fn randao_mix(&self, epoch: Epoch, idx: usize) -> Result<Option<B256>, Self::Error> {
-        assert!(epoch >= self.trusted_epoch);
-
+    fn randao_mix(&self, epoch: Epoch, idx: RandaoMixIndex) -> Result<Option<B256>, Self::Error> {
         // to be able to prove the inclusion, the randao value must exist
         let randao = self.inner.randao_mix(epoch, idx)?.unwrap();
         self.mix_epochs
@@ -207,13 +219,5 @@ where
             .insert(idx);
 
         Ok(Some(randao))
-    }
-
-    fn genesis_validators_root(&self) -> alloy_primitives::B256 {
-        self.inner.genesis_validators_root()
-    }
-
-    fn fork_current_version(&self, epoch: Epoch) -> Result<Version, Self::Error> {
-        Ok(self.inner.fork_current_version(epoch)?)
     }
 }

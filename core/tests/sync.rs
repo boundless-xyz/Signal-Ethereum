@@ -729,10 +729,11 @@ async fn finalize_when_validator_exits_and_delayed_finality() {
     .await;
 
     let consensus_state = consensus_state_from_state(&harness.get_current_state());
-    let validator_to_exit = 0;
+    let validator_to_exit = 23;
 
-    // ensure we are in the middle of a non-finalizing period
-    advance_non_finalizing(&mut harness, Epochs(5))
+    // Finalize an epoch to kick us off
+    // Advance without finalizing for a while
+    advance_non_finalizing(&mut harness, Slots(MainnetEthSpec::slots_per_epoch() * 8))
         .await
         .unwrap();
 
@@ -747,9 +748,19 @@ async fn finalize_when_validator_exits_and_delayed_finality() {
             harness.add_voluntary_exit(block, validator_to_exit, exit_valid_at);
         })
         .await;
+    println!("Processing validator exit block at slot {}", slot);
     process_block(&harness, block).await.unwrap();
 
-    let expected_exit_epoch = Epoch::new(266); // validator will be exited at this epoch (current_epoch + 1 + MAX_SEED_LOOKAHEAD)
+    println!(
+        "exit epoch {}",
+        harness
+            .get_current_state()
+            .validators()
+            .get(validator_to_exit as usize)
+            .unwrap()
+            .exit_epoch
+    );
+    let expected_exit_epoch = Epoch::new(269); // validator will be exited at this epoch (current_epoch + 1 + MAX_SEED_LOOKAHEAD)
     // Verify exit was processed correctly
     assert_eq!(
         harness
@@ -762,9 +773,12 @@ async fn finalize_when_validator_exits_and_delayed_finality() {
     );
 
     // Advance beyond `expected_exit_epoch` without finalizing
-    advance_non_finalizing(&mut harness, Epochs(8))
-        .await
-        .unwrap();
+    advance_non_finalizing(
+        &mut harness,
+        Slots(MainnetEthSpec::slots_per_epoch() * 8 - 1),
+    )
+    .await
+    .unwrap();
     assert!(harness.get_current_state().current_epoch() > expected_exit_epoch);
 
     // Then start finalizing again

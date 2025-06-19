@@ -132,6 +132,7 @@ impl StateReader for SszStateReader<'_> {
         epoch: Epoch,
     ) -> Result<impl Iterator<Item = (ValidatorIndex, &ValidatorInfo)>, Self::Error> {
         assert!(state_epoch >= epoch, "Only historical epochs supported");
+
         Ok(self
             .validators
             .iter()

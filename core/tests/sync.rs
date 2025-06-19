@@ -324,10 +324,6 @@ async fn finalize_after_inactivity_leak() {
 
     println!("Current slot: {}", head_state.slot());
 
-    // let two_thirds = (VALIDATOR_COUNT as usize / 3) * 2;
-    // let less_than_two_thirds = two_thirds - 2;
-    // let attesters = (0..less_than_two_thirds).collect();
-
     // Where we get into leak
     let target_epoch =
         harness.get_current_state().current_epoch() + spec.min_epochs_to_inactivity_penalty + 1;

@@ -14,5 +14,5 @@ serde_json = "1.0.133"
 anyhow = { workspace = true }
 serde = { workspace = true }
 
-beacon_chain = { git = "https://github.com/sigp/lighthouse.git", rev = "7759cb8f91c01a7d335469d317b5787368656064" } 
-beacon_types = { package = "types", git = "https://github.com/sigp/lighthouse.git", rev = "7759cb8f91c01a7d335469d317b5787368656064" }
+beacon_chain = { workspace = true } 
+beacon_types = { workspace = true } 

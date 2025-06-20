@@ -2,11 +2,15 @@ use super::StateReader;
 use crate::{
     Checkpoint, Ctx, Epoch, GuestContext, PublicKey, RandaoMixIndex, Root, Slot, StatePatch,
     VALIDATOR_LIST_TREE_DEPTH, VALIDATOR_TREE_DEPTH, ValidatorIndex, ValidatorInfo, Version,
+    ensure,
 };
 use alloy_primitives::B256;
 use serde::{Deserialize, Serialize};
 use ssz_multiproofs::Multiproof;
 use std::collections::BTreeMap;
+
+// TODO(willem): This is a temporary constant to limit the number of validator exit changes in a state patch.
+const MAX_VALIDATOR_EXIT_CHANGES: usize = 16;
 
 #[derive(Clone, Deserialize, Serialize)]
 pub struct StateInput<'a> {
@@ -60,6 +64,8 @@ pub enum SszReaderError {
     },
     #[error("Missing state patch: {0}")]
     MissingStatePatch(Epoch),
+    #[error("Invalid state patch: {0}")]
+    InvalidStatePatch(Epoch),
 }
 
 impl StateInput<'_> {
@@ -121,6 +127,16 @@ impl StateInput<'_> {
             unimplemented!("process_epoch()")
         }
 
+        // TODO(willem): A more thought out check is needed here that ensures the exits stays below the churn limit as in the beacon chain
+        // in the worst case.
+        for (epoch, patch) in &self.patches {
+            ensure!(
+                patch.validator_exit_epoch_updates.len() < MAX_VALIDATOR_EXIT_CHANGES,
+                SszReaderError::InvalidStatePatch(*epoch)
+            );
+        }
+        tracing::info!("{} State patches verified", self.patches.len());
+
         Ok(SszStateReader {
             context,
             slot,
@@ -157,8 +173,17 @@ impl StateReader for SszStateReader<'_> {
         Ok(self
             .validators
             .iter()
-            .map(|(idx, validator)| (*idx, validator))
-            .filter(move |(_, validator)| validator.is_active_at(epoch)))
+            .filter(move |(idx, validator)| {
+                // If there is a patch for this validators exit_epoch in this epoch apply it
+                let exit_epoch = self
+                    .patches
+                    .get(&epoch)
+                    .and_then(|p| p.validator_exit_epoch_updates.get(idx))
+                    .unwrap_or(&validator.exit_epoch);
+
+                validator.activation_epoch <= epoch && epoch < *exit_epoch
+            })
+            .map(|(idx, validator)| (*idx, validator)))
     }
 
     fn randao_mix(&self, epoch: Epoch, index: RandaoMixIndex) -> Result<Option<B256>, Self::Error> {

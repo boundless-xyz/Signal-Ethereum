@@ -113,6 +113,16 @@ where
             trusted_state.validators().len()
         );
 
+        // Build validator exit epoch patches
+        for epoch in self.validator_epochs.take() {
+            if epoch != self.trusted_checkpoint.epoch {
+                let patch = patch_builder
+                    .entry(epoch)
+                    .or_insert(self.patch_builder(epoch).unwrap());
+                patch.validator_exit_diff(&validators);
+            }
+        }
+
         let g_indices = validators.keys().flat_map(|&idx| {
             let public_key_path: &[Path] = &[
                 &[idx.into(), "public_key".into(), 0.into()],

@@ -14,13 +14,11 @@ pub use host::StatePatchBuilder;
 #[cfg(feature = "host")]
 mod host {
     use super::*;
-    use crate::beacon_state::mainnet::BeaconState;
-    use crate::{Ctx, RandaoMixIndex};
-    use std::sync::Arc;
+    use crate::{Ctx, RandaoMixIndex, StateRef};
     use tracing::debug;
 
     pub struct StatePatchBuilder<'a, CTX> {
-        state: Arc<BeaconState>,
+        state: StateRef,
         context: &'a CTX,
         patch: StatePatch,
     }
@@ -29,7 +27,7 @@ mod host {
     where
         CTX: Ctx,
     {
-        pub fn new(state: Arc<BeaconState>, context: &'a CTX) -> Self {
+        pub fn new(state: StateRef, context: &'a CTX) -> Self {
             Self {
                 state,
                 context,

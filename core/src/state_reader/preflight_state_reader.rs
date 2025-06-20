@@ -49,7 +49,7 @@ where
     pub fn to_input(&self) -> StateInput {
         let trusted_state = self
             .inner
-            .get_state_at_checkpoint(self.trusted_checkpoint)
+            .state_at_checkpoint(self.trusted_checkpoint)
             .unwrap();
         let beacon_state_root = trusted_state.hash_tree_root().unwrap();
 
@@ -170,7 +170,7 @@ where
         let context = StateReader::context(self.inner);
         let state = self
             .inner
-            .get_state_at_slot(context.compute_start_slot_at_epoch(epoch))?;
+            .state_at_slot(context.compute_start_slot_at_epoch(epoch))?;
 
         Ok(StatePatchBuilder::new(state, context))
     }

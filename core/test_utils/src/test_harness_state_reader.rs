@@ -54,7 +54,7 @@ impl<T: BeaconChainTypes> StateProvider for &TestHarness<T> {
         Ok(self.0.chain.genesis_validators_root)
     }
 
-    fn get_state_at_slot(&self, slot: Slot) -> Result<StateRef, StateProviderError> {
+    fn state_at_slot(&self, slot: Slot) -> Result<StateRef, StateProviderError> {
         let state = self
             .0
             .chain

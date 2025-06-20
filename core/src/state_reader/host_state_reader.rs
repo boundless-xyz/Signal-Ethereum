@@ -1,13 +1,13 @@
 use crate::{
     CacheStateProvider, Epoch, HostContext, RandaoMixIndex, Root, Slot, StateProvider,
     StateProviderError, StateReader, StateRef, ValidatorIndex, ValidatorInfo, Version,
-    beacon_state::mainnet::BeaconState, state_reader::state_provider::FileProvider,
+    state_reader::state_provider::FileProvider,
 };
 use alloy_primitives::B256;
 use elsa::FrozenMap;
 use ethereum_consensus::phase0::Validator;
 use ssz_rs::prelude::*;
-use std::{path::PathBuf, sync::Arc};
+use std::path::PathBuf;
 use thiserror::Error;
 use tracing::{debug, trace};
 
@@ -42,8 +42,8 @@ impl<P: StateProvider> HostStateReader<P> {
         }
     }
 
-    fn get(&self, epoch: Epoch) -> Result<Arc<BeaconState>, StateProviderError> {
-        self.provider.get_state_at_epoch(epoch)
+    fn state(&self, epoch: Epoch) -> Result<StateRef, StateProviderError> {
+        self.provider.state_at_epoch(epoch)
     }
 }
 
@@ -62,8 +62,8 @@ impl<P: StateProvider> StateProvider for HostStateReader<P> {
         self.provider.context()
     }
 
-    fn get_state_at_slot(&self, slot: Slot) -> Result<StateRef, StateProviderError> {
-        self.provider.get_state_at_slot(slot)
+    fn state_at_slot(&self, slot: Slot) -> Result<StateRef, StateProviderError> {
+        self.provider.state_at_slot(slot)
     }
 }
 
@@ -80,7 +80,7 @@ impl<P: StateProvider> StateReader for HostStateReader<P> {
     }
 
     fn fork_current_version(&self, epoch: Epoch) -> Result<Version, HostReaderError> {
-        let state = self.provider.get_state_at_epoch(epoch)?;
+        let state = self.provider.state_at_epoch(epoch)?;
         Ok(state.fork().current_version)
     }
 
@@ -93,7 +93,7 @@ impl<P: StateProvider> StateReader for HostStateReader<P> {
         let iter = match self.validator_cache.get(&epoch) {
             Some(validators) => validators.iter(),
             None => {
-                let beacon_state = self.get(epoch)?;
+                let beacon_state = self.state(epoch)?;
 
                 debug!("Caching validators for epoch {epoch}...");
                 let validators: Vec<_> = beacon_state
@@ -114,7 +114,7 @@ impl<P: StateProvider> StateReader for HostStateReader<P> {
 
     fn randao_mix(&self, epoch: Epoch, idx: RandaoMixIndex) -> Result<Option<B256>, Self::Error> {
         trace!("HostStateReader::randao_mix({epoch},{idx})");
-        let beacon_state = self.get(epoch)?;
+        let beacon_state = self.state(epoch)?;
         let idx: usize = idx.try_into().unwrap();
 
         Ok(beacon_state

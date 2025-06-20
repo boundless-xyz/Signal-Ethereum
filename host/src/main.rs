@@ -128,8 +128,8 @@ async fn main() -> anyhow::Result<()> {
 
     match args.command {
         Command::Verify { mode, iterations } => {
-            let trusted_state = reader
-                .get_state_at_slot(context.compute_start_slot_at_epoch(args.trusted_epoch))?;
+            let trusted_state =
+                reader.state_at_slot(context.compute_start_slot_at_epoch(args.trusted_epoch))?;
             let epoch_boundary_slot = trusted_state.latest_block_header().slot;
             let trusted_beacon_block = beacon_client.get_block(epoch_boundary_slot).await?.unwrap();
             assert_eq!(

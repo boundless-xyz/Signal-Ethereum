@@ -23,14 +23,11 @@ pub trait StateProvider {
     fn context(&self) -> &HostContext;
 
     fn genesis_validators_root(&self) -> Result<Root, StateProviderError> {
-        Ok(self.get_state_at_slot(0)?.genesis_validators_root())
+        Ok(self.state_at_slot(0)?.genesis_validators_root())
     }
 
-    fn get_state_at_checkpoint(
-        &self,
-        checkpoint: Checkpoint,
-    ) -> Result<StateRef, StateProviderError> {
-        let state = self.get_state_at_epoch(checkpoint.epoch)?;
+    fn state_at_checkpoint(&self, checkpoint: Checkpoint) -> Result<StateRef, StateProviderError> {
+        let state = self.state_at_epoch(checkpoint.epoch)?;
 
         // check that the start_slot is indeed the epoch boundary
         let epoch_boundary_slot = state.latest_block_header().slot;
@@ -43,7 +40,7 @@ pub trait StateProvider {
             checkpoint.epoch, epoch_boundary_slot
         );
 
-        let state = self.get_state_at_slot(epoch_boundary_slot)?;
+        let state = self.state_at_slot(epoch_boundary_slot)?;
 
         // check that the state matches the epoch boundary block
         let mut epoch_boundary_block = state.latest_block_header().clone();
@@ -56,12 +53,12 @@ pub trait StateProvider {
         Ok(state)
     }
 
-    fn get_state_at_epoch(&self, epoch: Epoch) -> Result<StateRef, StateProviderError> {
+    fn state_at_epoch(&self, epoch: Epoch) -> Result<StateRef, StateProviderError> {
         let start_slot = self.context().compute_start_slot_at_epoch(epoch);
-        self.get_state_at_slot(start_slot)
+        self.state_at_slot(start_slot)
     }
 
-    fn get_state_at_slot(&self, slot: Slot) -> Result<StateRef, StateProviderError>;
+    fn state_at_slot(&self, slot: Slot) -> Result<StateRef, StateProviderError>;
 }
 
 #[derive(Clone)]
@@ -88,14 +85,14 @@ impl<P: StateProvider> StateProvider for CacheStateProvider<P> {
         let cache = self.cache.clone().into_map();
         match cache.values().next() {
             Some(state) => Ok(state.genesis_validators_root()),
-            None => Ok(self.get_state_at_slot(0)?.genesis_validators_root()),
+            None => Ok(self.state_at_slot(0)?.genesis_validators_root()),
         }
     }
 
-    fn get_state_at_slot(&self, slot: Slot) -> Result<StateRef, StateProviderError> {
+    fn state_at_slot(&self, slot: Slot) -> Result<StateRef, StateProviderError> {
         match self.cache.get(&slot) {
             None => {
-                let state = self.inner.get_state_at_slot(slot)?;
+                let state = self.inner.state_at_slot(slot)?;
                 self.cache.insert(slot, state.clone().into());
                 Ok(state)
             }
@@ -144,7 +141,7 @@ impl StateProvider for FileProvider {
         &self.context
     }
 
-    fn get_state_at_slot(&self, slot: u64) -> Result<StateRef, StateProviderError> {
+    fn state_at_slot(&self, slot: u64) -> Result<StateRef, StateProviderError> {
         let file = self.directory.join(format!("{}_beacon_state.ssz", slot));
         if !file.exists() {
             return Err(StateProviderError::NotFound(slot));

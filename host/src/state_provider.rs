@@ -29,9 +29,9 @@ impl StateProvider for PersistentApiStateProvider {
     fn context(&self) -> &HostContext {
         &self.file_provider.context()
     }
-    fn get_state_at_slot(&self, slot: u64) -> Result<StateRef, StateProviderError> {
+    fn state_at_slot(&self, slot: u64) -> Result<StateRef, StateProviderError> {
         // First try to get the state from the file provider
-        match self.file_provider.get_state_at_slot(slot) {
+        match self.file_provider.state_at_slot(slot) {
             Err(StateProviderError::NotFound(_)) => {}
             state => return state,
         }

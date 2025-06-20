@@ -109,14 +109,15 @@ impl StateInput<'_> {
                 msg: "Validators root mismatch".to_string(),
                 source: e,
             })?;
-        // validator list inclusion proofs
-        let mut validators =
-            extract_validators_multiproof(self.public_keys, &self.active_validators).map_err(
-                |e| SszReaderError::SszMultiproof {
-                    msg: "Invalid beacon state proof".to_string(),
-                    source: e,
-                },
-            )?;
+        let mut validators = extract_validators_multiproof(
+            &self.active_validators,
+            self.public_keys,
+            consensus_state.finalized_checkpoint.epoch,
+        )
+        .map_err(|e| SszReaderError::SszMultiproof {
+            msg: "Invalid validators proof".to_string(),
+            source: e,
+        })?;
 
         let state_epoch = context.compute_epoch_at_slot(slot);
 

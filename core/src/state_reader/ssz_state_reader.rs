@@ -100,8 +100,12 @@ impl StateInput<'_> {
         assert_eq!(epoch_boundary_slot, slot);
 
         // validator list inclusion proofs
-        let validators = extract_validators_multiproof(self.public_keys, &self.active_validators)
-            .map_err(|e| SszReaderError::SszMultiproof {
+        let validators = extract_validators_multiproof(
+            &self.active_validators,
+            self.public_keys,
+            checkpoint.epoch,
+        )
+        .map_err(|e| SszReaderError::SszMultiproof {
             msg: "Failed to extract active validators multiproof".to_string(),
             source: e,
         })?;
@@ -231,25 +235,42 @@ fn extract_beacon_state_multiproof(
     ))
 }
 
-/// Extracts the active validators from its multiproof. The multiproof contains the compressed public key which is checked
-/// against the public key in the `public_keys` vector which is in the uncompressed form.
-/// The multiproof contains the following fields:
-/// - public key (compressed)
-/// - effective balance
-/// - activation epoch
-/// - exit epoch
+/// Extracts the not-exited validators from the multiproof of the Validators.
+///
+/// The multiproof contains the compressed public key which is checked against the public key in the
+/// `public_keys` vector which is in the uncompressed form.
+/// It contains the `ValidatorInfo` of non-exited validators and only the exit_epoch for exited.
 fn extract_validators_multiproof(
-    public_keys: Vec<PublicKey>,
     validators: &Multiproof<'_>,
+    public_keys: Vec<PublicKey>,
+    current_epoch: Epoch,
 ) -> Result<BTreeMap<ValidatorIndex, ValidatorInfo>, ssz_multiproofs::Error> {
-    let mut values = validators.values();
+    let mut values = validators.values().peekable();
+    let mut pubkeys = public_keys.into_iter();
 
-    let validator_cache = public_keys
-        .into_iter()
-        .map(|pubkey| {
-            // Note: We do not have to verify the gindices here. This is because the root of the Validators
-            // list is verified against the root which is in the top level BeaconState and this is a homogeneous
-            // collection. We are also using the exit_epoch_gindex to calculate the validator index.
+    let mut validator_cache: BTreeMap<ValidatorIndex, ValidatorInfo> = BTreeMap::new();
+    let mut validator_index: ValidatorIndex = 0;
+
+    loop {
+        let (gindex, _) = values.peek().ok_or(ssz_multiproofs::Error::MissingValue)?;
+        // This is the generalized index for the validator list length, which means we are done.
+        if gindex == &3 {
+            break;
+        }
+
+        let validator_base_index: u64 = ((1 << VALIDATOR_LIST_TREE_DEPTH)
+            + (validator_index as u64))
+            * (1 << VALIDATOR_TREE_DEPTH);
+        let exit_epoch_gindex: u64 = validator_base_index + 6;
+
+        if gindex == &exit_epoch_gindex {
+            let (_, exit_epoch) = values.next().unwrap();
+            let exit_epoch = u64_from_chunk(exit_epoch);
+
+            assert!(exit_epoch <= current_epoch);
+        } else {
+            let pubkey = pubkeys.next().unwrap();
+
             let pk_compressed = {
                 let (_, part_1) = values.next().ok_or(ssz_multiproofs::Error::MissingValue)?;
                 let (_, part_2) = values.next().ok_or(ssz_multiproofs::Error::MissingValue)?;
@@ -267,28 +288,27 @@ fn extract_validators_multiproof(
                 values.next().ok_or(ssz_multiproofs::Error::MissingValue)?;
             let activation_epoch = u64_from_chunk(activation_epoch);
 
-            let (exit_epoch_gindex, exit_epoch) =
-                values.next().ok_or(ssz_multiproofs::Error::MissingValue)?;
+            let (_, exit_epoch) = values.next().ok_or(ssz_multiproofs::Error::MissingValue)?;
             let exit_epoch = u64_from_chunk(exit_epoch);
 
-            // We are calculating the validator index from the gindex.
-            let validator_index =
-                (exit_epoch_gindex >> VALIDATOR_TREE_DEPTH) - (1 << VALIDATOR_LIST_TREE_DEPTH);
-            // NOTE: This should not fail until there are more than 2^32 validators.
-            let validator_index = usize::try_from(validator_index).unwrap();
+            let validator_info = ValidatorInfo {
+                pubkey,
+                effective_balance,
+                activation_epoch,
+                exit_epoch,
+            };
+            validator_cache.insert(validator_index, validator_info);
+        }
 
-            Ok((
-                validator_index,
-                ValidatorInfo {
-                    pubkey,
-                    effective_balance,
-                    activation_epoch,
-                    exit_epoch,
-                },
-            ))
-        })
-        .collect::<Result<BTreeMap<_, _>, ssz_multiproofs::Error>>()?;
+        validator_index += 1;
+    }
+
+    let (_, length) = values.next().unwrap();
+    let length = u64_from_chunk(length);
+    assert_eq!(validator_index as u64, length);
+
     assert!(values.next().is_none());
+
     Ok(validator_cache)
 }
 

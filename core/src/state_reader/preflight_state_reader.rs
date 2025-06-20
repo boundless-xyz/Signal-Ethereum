@@ -16,7 +16,7 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     ops::Deref,
 };
-use tracing::info;
+use tracing::{debug, info};
 
 #[derive(Error, Debug)]
 pub enum PreflightReaderError {
@@ -27,7 +27,6 @@ pub enum PreflightReaderError {
 pub struct PreflightStateReader<'a, SR> {
     trusted_checkpoint: Checkpoint,
     inner: &'a SR,
-    validator_indices: RefCell<BTreeSet<ValidatorIndex>>,
     validator_epochs: RefCell<BTreeSet<Epoch>>,
     mix_epochs: RefCell<BTreeMap<Epoch, BTreeSet<RandaoMixIndex>>>,
 }
@@ -40,7 +39,6 @@ where
         Self {
             trusted_checkpoint,
             inner: reader,
-            validator_indices: Default::default(),
             validator_epochs: Default::default(),
             mix_epochs: Default::default(),
         }
@@ -101,53 +99,37 @@ where
         info!("State multiproof finished");
 
         let validators_root = trusted_state.validators().hash_tree_root().unwrap();
+        type Validators = List<Validator, VALIDATOR_REGISTRY_LIMIT>;
 
-        let mut validators = BTreeMap::new();
-        for idx in self.validator_indices.take() {
-            let validator = ValidatorInfo::from(trusted_state.validators().get(idx).unwrap());
-            validators.insert(idx, validator);
+        let mut public_keys = Vec::with_capacity(trusted_state.validators().len());
+
+        info!("Building validator proof");
+        let mut proof_builder = MultiproofBuilder::new();
+        proof_builder = proof_builder.with_path::<Validators>(&[PathElement::Length]);
+
+        for (idx, validator) in trusted_state.validators().iter().enumerate() {
+            if self.trusted_checkpoint.epoch >= validator.exit_epoch {
+                proof_builder =
+                    proof_builder.with_path::<Validators>(&[idx.into(), "exit_epoch".into()]);
+            } else {
+                proof_builder = proof_builder
+                    .with_path::<Validators>(&[idx.into(), "public_key".into(), 0.into()])
+                    .with_path::<Validators>(&[idx.into(), "public_key".into(), 47.into()])
+                    .with_path::<Validators>(&[idx.into(), "effective_balance".into()])
+                    .with_path::<Validators>(&[idx.into(), "activation_epoch".into()])
+                    .with_path::<Validators>(&[idx.into(), "exit_epoch".into()]);
+
+                public_keys.push(ValidatorInfo::from(validator).pubkey);
+            }
         }
-        info!(
-            "Used validators: {}/{}",
-            validators.len(),
-            trusted_state.validators().len()
-        );
-
-        let g_indices = validators.keys().flat_map(|&idx| {
-            let public_key_path: &[Path] = &[
-                &[idx.into(), "public_key".into(), 0.into()],
-                &[idx.into(), "public_key".into(), 47.into()], // public key is a Vector<u8, 48>, so it takes up 2 leafs
-            ];
-
-            let balance_epoch_path: &[Path] = &[
-                &[idx.into(), "effective_balance".into()],
-                &[idx.into(), "activation_epoch".into()],
-                &[idx.into(), "exit_epoch".into()],
-            ];
-
-            let g_indices = public_key_path
-                .iter()
-                .chain(balance_epoch_path)
-                .map(|path| {
-                    <List<Validator, VALIDATOR_REGISTRY_LIMIT>>::generalized_index(path).unwrap()
-                })
-                .collect::<Vec<_>>();
-
-            g_indices
-        });
-
-        info!("Building Validator multiproof");
-        let validator_multiproof = MultiproofBuilder::new()
-            .with_gindices(g_indices)
-            .build(trusted_state.validators())
-            .unwrap();
+        let validator_multiproof = proof_builder.build(trusted_state.validators()).unwrap();
         validator_multiproof.verify(&validators_root).unwrap();
         info!("Validator multiproof finished");
-
-        let public_keys = validators
-            .into_values()
-            .map(|validator| validator.pubkey)
-            .collect();
+        debug!(
+            num = public_keys.len(),
+            num_total = trusted_state.validators().len(),
+            "Included validators",
+        );
 
         let patches = patch_builder
             .into_iter()
@@ -204,9 +186,7 @@ where
         let iter = self.inner.active_validators(epoch)?;
         self.validator_epochs.borrow_mut().insert(epoch);
 
-        Ok(iter.inspect(|(idx, _)| {
-            self.validator_indices.borrow_mut().insert(*idx);
-        }))
+        Ok(iter)
     }
 
     fn randao_mix(&self, epoch: Epoch, idx: RandaoMixIndex) -> Result<Option<B256>, Self::Error> {

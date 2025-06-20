@@ -49,8 +49,8 @@ impl<P: StateProvider> HostStateReader<P> {
 }
 
 impl<E: EthSpec> HostStateReader<CacheStateProvider<FileProvider<E>>> {
-    pub fn new_with_dir(dir: impl Into<PathBuf>, spec: E) -> Result<Self, HostReaderError> {
-        let provider = CacheStateProvider::new(FileProvider::new(dir, spec)?);
+    pub fn new_with_dir(dir: impl Into<PathBuf>) -> Result<Self, HostReaderError> {
+        let provider = CacheStateProvider::new(FileProvider::new(dir)?);
         Ok(Self::new(provider))
     }
 }

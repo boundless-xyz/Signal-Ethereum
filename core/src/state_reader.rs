@@ -5,7 +5,7 @@ use alloy_primitives::B256;
 use alloy_primitives::aliases::B32;
 use beacon_types::EthSpec;
 use sha2::Digest;
-use std::cmp::{max, min};
+use std::cmp::max;
 use thiserror::Error;
 use tree_hash::TreeHash;
 use tree_hash_derive::TreeHash;

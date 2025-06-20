@@ -109,9 +109,6 @@ async fn main() -> anyhow::Result<()> {
         .init();
     let args = Args::parse();
 
-    // Note: The part of the context we use for mainnet and sepolia is the same.
-    let spec = Spec::default();
-
     let beacon_client = BeaconClient::builder(args.beacon_api)
         .with_cache(args.data_dir.join("http"))
         .with_rate_limit(args.rps)
@@ -120,7 +117,7 @@ async fn main() -> anyhow::Result<()> {
     let state_dir = args.data_dir.join(args.network.to_string()).join("states");
     fs::create_dir_all(&state_dir)?;
 
-    let provider = PersistentApiStateProvider::new(&state_dir, beacon_client.clone(), spec)?;
+    let provider = PersistentApiStateProvider::<Spec>::new(&state_dir, beacon_client.clone())?;
 
     let reader = HostStateReader::new(CacheStateProvider::new(provider));
 

@@ -117,16 +117,15 @@ pub fn verify<S: StateReader>(
                     .iter()
                     .fold(0u64, |acc, e| acc + e.effective_balance);
 
-                // TODO(ec2) FIX
-                // ensure!(
-                //     is_valid_indexed_attestation(
-                //         state_reader,
-                //         attesting_validators.into_iter(),
-                //         data,
-                //         attestation.signature,
-                //     )?,
-                //     VerifyError::InvalidAttestation("Invalid indexed attestation".to_string(),)
-                // );
+                ensure!(
+                    is_valid_indexed_attestation(
+                        state_reader,
+                        attesting_validators.into_iter(),
+                        data,
+                        attestation.signature().into(),
+                    )?,
+                    VerifyError::InvalidAttestation("Invalid indexed attestation".to_string(),)
+                );
 
                 Ok(attesting_balance)
             })

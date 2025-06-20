@@ -164,6 +164,12 @@ impl<'de> serde::Deserialize<'de> for Signature {
     }
 }
 
+impl From<&beacon_types::AggregateSignature> for Signature {
+    fn from(aggregate_signature: &beacon_types::AggregateSignature) -> Self {
+        let bytes = aggregate_signature.serialize();
+        Signature::from_bytes(&bytes).unwrap()
+    }
+}
 #[cfg(feature = "host")]
 mod host {
     use super::*;

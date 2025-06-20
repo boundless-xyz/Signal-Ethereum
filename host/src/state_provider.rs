@@ -16,9 +16,8 @@ impl<E: EthSpec> PersistentApiStateProvider<E> {
     pub(crate) fn new(
         dir: impl Into<PathBuf>,
         client: BeaconClient,
-        spec: E,
     ) -> Result<Self, anyhow::Error> {
-        let file_provider = FileProvider::new(dir, spec)?;
+        let file_provider = FileProvider::new(dir)?;
         Ok(Self {
             file_provider,
             client,

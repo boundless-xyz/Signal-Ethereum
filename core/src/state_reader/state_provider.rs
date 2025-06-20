@@ -3,9 +3,9 @@ use anyhow::{Context, ensure};
 use beacon_types::EthSpec;
 use elsa::FrozenMap;
 use ssz_rs::HashTreeRoot;
-use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::{fs, marker::PhantomData};
 use tracing::{debug, warn};
 
 #[derive(Debug, thiserror::Error)]
@@ -102,14 +102,14 @@ impl<P: StateProvider> StateProvider for CacheStateProvider<P> {
 #[derive(Clone)]
 pub struct FileProvider<E: EthSpec> {
     directory: PathBuf,
-    spec: E,
+    _spec: PhantomData<E>,
 }
 
 impl<E: EthSpec> FileProvider<E> {
-    pub fn new(directory: impl Into<PathBuf>, spec: E) -> Result<Self, anyhow::Error> {
+    pub fn new(directory: impl Into<PathBuf>) -> Result<Self, anyhow::Error> {
         let provider = Self {
             directory: directory.into(),
-            spec,
+            _spec: PhantomData,
         };
         ensure!(provider.directory.is_dir(), "not a directory");
 

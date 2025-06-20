@@ -1,10 +1,9 @@
 use crate::{
-    Attestation, Checkpoint, ConsensusState, Epoch, Input, Link, conv_attestation, conv_checkpoint,
-    ensure,
+    Attestation, Checkpoint, ConsensusState, Epoch, Input, Link, conv_attestation, ensure,
 };
 use beacon_types::EthSpec;
 use ethereum_consensus::{electra::mainnet::SignedBeaconBlockHeader, types::mainnet::BeaconBlock};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 use std::fmt::Display;
 use tracing::debug;
 

@@ -251,18 +251,20 @@ fn extract_validators_multiproof(
     let mut validator_cache: BTreeMap<ValidatorIndex, ValidatorInfo> = BTreeMap::new();
     let mut validator_index: ValidatorIndex = 0;
 
-    while let Some((gindex, _)) = values.peek() {
+    loop {
+        let (gindex, _) = values.peek().ok_or(ssz_multiproofs::Error::MissingValue)?;
+        // This is the generalized index for the validator list length, which means we are done.
         if gindex == &3 {
-            // This is the gindex for the validator list length, which means we are done.
             break;
         }
+
         let validator_base_index: u64 = ((1 << VALIDATOR_LIST_TREE_DEPTH)
             + (validator_index as u64))
             * (1 << VALIDATOR_TREE_DEPTH);
         let exit_epoch_gindex: u64 = validator_base_index + 6;
 
         if gindex == &exit_epoch_gindex {
-            let (_, exit_epoch) = values.next().ok_or(ssz_multiproofs::Error::MissingValue)?;
+            let (_, exit_epoch) = values.next().unwrap();
             let exit_epoch = u64_from_chunk(exit_epoch);
 
             assert!(exit_epoch <= current_epoch);
@@ -301,11 +303,11 @@ fn extract_validators_multiproof(
         validator_index += 1;
     }
 
-    let (len_gindex, expected_validators_len) = values.next().unwrap();
+    let (_, length) = values.next().unwrap();
+    let length = u64_from_chunk(length);
+    assert_eq!(validator_index as u64, length);
 
-    let expected_validators_len = u64_from_chunk(expected_validators_len);
-    assert_eq!(3, len_gindex, "list gindex should be 3");
-    assert_eq!(validator_index as u64, expected_validators_len);
+    assert!(values.next().is_none());
 
     Ok(validator_cache)
 }

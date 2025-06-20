@@ -163,8 +163,8 @@ mod tests {
     use crate::{Checkpoint, Epoch};
     use alloy_primitives::B256;
 
-    const fn cp(epoch: Epoch) -> Checkpoint {
-        Checkpoint::new(epoch, B256::ZERO)
+    const fn cp(epoch: u64) -> Checkpoint {
+        Checkpoint::new(Epoch::new(epoch), B256::ZERO)
     }
 
     /// Test cases for the state transition function.

@@ -250,7 +250,12 @@ fn extract_validators_multiproof(
 
     let mut validator_cache: BTreeMap<ValidatorIndex, ValidatorInfo> = BTreeMap::new();
     let mut validator_index: ValidatorIndex = 0;
+
     while let Some((gindex, _)) = values.peek() {
+        if gindex == &3 {
+            // This is the gindex for the validator list length, which means we are done.
+            break;
+        }
         let validator_base_index: u64 = ((1 << VALIDATOR_LIST_TREE_DEPTH)
             + (validator_index as u64))
             * (1 << VALIDATOR_TREE_DEPTH);
@@ -296,8 +301,11 @@ fn extract_validators_multiproof(
         validator_index += 1;
     }
 
-    // TODO: How can we proof the length of the list
-    // assert_eq!(validator_index, validators_len);
+    let (len_gindex, expected_validators_len) = values.next().unwrap();
+
+    let expected_validators_len = u64_from_chunk(expected_validators_len);
+    assert_eq!(3, len_gindex, "list gindex should be 3");
+    assert_eq!(validator_index as u64, expected_validators_len);
 
     Ok(validator_cache)
 }

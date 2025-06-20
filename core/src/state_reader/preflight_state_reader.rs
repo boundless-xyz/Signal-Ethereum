@@ -105,6 +105,8 @@ where
 
         info!("Building validator proof");
         let mut proof_builder = MultiproofBuilder::new();
+        proof_builder = proof_builder.with_gindex(3); // always the gindex of SSZ list's variable length
+
         for (idx, validator) in trusted_state.validators().iter().enumerate() {
             if self.trusted_checkpoint.epoch >= validator.exit_epoch {
                 proof_builder =

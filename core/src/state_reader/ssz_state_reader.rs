@@ -1,17 +1,20 @@
 use super::StateReader;
 use crate::{
-    Ctx, Epoch, GuestContext, PublicKey, StatePatch, VALIDATOR_LIST_TREE_DEPTH,
-    VALIDATOR_TREE_DEPTH, ValidatorIndex, ValidatorInfo, Version,
+    Checkpoint, Ctx, Epoch, GuestContext, PublicKey, RandaoMixIndex, Root, Slot, StatePatch,
+    VALIDATOR_LIST_TREE_DEPTH, VALIDATOR_TREE_DEPTH, ValidatorIndex, ValidatorInfo, Version,
 };
 use alloy_primitives::B256;
 use serde::{Deserialize, Serialize};
 use ssz_multiproofs::Multiproof;
 use std::collections::BTreeMap;
-use tracing::info;
 
 #[derive(Clone, Deserialize, Serialize)]
 pub struct StateInput<'a> {
-    /// Used fields of the BeaconState plus their inclusion proof against the state root.
+    /// Used fields of the beacon block plus their inclusion proof against the block root.
+    #[serde(borrow)]
+    pub beacon_block: Multiproof<'a>,
+
+    /// Used fields of the beacon state plus their inclusion proof against the state root.
     #[serde(borrow)]
     pub beacon_state: Multiproof<'a>,
 
@@ -28,12 +31,15 @@ pub struct StateInput<'a> {
 
 pub struct SszStateReader<'a> {
     context: &'a GuestContext,
-    genesis_validators_root: B256,
-    fork_current_version: Version,
-    epoch: Epoch,
-    validators: BTreeMap<ValidatorIndex, ValidatorInfo>,
-    randao: BTreeMap<Epoch, B256>,
 
+    // beacon state fields
+    genesis_validators_root: B256,
+    slot: Slot,
+    fork_current_version: Version,
+    validators: BTreeMap<ValidatorIndex, ValidatorInfo>,
+    randao: BTreeMap<RandaoMixIndex, B256>,
+
+    // additional unverified data
     patches: BTreeMap<Epoch, StatePatch>,
 }
 
@@ -59,32 +65,46 @@ pub enum SszReaderError {
 impl StateInput<'_> {
     pub fn into_state_reader(
         self,
-        root: B256,
         context: &GuestContext,
+        checkpoint: Checkpoint,
     ) -> Result<SszStateReader, SszReaderError> {
-        let (genesis_validators_root, state_epoch, fork_current_version, validators_root, randao) =
+        // beacon block inclusion proofs
+        self.beacon_block
+            .verify(&checkpoint.root)
+            .map_err(|e| SszReaderError::SszVerify {
+                msg: "Beacon block root mismatch".to_string(),
+                source: e,
+            })?;
+        let (epoch_boundary_slot, state_root) =
+            extract_beacon_block_multiproof(context, &self.beacon_block).map_err(|e| {
+                SszReaderError::SszMultiproof {
+                    msg: "Failed to extract beacon block multiproof".to_string(),
+                    source: e,
+                }
+            })?;
+
+        // beacon state inclusion proofs
+        self.beacon_state
+            .verify(&state_root)
+            .map_err(|e| SszReaderError::SszVerify {
+                msg: "Beacon state root mismatch".to_string(),
+                source: e,
+            })?;
+        let (genesis_validators_root, slot, fork_current_version, validators_root, randao) =
             extract_beacon_state_multiproof(context, &self.beacon_state).map_err(|e| {
                 SszReaderError::SszMultiproof {
                     msg: "Failed to extract beacon state multiproof".to_string(),
                     source: e,
                 }
             })?;
+        assert_eq!(epoch_boundary_slot, slot);
 
-        self.beacon_state
-            .verify(&root)
-            .map_err(|e| SszReaderError::SszVerify {
-                msg: "Beacon state root mismatch".to_string(),
-                source: e,
-            })?;
-
-        let validator_cache =
-            extract_validators_multiproof(self.public_keys, &self.active_validators).map_err(
-                |e| SszReaderError::SszMultiproof {
-                    msg: "Failed to extract active validators multiproof".to_string(),
-                    source: e,
-                },
-            )?;
-
+        // validator list inclusion proofs
+        let validators = extract_validators_multiproof(self.public_keys, &self.active_validators)
+            .map_err(|e| SszReaderError::SszMultiproof {
+            msg: "Failed to extract active validators multiproof".to_string(),
+            source: e,
+        })?;
         self.active_validators
             .verify(&validators_root)
             .map_err(|e| SszReaderError::SszVerify {
@@ -92,18 +112,21 @@ impl StateInput<'_> {
                 source: e,
             })?;
 
-        // TODO: verify state patches
-        for (epoch, _patch) in &self.patches {
-            assert!(*epoch > state_epoch);
+        // make sure that the state actually corresponds to the state of the checkpoint epoch
+        for _epoch in context.compute_epoch_at_slot(epoch_boundary_slot)..checkpoint.epoch {
+            // TODO: process_epoch
+            // update the slot
+            // update the validators
+            // update RANDAO?
+            unimplemented!("process_epoch()")
         }
-        info!("{} State patches verified", self.patches.len());
 
         Ok(SszStateReader {
             context,
-            genesis_validators_root: genesis_validators_root.into(),
-            fork_current_version: fork_current_version[0..4].try_into().unwrap(),
-            epoch: state_epoch,
-            validators: validator_cache,
+            slot,
+            genesis_validators_root,
+            fork_current_version,
+            validators,
             randao,
             patches: self.patches,
         })
@@ -118,21 +141,19 @@ impl StateReader for SszStateReader<'_> {
         self.context
     }
 
-    fn genesis_validators_root(&self) -> B256 {
-        self.genesis_validators_root
+    fn genesis_validators_root(&self) -> Result<Root, Self::Error> {
+        Ok(self.genesis_validators_root)
     }
 
     fn fork_current_version(&self, _epoch: Epoch) -> Result<Version, Self::Error> {
+        // TODO: the fork current version might change
         Ok(self.fork_current_version)
     }
 
     fn active_validators(
         &self,
-        state_epoch: Epoch,
         epoch: Epoch,
     ) -> Result<impl Iterator<Item = (ValidatorIndex, &ValidatorInfo)>, Self::Error> {
-        assert!(state_epoch >= epoch, "Only historical epochs supported");
-
         Ok(self
             .validators
             .iter()
@@ -140,9 +161,9 @@ impl StateReader for SszStateReader<'_> {
             .filter(move |(_, validator)| validator.is_active_at(epoch)))
     }
 
-    fn randao_mix(&self, epoch: Epoch, index: usize) -> Result<Option<B256>, Self::Error> {
-        let randao = if self.epoch == epoch {
-            self.randao.get(&(index as Epoch))
+    fn randao_mix(&self, epoch: Epoch, index: RandaoMixIndex) -> Result<Option<B256>, Self::Error> {
+        let randao = if self.context.compute_epoch_at_slot(self.slot) == epoch {
+            self.randao.get(&index)
         } else {
             self.patches
                 .get(&epoch)
@@ -155,8 +176,22 @@ impl StateReader for SszStateReader<'_> {
     }
 }
 
+fn extract_beacon_block_multiproof(
+    _ctx: &GuestContext,
+    beacon_block: &Multiproof<'_>,
+) -> Result<(Slot, B256), ssz_multiproofs::Error> {
+    let mut values = beacon_block.values();
+    // TODO: Make indices constant
+    let slot: &[u8; 32] = values.next_assert_gindex(8)?;
+    let state_root: &[u8; 32] = values.next_assert_gindex(11)?;
+
+    assert!(values.next().is_none());
+
+    Ok((u64_from_chunk(slot), state_root.into()))
+}
+
 /// Extracts the relevant fields from the multiproof of the BeaconState.
-/// Currently includes:
+/// Currently, includes:
 /// - genesis_validators_root
 /// - slot
 /// - fork_current_version
@@ -165,7 +200,7 @@ impl StateReader for SszStateReader<'_> {
 fn extract_beacon_state_multiproof(
     ctx: &GuestContext,
     beacon_state: &Multiproof<'_>,
-) -> Result<(B256, Epoch, [u8; 4], B256, BTreeMap<Epoch, B256>), ssz_multiproofs::Error> {
+) -> Result<(B256, Slot, [u8; 4], B256, BTreeMap<u64, B256>), ssz_multiproofs::Error> {
     let mut beacon_state_iter = beacon_state.values();
     let genesis_validators_root =
         beacon_state_iter.next_assert_gindex(ctx.genesis_validators_root_gindex())?;
@@ -189,7 +224,7 @@ fn extract_beacon_state_multiproof(
 
     Ok((
         genesis_validators_root.into(),
-        ctx.compute_epoch_at_slot(u64_from_chunk(slot)),
+        u64_from_chunk(slot),
         fork_current_version[0..4].try_into().unwrap(),
         validators_root.into(),
         randao,

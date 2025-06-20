@@ -26,16 +26,20 @@ pub struct Attestation {
 }
 
 impl Attestation {
-    pub fn get_committee_indices(&self) -> Vec<u64> {
+    /// Return the set of committee indices corresponding to `committee_bits`.
+    ///
+    /// See: https://github.com/ethereum/consensus-specs/blob/dev/specs/electra/beacon-chain.md#new-get_committee_indices
+    pub fn get_committee_indices(&self) -> Vec<CommitteeIndex> {
         self.committee_bits
             .iter()
             .enumerate()
-            .filter_map(|(index, bit)| if bit { Some(index as u64) } else { None })
+            .filter_map(|(index, bit)| if bit { Some(index) } else { None })
             .collect()
     }
 
-    // get_attesting_indices
-    // see: https://github.com/ethereum/consensus-specs/blob/dev/specs/electra/beacon-chain.md#modified-get_attesting_indices
+    /// Return the set of attesting indices corresponding to `aggregation_bits` and `committee_bits`.
+    ///
+    /// See: https://github.com/ethereum/consensus-specs/blob/dev/specs/electra/beacon-chain.md#modified-get_attesting_indices
     pub fn get_attesting_indices<C: Ctx>(
         &self,
         ctx: &C,
@@ -45,7 +49,7 @@ impl Attestation {
         let mut attesting_indices: BTreeSet<usize> = BTreeSet::new();
         let mut committee_offset = 0;
         for committee_index in committee_indices {
-            assert!(committee_index < committee_cache.get_committee_count_per_slot() as u64);
+            assert!(committee_index < committee_cache.get_committee_count_per_slot());
 
             let committee = committee_cache.get_beacon_committee(
                 self.data.slot,

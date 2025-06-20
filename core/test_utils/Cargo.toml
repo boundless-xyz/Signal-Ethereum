@@ -4,15 +4,12 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-z-core = { path = ".." }
-
-alloy-primitives = { workspace = true, default-features = false }
-thiserror = { workspace = true }
-elsa = { version = "1.11" }
-ethereum-consensus = { workspace = true, default-features = false }
-serde_json = "1.0.133"
+alloy-primitives = { workspace = true }
 anyhow = { workspace = true }
-serde = { workspace = true }
-
 beacon_chain = { workspace = true } 
 beacon_types = { workspace = true } 
+ethereum-consensus = { workspace = true, default-features = false }
+serde = { workspace = true }
+serde_json = "1.0.133"
+tracing = { workspace = true }
+z-core = { path = ".." }

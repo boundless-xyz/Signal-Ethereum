@@ -6,7 +6,6 @@ edition = "2021"
 [dependencies]
 anyhow = "1.0"
 async-trait = "0.1"
-beacon-api-client = { git = "https://github.com/gattaca-com/ethereum-consensus.git", rev = "072fb2c5abdc8585db5ea6136db561b733a56234" }
 bincode = { workspace = true }
 clap = { version = "4.0", features = ["derive", "env"] }
 ethereum-consensus = { workspace = true }

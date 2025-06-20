@@ -1,8 +1,7 @@
 //! Tests the ability of ZKasper to sync with a beacon chain through various scenarios.
 //!
 //! This test suite makes heavy use of the Lighthouse test harness to create a valid beacon chain in different states
-use std::sync::{Arc, LazyLock};
-
+use anyhow::anyhow;
 use beacon_chain::BlockError;
 use beacon_chain::test_utils::{AttestationStrategy, BlockStrategy};
 use beacon_types::{
@@ -11,13 +10,14 @@ use beacon_types::{
 };
 use bls::get_withdrawal_credentials;
 use state_processing::per_block_processing::is_valid_deposit_signature;
+use std::sync::{Arc, LazyLock};
+use test_log::test;
 use test_utils::{
-    AssertStateReader, HarnessStateReader, TestHarness, consensus_state_from_state, get_harness,
-    get_spec,
+    AssertStateReader, TestHarness, consensus_state_from_state, get_harness, get_spec,
 };
 use z_core::{
-    ConsensusState, GuestContext, PreflightStateReader, StateReader, VerifyError, build_input,
-    threshold, verify,
+    ConsensusState, GuestContext, HostStateReader, InputBuilder, PreflightStateReader,
+    StateProvider, StateReader, VerifyError, threshold, verify,
 };
 
 pub const VALIDATOR_COUNT: u64 = 48;
@@ -48,31 +48,30 @@ async fn test_zkasper_sync(
     println!("Pre consensus state: {:?}", consensus_state);
 
     loop {
-        let state_reader = HarnessStateReader::from(harness);
+        let state_reader = HostStateReader::new(harness);
         let preflight_state_reader =
-            PreflightStateReader::new(&state_reader, consensus_state.finalized_checkpoint.epoch);
+            PreflightStateReader::new(&state_reader, consensus_state.finalized_checkpoint);
         println!(
             "n validators: {}",
             state_reader
-                .active_validators(
-                    consensus_state.finalized_checkpoint.epoch,
-                    consensus_state.finalized_checkpoint.epoch
-                )
+                .active_validators(consensus_state.finalized_checkpoint.epoch)
                 .unwrap()
                 .count()
         );
 
+        let trusted_checkpoint = consensus_state.finalized_checkpoint;
+
         // Build the input and verify it
-        match build_input(&state_reader, consensus_state.clone()).await {
+        let builder = InputBuilder::new(harness.context().clone(), harness);
+        match builder.build(trusted_checkpoint).await {
             Ok(input) => {
                 // Perform a preflight verification to record the state reads
-                let trusted_state_root = input.trusted_checkpoint_state_root;
                 _ = verify(&preflight_state_reader, input.clone())?;
 
-                // build a self contained SSZ reader
+                // build a self-contained SSZ reader
                 let ssz_state_reader = preflight_state_reader
-                    .to_input(&state_reader)
-                    .into_state_reader(trusted_state_root, &GuestContext)
+                    .to_input()
+                    .into_state_reader(&GuestContext, trusted_checkpoint)
                     .expect("Failed to convert to SSZ state reader");
                 // Merge into a single AssertStateReader that ensures identical data returned for each read
                 let assert_sr = AssertStateReader::new(&state_reader, &ssz_state_reader);
@@ -82,7 +81,7 @@ async fn test_zkasper_sync(
                 println!("consensus state: {:?}", &consensus_state);
             }
             Err(e) => {
-                eprintln!("Error building input: {}", e);
+                eprintln!("Error building input: {:#}", anyhow!(e));
                 eprintln!("Could not build more inputs so assuming sync complete");
                 break;
             }
@@ -106,7 +105,7 @@ async fn test_zkasper_sync(
 
 /// This test builds a chain that is just long enough to finalize an epoch
 /// given 100% validator participation
-#[tokio::test]
+#[test(tokio::test)]
 async fn simple_finalize_epoch() {
     let spec = get_spec();
     let harness = get_harness(KEYPAIRS[..].to_vec(), spec, Slot::new(224)).await;
@@ -129,7 +128,7 @@ async fn simple_finalize_epoch() {
     test_zkasper_sync(&harness, consensus_state).await.unwrap();
 }
 
-#[tokio::test]
+#[test(tokio::test)]
 async fn finalizes_with_threshold_participation() {
     let spec = get_spec();
     let harness = get_harness(KEYPAIRS[..].to_vec(), spec, Slot::new(224)).await;
@@ -186,7 +185,7 @@ async fn finalizes_with_threshold_participation() {
 }
 
 // Both the chain and ZKasper should fail to finalize when there is less than 2/3rds participation
-#[tokio::test]
+#[test(tokio::test)]
 async fn does_not_finalize_with_less_than_two_thirds_participation() {
     let spec = get_spec();
     let harness = get_harness(KEYPAIRS[..].to_vec(), spec, Slot::new(224)).await;
@@ -243,7 +242,7 @@ async fn does_not_finalize_with_less_than_two_thirds_participation() {
     );
 }
 
-#[tokio::test]
+#[test(tokio::test)]
 async fn finalize_after_one_empty_epoch() {
     let spec = get_spec();
     let harness = get_harness(KEYPAIRS[..].to_vec(), spec, Slot::new(224)).await;
@@ -288,7 +287,7 @@ async fn finalize_after_one_empty_epoch() {
     test_zkasper_sync(&harness, consensus_state).await.unwrap();
 }
 
-#[tokio::test]
+#[test(tokio::test)]
 async fn finalize_after_inactivity_leak() {
     let spec = get_spec();
     let harness = get_harness(KEYPAIRS[..].to_vec(), spec.clone(), Slot::new(224)).await;
@@ -381,7 +380,7 @@ async fn finalize_after_inactivity_leak() {
 /// This test case has (2/3 stake) < attesting_balance < threshold
 /// The result should be a beacon chain that finalizes and a ZKasper instance that doesn't
 /// This is a liveness failure case
-#[tokio::test]
+#[test(tokio::test)]
 async fn chain_finalizes_but_zkcasper_does_not() {
     let spec = get_spec();
     let harness = get_harness(KEYPAIRS[..].to_vec(), spec, Slot::new(224)).await;
@@ -445,7 +444,7 @@ async fn chain_finalizes_but_zkcasper_does_not() {
 }
 
 /// Have one validator exit occur after the trusted state and still be able to finalize
-#[tokio::test]
+#[test(tokio::test)]
 async fn finalize_when_validator_exits() {
     let spec = get_spec();
     let harness = get_harness(
@@ -502,7 +501,7 @@ async fn finalize_when_validator_exits() {
 }
 
 /// Have one validator join and attest in the next epochs and still be able to finalize
-#[tokio::test]
+#[test(tokio::test)]
 async fn finalize_when_validator_enters() {
     let spec = get_spec();
     let mut harness = get_harness(KEYPAIRS[..].to_vec(), spec.clone(), Slot::new(224)).await;

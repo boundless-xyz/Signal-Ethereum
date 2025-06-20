@@ -50,8 +50,11 @@ impl<S: StateReader, R: StateReader> StateReader for AssertStateReader<'_, S, R>
                 (None, None) => None,
                 (Some(a), Some(b)) => {
                     assert_eq!(a.0, b.0);
-                    // only compare the public key
-                    assert_eq!(a.1.pubkey, b.1.pubkey);
+                    // do not compare the effective_balance as it is allowed to be incorrect
+                    let mut validator = a.1.clone();
+                    validator.effective_balance = b.1.effective_balance;
+                    assert_eq!(&validator, b.1);
+
                     Some(a)
                 }
                 (a, b) => panic!(

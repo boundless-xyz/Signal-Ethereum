@@ -23,7 +23,6 @@ use crate::Descriptor;
 /// An abstraction around a SSZ merkle multi-proof
 ///
 /// This is serializable and  intended to be passed to the ZKVM for verification.
-///
 // #[derive(Debug, PartialEq, Default, serde::Serialize, serde::Deserialize)]
 // pub struct MultiproofOwnedData {
 //     /// The merkle tree nodes corresponding to both leaves and internal proof nodes

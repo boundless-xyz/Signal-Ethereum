@@ -1,17 +1,12 @@
-use super::PreflightStateReader;
-use crate::HostReaderError::StateMissing;
-use crate::state_reader::state_provider::{BoxedStateProvider, FileProvider};
-use crate::{Ctx, StateProvider};
 use crate::{
-    Epoch, HostContext, Root, StateReader, ValidatorIndex, ValidatorInfo, Version,
-    beacon_state::mainnet::BeaconState,
+    CacheStateProvider, Epoch, HostContext, RandaoMixIndex, Root, Slot, StateProvider,
+    StateProviderError, StateReader, StateRef, ValidatorIndex, ValidatorInfo, Version,
+    state_reader::state_provider::FileProvider,
 };
 use alloy_primitives::B256;
 use elsa::FrozenMap;
 use ethereum_consensus::phase0::Validator;
 use ssz_rs::prelude::*;
-use std::cell::RefCell;
-use std::ops::DerefMut;
 use std::path::PathBuf;
 use thiserror::Error;
 use tracing::{debug, trace};
@@ -29,119 +24,79 @@ pub enum HostReaderError {
     #[error("Not in cache")]
     NotInCache,
     #[error(transparent)]
+    StateProviderError(#[from] StateProviderError),
+    #[error(transparent)]
     Other(#[from] anyhow::Error),
 }
 
-pub struct HostStateReader {
-    context: HostContext,
-    state_cache: StateCache,
+pub struct HostStateReader<P> {
+    provider: P,
     validator_cache: FrozenMap<Epoch, Vec<(ValidatorIndex, ValidatorInfo)>>,
 }
 
-struct StateCache {
-    provider: BoxedStateProvider,
-    state_cache: FrozenMap<Epoch, Box<BeaconState>>,
-    genesis_validators_root: RefCell<Option<Root>>,
-}
-
-impl StateCache {
-    fn new(provider: BoxedStateProvider) -> Self {
+impl<P: StateProvider> HostStateReader<P> {
+    pub fn new(provider: P) -> Self {
         Self {
             provider,
-            state_cache: FrozenMap::new(),
-            genesis_validators_root: RefCell::new(None),
-        }
-    }
-
-    pub fn get(&self, epoch: Epoch) -> Result<&BeaconState, HostReaderError> {
-        match self.state_cache.get(&epoch) {
-            Some(beacon_state) => Ok(beacon_state),
-            None => {
-                let state = self
-                    .provider
-                    .get_state_at_epoch_boundary(epoch)?
-                    .ok_or(StateMissing)?;
-                let genesis_validators_root = state.genesis_validators_root();
-                match self.genesis_validators_root.borrow_mut().deref_mut() {
-                    Some(root) => {
-                        assert_eq!(
-                            root, &genesis_validators_root,
-                            "Validator root not the same"
-                        );
-                    }
-                    root => *root = Some(genesis_validators_root),
-                }
-                // TODO: check that the states form a chain
-
-                Ok(self.state_cache.insert(epoch, state.into()))
-            }
-        }
-    }
-
-    pub fn genesis_validators_root(&self) -> Option<Root> {
-        *self.genesis_validators_root.borrow()
-    }
-}
-
-impl HostStateReader {
-    pub fn new(provider: BoxedStateProvider, context: HostContext) -> Self {
-        Self {
-            context,
-            state_cache: StateCache::new(provider),
             validator_cache: Default::default(),
         }
     }
 
+    fn state(&self, epoch: Epoch) -> Result<StateRef, StateProviderError> {
+        self.provider.state_at_epoch(epoch)
+    }
+}
+
+impl HostStateReader<CacheStateProvider<FileProvider>> {
     pub fn new_with_dir(
         dir: impl Into<PathBuf>,
         context: HostContext,
     ) -> Result<Self, HostReaderError> {
-        let provider = FileProvider::new(dir, &context)?;
-        Ok(Self::new(provider.into(), context))
-    }
-
-    pub fn track(&self, at_epoch: Epoch) -> PreflightStateReader<'_, Self> {
-        PreflightStateReader::new(&self, at_epoch)
-    }
-
-    pub fn get_beacon_state_by_epoch(&self, epoch: Epoch) -> Result<&BeaconState, HostReaderError> {
-        self.state_cache.get(epoch)
+        let provider = CacheStateProvider::new(FileProvider::new(dir, &context)?);
+        Ok(Self::new(provider))
     }
 }
 
-impl StateReader for HostStateReader {
+impl<P: StateProvider> StateProvider for HostStateReader<P> {
+    fn context(&self) -> &HostContext {
+        self.provider.context()
+    }
+
+    fn state_at_slot(&self, slot: Slot) -> Result<StateRef, StateProviderError> {
+        self.provider.state_at_slot(slot)
+    }
+}
+
+impl<P: StateProvider> StateReader for HostStateReader<P> {
     type Error = HostReaderError;
     type Context = HostContext;
 
     fn context(&self) -> &Self::Context {
-        &self.context
+        self.provider.context()
     }
 
-    fn genesis_validators_root(&self) -> B256 {
-        let root = self.state_cache.genesis_validators_root().unwrap();
-        B256::from(root.0)
+    fn genesis_validators_root(&self) -> Result<Root, HostReaderError> {
+        Ok(self.provider.genesis_validators_root()?)
     }
 
     fn fork_current_version(&self, epoch: Epoch) -> Result<Version, HostReaderError> {
-        let state = self.state_cache.get(epoch)?;
+        let state = self.provider.state_at_epoch(epoch)?;
         Ok(state.fork().current_version)
     }
 
     fn active_validators(
         &self,
-        state_epoch: Epoch,
         epoch: Epoch,
     ) -> Result<impl Iterator<Item = (ValidatorIndex, &ValidatorInfo)>, Self::Error> {
-        trace!("HostStateReader::active_validators({state_epoch},{epoch})");
-        assert!(state_epoch >= epoch, "Only historical epochs supported");
+        trace!("HostStateReader::active_validators({epoch})");
 
-        let iter = match self.validator_cache.get(&state_epoch) {
+        let iter = match self.validator_cache.get(&epoch) {
             Some(validators) => validators.iter(),
             None => {
-                let state = self.state_cache.get(state_epoch)?;
+                let beacon_state = self.state(epoch)?;
 
-                debug!("Caching validators for epoch {}...", state_epoch);
-                let validators: Vec<_> = state
+                debug!("Caching validators for epoch {epoch}...");
+                let validators: Vec<_> = beacon_state
                     .validators()
                     .iter()
                     .enumerate()
@@ -150,18 +105,19 @@ impl StateReader for HostStateReader {
                     .collect();
                 debug!("Active validators: {}", validators.len());
 
-                self.validator_cache.insert(state_epoch, validators).iter()
+                self.validator_cache.insert(epoch, validators).iter()
             }
         };
 
         Ok(iter.map(|(idx, validator)| (*idx, validator)))
     }
 
-    fn randao_mix(&self, epoch: Epoch, idx: usize) -> Result<Option<B256>, Self::Error> {
+    fn randao_mix(&self, epoch: Epoch, idx: RandaoMixIndex) -> Result<Option<B256>, Self::Error> {
         trace!("HostStateReader::randao_mix({epoch},{idx})");
-        let state = self.state_cache.get(epoch)?;
+        let beacon_state = self.state(epoch)?;
+        let idx: usize = idx.try_into().unwrap();
 
-        Ok(state
+        Ok(beacon_state
             .randao_mixes()
             .get(idx)
             .map(|randao| B256::from_slice(randao.as_slice())))
@@ -171,27 +127,4 @@ impl StateReader for HostStateReader {
 /// Check if `validator` is active.
 fn is_active_validator(validator: &Validator, epoch: Epoch) -> bool {
     validator.activation_epoch <= epoch && epoch < validator.exit_epoch
-}
-
-impl StateProvider for HostStateReader {
-    fn context(&self) -> &HostContext {
-        &self.context
-    }
-
-    fn get_state_at_epoch_boundary(
-        &self,
-        epoch: Epoch,
-    ) -> Result<Option<BeaconState>, anyhow::Error> {
-        Ok(self
-            .state_cache
-            .get(epoch)
-            .map(|state| Some(state.clone()))?)
-    }
-
-    fn get_state_at_slot(&self, slot: u64) -> Result<Option<BeaconState>, anyhow::Error> {
-        Ok(self
-            .state_cache
-            .get(self.context.compute_epoch_at_slot(slot))
-            .map(|state| Some(state.clone()))?)
-    }
 }

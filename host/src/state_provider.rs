@@ -1,7 +1,7 @@
-use std::{fmt::Display, path::PathBuf};
-
+use anyhow::Context;
+use std::path::PathBuf;
 use tokio::runtime::Handle;
-use z_core::{mainnet::BeaconState, BoxedStateProvider, FileProvider, HostContext, StateProvider};
+use z_core::{FileProvider, HostContext, StateProvider, StateProviderError, StateRef};
 
 use crate::beacon_client::BeaconClient;
 
@@ -9,7 +9,6 @@ use crate::beacon_client::BeaconClient;
 pub(crate) struct PersistentApiStateProvider {
     file_provider: FileProvider,
     client: BeaconClient,
-    context: HostContext,
 }
 
 impl PersistentApiStateProvider {
@@ -22,59 +21,29 @@ impl PersistentApiStateProvider {
         Ok(Self {
             file_provider,
             client,
-            context: context.clone(),
         })
-    }
-    /// Fetches and saves the beacon state at a specific `state_id`.
-    /// NOTE: This will overwrite the file store's state for this epoch if it exists.
-    pub(crate) fn cache_state_at(
-        &self,
-        state_id: impl Display,
-    ) -> Result<Option<BeaconState>, anyhow::Error> {
-        let state = tokio::task::block_in_place(|| {
-            Handle::current()
-                .block_on(self.client.get_beacon_state(state_id))
-                .map_err(|e| anyhow::anyhow!(e))
-                .map(Option::Some)
-        });
-        if let Ok(Some(state)) = state {
-            self.file_provider.save_state(&state)?;
-            Ok(Some(state))
-        } else {
-            state
-        }
     }
 }
 
 impl StateProvider for PersistentApiStateProvider {
     fn context(&self) -> &HostContext {
-        &self.context
+        &self.file_provider.context()
     }
-    fn get_state_at_slot(&self, slot: u64) -> Result<Option<BeaconState>, anyhow::Error> {
+    fn state_at_slot(&self, slot: u64) -> Result<StateRef, StateProviderError> {
         // First try to get the state from the file provider
-        if let Ok(Some(state)) = self.file_provider.get_state_at_slot(slot) {
-            return Ok(Some(state));
+        match self.file_provider.state_at_slot(slot) {
+            Err(StateProviderError::NotFound(_)) => {}
+            state => return state,
         }
 
         let state = tokio::task::block_in_place(|| {
-            Handle::current()
-                .block_on(self.client.get_beacon_state(slot))
-                .map_err(|e| anyhow::anyhow!(e))
-                .map(Option::Some)
-        });
+            Handle::current().block_on(self.client.get_beacon_state(slot))
+        })
+        .context("failed to get state from API")?;
 
-        if let Ok(Some(state)) = state {
-            // Save the state to the file provider for future use
-            self.file_provider.save_state(&state)?;
-            Ok(Some(state))
-        } else {
-            state
-        }
-    }
-}
+        // Save the state to the file provider for future use
+        self.file_provider.save_state(&state)?;
 
-impl From<PersistentApiStateProvider> for BoxedStateProvider {
-    fn from(provider: PersistentApiStateProvider) -> Self {
-        Box::new(provider)
+        Ok(state.into())
     }
 }

@@ -23,11 +23,11 @@ pub type StateRef = Arc<BeaconState>;
 pub trait StateProvider {
     type Spec: EthSpec;
     fn genesis_validators_root(&self) -> Result<Root, StateProviderError> {
-        Ok(self.state_at_slot(0.into())?.genesis_validators_root())
+        Ok(self.state_at_slot(0u64.into())?.genesis_validators_root())
     }
 
     fn state_at_checkpoint(&self, checkpoint: Checkpoint) -> Result<StateRef, StateProviderError> {
-        let state = self.state_at_epoch(checkpoint.epoch)?;
+        let state = self.state_at_epoch(checkpoint.epoch())?;
 
         // check that the start_slot is indeed the epoch boundary
         let epoch_boundary_slot = state.latest_block_header().slot;
@@ -37,7 +37,8 @@ pub trait StateProvider {
 
         warn!(
             "Epoch {} does not contain the epoch boundary block, etching slot {}",
-            checkpoint.epoch, epoch_boundary_slot
+            checkpoint.epoch(),
+            epoch_boundary_slot
         );
 
         let state = self.state_at_slot(epoch_boundary_slot.into())?;
@@ -46,7 +47,7 @@ pub trait StateProvider {
         let mut epoch_boundary_block = state.latest_block_header().clone();
         epoch_boundary_block.state_root = state.hash_tree_root().unwrap();
         crate::ensure!(
-            checkpoint.root == epoch_boundary_block.hash_tree_root().unwrap(),
+            checkpoint.root() == epoch_boundary_block.hash_tree_root().unwrap(),
             StateProviderError::InvalidCheckpoint
         );
 
@@ -82,7 +83,7 @@ impl<P: StateProvider> StateProvider for CacheStateProvider<P> {
         let cache = self.cache.clone().into_map();
         match cache.values().next() {
             Some(state) => Ok(state.genesis_validators_root()),
-            None => Ok(self.state_at_slot(0.into())?.genesis_validators_root()),
+            None => Ok(self.state_at_slot(0u64.into())?.genesis_validators_root()),
         }
     }
 

@@ -1,3 +1,4 @@
+use beacon_types::EthSpec;
 use ethereum_consensus::electra::{Validator, mainnet::VALIDATOR_REGISTRY_LIMIT};
 use ssz_multiproofs::MultiproofBuilder;
 use ssz_rs::prelude::*;
@@ -32,9 +33,9 @@ pub struct PreflightStateReader<'a, SR> {
     mix_epochs: RefCell<BTreeMap<Epoch, BTreeSet<RandaoMixIndex>>>,
 }
 
-impl<'a, S> PreflightStateReader<'a, S>
+impl<'a, S, E: EthSpec> PreflightStateReader<'a, S>
 where
-    S: StateReader + StateProvider,
+    S: StateReader<Spec = E> + StateProvider<Spec = E>,
 {
     pub fn new(reader: &'a S, trusted_checkpoint: Checkpoint) -> Self {
         Self {
@@ -62,15 +63,15 @@ where
             .build(&epoch_boundary_block)
             .unwrap();
         block_multiproof
-            .verify(&self.trusted_checkpoint.root)
+            .verify(&self.trusted_checkpoint.root())
             .unwrap();
         info!("Beacon block multiproof finished");
 
-        let mut patch_builder: BTreeMap<Epoch, StatePatchBuilder<S::Context>> = BTreeMap::new();
+        let mut patch_builder: BTreeMap<Epoch, StatePatchBuilder> = BTreeMap::new();
         let mut proof_builder: MultiproofBuilder = MultiproofBuilder::new();
 
         for (epoch, indices) in self.mix_epochs.take() {
-            if epoch == self.trusted_checkpoint.epoch {
+            if epoch == self.trusted_checkpoint.epoch() {
                 for idx in indices {
                     let path = ["randao_mixes".into(), (idx as usize).into()];
                     proof_builder = proof_builder.with_path::<ElectraBeaconState>(&path);
@@ -151,7 +152,7 @@ where
 
         let patches = patch_builder
             .into_iter()
-            .map(|(k, v)| (k, v.build()))
+            .map(|(k, v)| (k, v.build::<E>()))
             .collect();
 
         StateInput {
@@ -163,16 +164,12 @@ where
         }
     }
 
-    fn patch_builder(
-        &self,
-        epoch: Epoch,
-    ) -> Result<StatePatchBuilder<<S as StateProvider>::Spec>, HostReaderError> {
-        let context = StateReader::context(self.inner);
+    fn patch_builder(&self, epoch: Epoch) -> Result<StatePatchBuilder, HostReaderError> {
         let state = self
             .inner
-            .state_at_slot(context.compute_start_slot_at_epoch(epoch))?;
+            .state_at_slot(epoch.start_slot(E::slots_per_epoch()))?;
 
-        Ok(StatePatchBuilder::new(state, context))
+        Ok(StatePatchBuilder::new(state))
     }
 }
 
@@ -195,7 +192,7 @@ where
         &self,
         epoch: Epoch,
     ) -> Result<impl Iterator<Item = (ValidatorIndex, &ValidatorInfo)>, Self::Error> {
-        assert!(epoch >= self.trusted_checkpoint.epoch);
+        assert!(epoch >= self.trusted_checkpoint.epoch());
 
         let iter = self.inner.active_validators(epoch)?;
         self.validator_epochs.borrow_mut().insert(epoch);

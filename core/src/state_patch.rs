@@ -14,24 +14,19 @@ pub use host::StatePatchBuilder;
 #[cfg(feature = "host")]
 mod host {
     use super::*;
-    use crate::{RandaoMixIndex, StateRef};
+    use crate::{RandaoMixIndex, Slot, StateRef};
     use beacon_types::EthSpec;
     use tracing::debug;
 
-    pub struct StatePatchBuilder<'a, CTX> {
+    pub struct StatePatchBuilder {
         state: StateRef,
-        context: &'a CTX,
         patch: StatePatch,
     }
 
-    impl<'a, CTX> StatePatchBuilder<'a, CTX>
-    where
-        CTX: EthSpec,
-    {
-        pub fn new(state: StateRef, context: &'a CTX) -> Self {
+    impl StatePatchBuilder {
+        pub fn new(state: StateRef) -> Self {
             Self {
                 state,
-                context,
                 patch: Default::default(),
             }
         }
@@ -43,10 +38,10 @@ mod host {
                 .insert(idx, B256::from_slice(randao.as_slice()));
         }
 
-        pub fn build(self) -> StatePatch {
+        pub fn build<E: EthSpec>(self) -> StatePatch {
             debug!(
                 "Created patch for epoch {}: #randao_mixes={}",
-                self.context.compute_epoch_at_slot(self.state.slot()),
+                Slot::from(self.state.slot()).epoch(E::slots_per_epoch()),
                 self.patch.randao_mixes.len(),
             );
             self.patch

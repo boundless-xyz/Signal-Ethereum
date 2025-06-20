@@ -1,7 +1,8 @@
+use beacon_types::EthSpec;
 use clap::{Parser, ValueEnum};
-use ethereum_consensus::electra;
 use methods::BEACON_GUEST_ELF;
 use risc0_zkvm::{default_executor, ExecutorEnv};
+use serde::Serialize;
 use ssz_rs::prelude::*;
 use std::{
     fmt::{self, Display},
@@ -11,9 +12,8 @@ use std::{
 use tracing::info;
 use url::Url;
 use z_core::{
-    verify, CacheStateProvider, Checkpoint, ConsensusState, Ctx, Epoch, GuestContext, HostContext,
-    HostStateReader, Input, InputBuilder, PreflightStateReader, StateInput, StateProvider,
-    StateReader,
+    verify, CacheStateProvider, Checkpoint, ConsensusState, Epoch, HostStateReader, Input,
+    InputBuilder, MainnetEthSpec, PreflightStateReader, StateInput, StateProvider, StateReader,
 };
 use z_core_test_utils::AssertStateReader;
 
@@ -99,6 +99,8 @@ impl fmt::Display for Network {
     }
 }
 
+type Spec = MainnetEthSpec;
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     // Initialize tracing. In order to view logs, run `RUST_LOG=info cargo run`
@@ -108,7 +110,7 @@ async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
 
     // Note: The part of the context we use for mainnet and sepolia is the same.
-    let context: HostContext = electra::Context::for_mainnet().into();
+    let spec = Spec::default();
 
     let beacon_client = BeaconClient::builder(args.beacon_api)
         .with_cache(args.data_dir.join("http"))
@@ -118,31 +120,25 @@ async fn main() -> anyhow::Result<()> {
     let state_dir = args.data_dir.join(args.network.to_string()).join("states");
     fs::create_dir_all(&state_dir)?;
 
-    let provider = PersistentApiStateProvider::new(
-        &state_dir,
-        beacon_client.clone(),
-        &context.clone().into(),
-    )?;
+    let provider = PersistentApiStateProvider::new(&state_dir, beacon_client.clone(), spec)?;
 
     let reader = HostStateReader::new(CacheStateProvider::new(provider));
 
     match args.command {
         Command::Verify { mode, iterations } => {
             let trusted_state =
-                reader.state_at_slot(context.compute_start_slot_at_epoch(args.trusted_epoch))?;
+                reader.state_at_slot(args.trusted_epoch.start_slot(Spec::slots_per_epoch()))?;
             let epoch_boundary_slot = trusted_state.latest_block_header().slot;
             let trusted_beacon_block = beacon_client.get_block(epoch_boundary_slot).await?.unwrap();
             assert_eq!(
                 trusted_beacon_block.state_root(),
                 trusted_state.hash_tree_root().unwrap()
             );
-            let mut trusted_checkpoint = Checkpoint {
-                epoch: args.trusted_epoch,
-                root: trusted_beacon_block.hash_tree_root()?,
-            };
+            let mut trusted_checkpoint =
+                Checkpoint::new(args.trusted_epoch, trusted_beacon_block.hash_tree_root()?);
             info!("Trusted checkpoint: {}", trusted_checkpoint);
 
-            let builder = InputBuilder::new(context, beacon_client.clone());
+            let builder = InputBuilder::<Spec, _>::new(beacon_client.clone());
 
             for i in 0..iterations {
                 tracing::info!("Iteration: {}", i);
@@ -158,10 +154,10 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn run_verify<R: StateReader + StateProvider>(
+fn run_verify<E: EthSpec + Serialize, R: StateReader<Spec = E> + StateProvider<Spec = E>>(
     mode: ExecMode,
     host_reader: &R,
-    input: Input,
+    input: Input<E>,
 ) -> anyhow::Result<ConsensusState> {
     info!("Running Verification in mode: {mode}");
 
@@ -173,7 +169,7 @@ fn run_verify<R: StateReader + StateProvider>(
         let state_input = reader.to_input();
         let ssz_reader = state_input
             .clone()
-            .into_state_reader(&GuestContext, input.state.finalized_checkpoint)?;
+            .into_state_reader(input.state.finalized_checkpoint)?;
         let ssz_consensus_state =
             verify(&AssertStateReader::new(&ssz_reader, &reader), input.clone()).unwrap(); // will panic if verification fails
         info!("Ssz Verification Success!");
@@ -193,7 +189,10 @@ fn run_verify<R: StateReader + StateProvider>(
     Ok(consensus_state)
 }
 
-fn execute_guest_program(state_input: StateInput, input: Input) -> Vec<u8> {
+fn execute_guest_program<E: EthSpec + Serialize>(
+    state_input: StateInput,
+    input: Input<E>,
+) -> Vec<u8> {
     info!("Executing guest program");
     let ssz_reader = bincode::serialize(&state_input).unwrap();
     info!("Serialized SszStateReader: {} bytes", ssz_reader.len());

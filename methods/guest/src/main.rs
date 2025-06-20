@@ -1,6 +1,7 @@
 use risc0_zkvm::guest::env;
-use z_core::{verify, GuestContext, Input, Output, StateInput};
+use z_core::{verify, Input, MainnetEthSpec, Output, StateInput};
 
+type Spec = MainnetEthSpec;
 fn main() {
     let filter = tracing_subscriber::filter::EnvFilter::from_default_env()
         .add_directive(tracing_subscriber::filter::LevelFilter::INFO.into());
@@ -13,7 +14,7 @@ fn main() {
     let input_bytes = env::read_frame();
     env::log("Finished reading frames. Start deserialization...");
 
-    let input: Input = bincode::deserialize(&input_bytes).unwrap();
+    let input: Input<Spec> = bincode::deserialize(&input_bytes).unwrap();
     env::log(&format!("Input deserialized: {} bytes", input_bytes.len()));
 
     let state_reader = {
@@ -24,7 +25,7 @@ fn main() {
         ));
 
         env::log("Verify and Cache SszStateReader");
-        state_input.into_state_reader(&GuestContext, input.state.finalized_checkpoint)
+        state_input.into_state_reader(input.state.finalized_checkpoint)
     }
     .unwrap();
 

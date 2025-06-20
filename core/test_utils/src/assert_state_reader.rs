@@ -1,4 +1,5 @@
 use alloy_primitives::B256;
+use beacon_types::EthSpec;
 use std::iter;
 use z_core::{Epoch, RandaoMixIndex, Root, StateReader, ValidatorIndex, ValidatorInfo, Version};
 
@@ -17,13 +18,11 @@ impl<'a, S: StateReader, R: StateReader> AssertStateReader<'a, S, R> {
     }
 }
 
-impl<S: StateReader, R: StateReader> StateReader for AssertStateReader<'_, S, R> {
+impl<E: EthSpec, S: StateReader<Spec = E>, R: StateReader<Spec = E>> StateReader
+    for AssertStateReader<'_, S, R>
+{
+    type Spec = E;
     type Error = S::Error;
-    type Context = S::Context;
-
-    fn context(&self) -> &S::Context {
-        self.reader_a.context()
-    }
 
     fn genesis_validators_root(&self) -> Result<Root, Self::Error> {
         let a = self.reader_a.genesis_validators_root()?;

@@ -73,7 +73,7 @@ impl StateInput<'_> {
     ) -> Result<SszStateReader<E>, SszReaderError> {
         // beacon block inclusion proofs
         self.beacon_block
-            .verify(&checkpoint.root)
+            .verify(&checkpoint.root())
             .map_err(|e| SszReaderError::SszVerify {
                 msg: "Beacon block root mismatch".to_string(),
                 source: e,
@@ -92,7 +92,7 @@ impl StateInput<'_> {
                 source: e,
             })?;
         let (genesis_validators_root, slot, fork_current_version, validators_root, randao) =
-            extract_beacon_state_multiproof(&self.beacon_state).map_err(|e| {
+            extract_beacon_state_multiproof::<E>(&self.beacon_state).map_err(|e| {
                 SszReaderError::SszMultiproof {
                     msg: "Failed to extract beacon state multiproof".to_string(),
                     source: e,
@@ -114,7 +114,9 @@ impl StateInput<'_> {
             })?;
 
         // make sure that the state actually corresponds to the state of the checkpoint epoch
-        for _epoch in epoch_boundary_slot.epoch(E::slots_per_epoch())..checkpoint.epoch {
+        for _epoch in
+            epoch_boundary_slot.epoch(E::slots_per_epoch()).as_u64()..checkpoint.epoch().as_u64()
+        {
             // TODO: process_epoch
             // update the slot
             // update the validators
@@ -183,7 +185,7 @@ fn extract_beacon_block_multiproof(
 
     assert!(values.next().is_none());
 
-    Ok((u64_from_chunk(slot), state_root.into()))
+    Ok((u64_from_chunk(slot).into(), state_root.into()))
 }
 
 /// Extracts the relevant fields from the multiproof of the BeaconState.
@@ -210,7 +212,7 @@ fn extract_beacon_state_multiproof<E: EthSpec>(
         .map(|(gindex, randao)| {
             // 0 <= index <= EPOCHS_PER_HISTORICAL_VECTOR
             assert!(gindex >= randao_gindex_base);
-            assert!(gindex <= randao_gindex_base + E::epochs_per_historical_vector());
+            assert!(gindex <= randao_gindex_base + E::epochs_per_historical_vector() as u64);
 
             let index = gindex - randao_gindex_base;
             (index, B256::from(randao))
@@ -219,7 +221,7 @@ fn extract_beacon_state_multiproof<E: EthSpec>(
 
     Ok((
         genesis_validators_root.into(),
-        u64_from_chunk(slot),
+        u64_from_chunk(slot.into()).into(),
         fork_current_version[0..4].try_into().unwrap(),
         validators_root.into(),
         randao,

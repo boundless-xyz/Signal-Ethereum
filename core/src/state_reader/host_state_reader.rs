@@ -1,6 +1,6 @@
 use crate::{
-    CacheStateProvider, Epoch, HostContext, RandaoMixIndex, Root, Slot, StateProvider,
-    StateProviderError, StateReader, StateRef, ValidatorIndex, ValidatorInfo, Version,
+    CacheStateProvider, Epoch, RandaoMixIndex, Root, Slot, StateProvider, StateProviderError,
+    StateReader, StateRef, ValidatorIndex, ValidatorInfo, Version,
     state_reader::state_provider::FileProvider,
 };
 use alloy_primitives::B256;
@@ -118,5 +118,5 @@ impl<P: StateProvider> StateReader for HostStateReader<P> {
 
 /// Check if `validator` is active.
 fn is_active_validator(validator: &Validator, epoch: Epoch) -> bool {
-    validator.activation_epoch <= epoch && epoch < validator.exit_epoch
+    validator.activation_epoch <= epoch.into() && epoch.as_u64() < validator.exit_epoch
 }

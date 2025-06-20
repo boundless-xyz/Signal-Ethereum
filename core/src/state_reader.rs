@@ -1,5 +1,5 @@
 use crate::{
-    Ctx, Domain, DomainType, Epoch, RandaoMixIndex, Root, ValidatorIndex, ValidatorInfo, Version,
+    Domain, DomainType, Epoch, RandaoMixIndex, Root, ValidatorIndex, ValidatorInfo, Version,
 };
 use alloy_primitives::B256;
 use alloy_primitives::aliases::B32;
@@ -53,7 +53,7 @@ pub trait StateReader {
 
     /// Return the RANDAO mix at a recent `epoch`.
     fn get_randao_mix(&self, state_epoch: Epoch, epoch: Epoch) -> Result<B256, Self::Error> {
-        let idx: RandaoMixIndex = (epoch % self.context().epochs_per_historical_vector())
+        let idx: RandaoMixIndex = (epoch % Self::Spec::epochs_per_historical_vector() as u64)
             .try_into()
             .unwrap();
 
@@ -72,41 +72,33 @@ pub trait StateReader {
 
     /// Return the seed at `epoch`.
     fn get_seed(&self, epoch: Epoch, domain_type: B32) -> Result<B256, Self::Error> {
-        let ctx = self.context();
-
         // the seed for epoch is based on the RANDAO from the epoch MIN_SEED_LOOKAHEAD + 1 ago
         let mix = self.get_randao_mix(
             epoch,
+            // TODO (ec2): I think we can do normal arithmetic here instead of `checked_add` since it will saturate.
             epoch
-                .checked_add(ctx.epochs_per_historical_vector() - ctx.min_seed_lookahead() - 1)
-                .unwrap(),
+                .as_u64()
+                .checked_add(
+                    Self::Spec::epochs_per_historical_vector() as u64
+                        - Self::Spec::default_spec().min_seed_lookahead.as_u64()
+                        - 1,
+                )
+                .unwrap()
+                .into(),
         )?;
 
         let mut h = sha2::Sha256::new();
         Digest::update(&mut h, domain_type);
-        Digest::update(&mut h, uint64_to_bytes(epoch));
+        Digest::update(&mut h, uint64_to_bytes(epoch.into()));
         Digest::update(&mut h, mix);
 
         Ok(<[u8; 32]>::from(h.finalize()).into())
     }
 
-    /// Return the number of committees in each slot for the given `epoch`.
-    fn get_committee_count_per_slot(&self, epoch: Epoch) -> Result<u64, Self::Error> {
-        Ok(max(
-            1u64,
-            min(
-                self.context().max_committees_per_slot() as u64,
-                self.get_active_validator_indices(epoch)?.count() as u64
-                    / self.context().slots_per_epoch()
-                    / self.context().target_committee_size(),
-            ),
-        ))
-    }
-
     /// Return the combined effective balance of the active validators.
     fn get_total_active_balance(&self, epoch: Epoch) -> Result<u64, Self::Error> {
         Ok(max(
-            self.context().effective_balance_increment(),
+            Self::Spec::default_spec().effective_balance_increment,
             self.active_validators(epoch)?
                 .map(|(_, validator)| validator.effective_balance)
                 .sum(),

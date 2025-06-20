@@ -1,7 +1,8 @@
 use crate::shuffle_list::shuffle_list;
-use crate::{CommitteeIndex, Ctx, Epoch, Slot, ValidatorIndex, ensure};
+use crate::{CommitteeIndex, Epoch, Slot, ValidatorIndex, ensure};
 use alloc::{vec, vec::Vec};
 use alloy_primitives::B256;
+use beacon_types::EthSpec;
 use core::num::NonZeroUsize;
 use core::ops::Range;
 use tracing::debug;
@@ -9,12 +10,13 @@ use tracing::debug;
 /// Computes and stores the shuffling for an epoch. Provides various getters to allow callers to
 /// read the committees for the given epoch.
 #[derive(Debug, Default)]
-pub struct CommitteeCache {
+pub struct CommitteeCache<E: EthSpec> {
     initialized_epoch: Option<Epoch>,
     shuffling: Vec<usize>,
     shuffling_positions: Vec<Option<NonZeroUsize>>,
     committees_per_slot: usize,
     slots_per_epoch: usize,
+    _spec: core::marker::PhantomData<E>,
 }
 
 #[derive(thiserror::Error, Debug, PartialEq)]
@@ -42,17 +44,16 @@ pub struct ShuffleData {
     pub(crate) committees_per_slot: u64,
 }
 
-impl CommitteeCache {
+impl<E: EthSpec> CommitteeCache<E> {
     /// Return a new, fully initialized cache.
-    pub fn initialized<C: Ctx>(
+    pub fn initialized(
         ShuffleData {
             seed,
             indices: active_validator_indices,
             committees_per_slot,
         }: ShuffleData,
         epoch: Epoch,
-        context: &C,
-    ) -> Result<CommitteeCache, Error> {
+    ) -> Result<CommitteeCache<E>, Error> {
         // May cause divide-by-zero errors.
         ensure!(committees_per_slot > 0, Error::ZeroSlotsPerEpoch);
 
@@ -68,7 +69,7 @@ impl CommitteeCache {
         );
         let shuffling = shuffle_list(
             active_validator_indices,
-            context.shuffle_round_count() as u8,
+            E::default_spec().shuffle_round_count,
             &seed[..],
             false,
         )
@@ -89,7 +90,8 @@ impl CommitteeCache {
             shuffling,
             shuffling_positions,
             committees_per_slot: committees_per_slot.try_into().unwrap(),
-            slots_per_epoch: context.slots_per_epoch().try_into().unwrap(),
+            slots_per_epoch: E::slots_per_epoch() as usize,
+            _spec: core::marker::PhantomData,
         })
     }
 
@@ -111,16 +113,15 @@ impl CommitteeCache {
     /// This is the validator indices for the committee members
     ///
     /// Return `None` if the cache is uninitialized, or the `slot` or `index` is out of range.
-    pub fn get_beacon_committee<C: Ctx>(
+    pub fn get_beacon_committee(
         &self,
         slot: Slot,
         index: CommitteeIndex,
-        context: &C,
     ) -> Result<&[usize], Error> {
         ensure!(self.initialized_epoch.is_some(), Error::NotInitialized);
         ensure!(
-            self.is_initialized_at(context.compute_epoch_at_slot(slot)),
-            Error::NotInitializedAtEpoch(context.compute_epoch_at_slot(slot),)
+            self.is_initialized_at(slot.epoch(E::slots_per_epoch())),
+            Error::NotInitializedAtEpoch(slot.epoch(E::slots_per_epoch()))
         );
         ensure!(
             index < self.committees_per_slot,
@@ -140,15 +141,11 @@ impl CommitteeCache {
     /// Get all the Beacon committees at a given `slot`.
     ///
     /// Committees are sorted by ascending index order 0..committees_per_slot
-    pub fn get_beacon_committees_at_slot<C: Ctx>(
-        &self,
-        slot: Slot,
-        context: &C,
-    ) -> Result<Vec<&[usize]>, Error> {
+    pub fn get_beacon_committees_at_slot(&self, slot: Slot) -> Result<Vec<&[usize]>, Error> {
         ensure!(self.initialized_epoch.is_some(), Error::NotInitialized);
 
         (0..self.get_committee_count_per_slot())
-            .map(|index| self.get_beacon_committee(slot, index, context))
+            .map(|index| self.get_beacon_committee(slot, index))
             .collect()
     }
 
@@ -206,7 +203,7 @@ pub fn compute_committee_index_in_epoch(
     committees_per_slot: usize,
     committee_index: CommitteeIndex,
 ) -> CommitteeIndex {
-    (slot % slots_per_epoch as u64) as CommitteeIndex * committees_per_slot
+    (slot % slots_per_epoch as u64).as_usize() * committees_per_slot
         + committee_index as CommitteeIndex
 }
 

@@ -1,23 +1,24 @@
 use anyhow::Context;
+use beacon_types::EthSpec;
 use std::path::PathBuf;
 use tokio::runtime::Handle;
-use z_core::{FileProvider, HostContext, StateProvider, StateProviderError, StateRef};
+use z_core::{FileProvider, Slot, StateProvider, StateProviderError, StateRef};
 
 use crate::beacon_client::BeaconClient;
 
 #[derive(Clone)]
-pub(crate) struct PersistentApiStateProvider {
-    file_provider: FileProvider,
+pub(crate) struct PersistentApiStateProvider<E: EthSpec> {
+    file_provider: FileProvider<E>,
     client: BeaconClient,
 }
 
-impl PersistentApiStateProvider {
+impl<E: EthSpec> PersistentApiStateProvider<E> {
     pub(crate) fn new(
         dir: impl Into<PathBuf>,
         client: BeaconClient,
-        context: &HostContext,
+        spec: E,
     ) -> Result<Self, anyhow::Error> {
-        let file_provider = FileProvider::new(dir, context)?;
+        let file_provider = FileProvider::new(dir, spec)?;
         Ok(Self {
             file_provider,
             client,
@@ -25,11 +26,10 @@ impl PersistentApiStateProvider {
     }
 }
 
-impl StateProvider for PersistentApiStateProvider {
-    fn context(&self) -> &HostContext {
-        &self.file_provider.context()
-    }
-    fn state_at_slot(&self, slot: u64) -> Result<StateRef, StateProviderError> {
+impl<E: EthSpec> StateProvider for PersistentApiStateProvider<E> {
+    type Spec = E;
+
+    fn state_at_slot(&self, slot: Slot) -> Result<StateRef, StateProviderError> {
         // First try to get the state from the file provider
         match self.file_provider.state_at_slot(slot) {
             Err(StateProviderError::NotFound(_)) => {}

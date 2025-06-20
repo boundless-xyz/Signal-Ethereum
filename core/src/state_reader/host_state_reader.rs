@@ -4,6 +4,7 @@ use crate::{
     state_reader::state_provider::FileProvider,
 };
 use alloy_primitives::B256;
+use beacon_types::EthSpec;
 use elsa::FrozenMap;
 use ethereum_consensus::phase0::Validator;
 use ssz_rs::prelude::*;
@@ -47,20 +48,15 @@ impl<P: StateProvider> HostStateReader<P> {
     }
 }
 
-impl HostStateReader<CacheStateProvider<FileProvider>> {
-    pub fn new_with_dir(
-        dir: impl Into<PathBuf>,
-        context: HostContext,
-    ) -> Result<Self, HostReaderError> {
-        let provider = CacheStateProvider::new(FileProvider::new(dir, &context)?);
+impl<E: EthSpec> HostStateReader<CacheStateProvider<FileProvider<E>>> {
+    pub fn new_with_dir(dir: impl Into<PathBuf>, spec: E) -> Result<Self, HostReaderError> {
+        let provider = CacheStateProvider::new(FileProvider::new(dir, spec)?);
         Ok(Self::new(provider))
     }
 }
 
 impl<P: StateProvider> StateProvider for HostStateReader<P> {
-    fn context(&self) -> &HostContext {
-        self.provider.context()
-    }
+    type Spec = P::Spec;
 
     fn state_at_slot(&self, slot: Slot) -> Result<StateRef, StateProviderError> {
         self.provider.state_at_slot(slot)
@@ -69,11 +65,7 @@ impl<P: StateProvider> StateProvider for HostStateReader<P> {
 
 impl<P: StateProvider> StateReader for HostStateReader<P> {
     type Error = HostReaderError;
-    type Context = HostContext;
-
-    fn context(&self) -> &Self::Context {
-        self.provider.context()
-    }
+    type Spec = P::Spec;
 
     fn genesis_validators_root(&self) -> Result<Root, HostReaderError> {
         Ok(self.provider.genesis_validators_root()?)

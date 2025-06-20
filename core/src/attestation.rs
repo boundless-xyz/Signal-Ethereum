@@ -1,10 +1,11 @@
 use std::collections::BTreeSet;
 
+use beacon_types::EthSpec;
 use tree_hash_derive::TreeHash;
 
 use crate::{
-    Checkpoint, CommitteeIndex, Ctx, MaxCommitteesPerSlot, MaxValidatorsPerSlot, Root, Signature,
-    Slot, committee_cache,
+    Checkpoint, CommitteeIndex, MaxCommitteesPerSlot, MaxValidatorsPerSlot, Root, Signature, Slot,
+    committee_cache,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize, TreeHash)]
@@ -40,7 +41,7 @@ impl Attestation {
     /// Return the set of attesting indices corresponding to `aggregation_bits` and `committee_bits`.
     ///
     /// See: https://github.com/ethereum/consensus-specs/blob/dev/specs/electra/beacon-chain.md#modified-get_attesting_indices
-    pub fn get_attesting_indices<C: Ctx>(
+    pub fn get_attesting_indices<E: EthSpec>(
         &self,
         ctx: &C,
         committee_cache: &committee_cache::CommitteeCache,

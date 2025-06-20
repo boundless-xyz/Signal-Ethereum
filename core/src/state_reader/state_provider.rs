@@ -1,5 +1,6 @@
-use crate::{Checkpoint, Ctx, Epoch, HostContext, Root, Slot, beacon_state::mainnet::BeaconState};
+use crate::{Checkpoint, Epoch, Root, Slot, beacon_state::mainnet::BeaconState};
 use anyhow::{Context, ensure};
+use beacon_types::EthSpec;
 use elsa::FrozenMap;
 use ssz_rs::HashTreeRoot;
 use std::fs;
@@ -20,10 +21,9 @@ pub enum StateProviderError {
 pub type StateRef = Arc<BeaconState>;
 
 pub trait StateProvider {
-    fn context(&self) -> &HostContext;
-
+    type Spec: EthSpec;
     fn genesis_validators_root(&self) -> Result<Root, StateProviderError> {
-        Ok(self.state_at_slot(0)?.genesis_validators_root())
+        Ok(self.state_at_slot(0.into())?.genesis_validators_root())
     }
 
     fn state_at_checkpoint(&self, checkpoint: Checkpoint) -> Result<StateRef, StateProviderError> {
@@ -40,7 +40,7 @@ pub trait StateProvider {
             checkpoint.epoch, epoch_boundary_slot
         );
 
-        let state = self.state_at_slot(epoch_boundary_slot)?;
+        let state = self.state_at_slot(epoch_boundary_slot.into())?;
 
         // check that the state matches the epoch boundary block
         let mut epoch_boundary_block = state.latest_block_header().clone();
@@ -54,7 +54,7 @@ pub trait StateProvider {
     }
 
     fn state_at_epoch(&self, epoch: Epoch) -> Result<StateRef, StateProviderError> {
-        let start_slot = self.context().compute_start_slot_at_epoch(epoch);
+        let start_slot = epoch.start_slot(Self::Spec::slots_per_epoch());
         self.state_at_slot(start_slot)
     }
 
@@ -67,7 +67,7 @@ pub struct CacheStateProvider<P> {
     cache: FrozenMap<Slot, Box<Arc<BeaconState>>>,
 }
 
-impl<P: StateProvider> CacheStateProvider<P> {
+impl<P> CacheStateProvider<P> {
     pub fn new(provider: P) -> Self {
         Self {
             inner: provider,
@@ -77,15 +77,12 @@ impl<P: StateProvider> CacheStateProvider<P> {
 }
 
 impl<P: StateProvider> StateProvider for CacheStateProvider<P> {
-    fn context(&self) -> &HostContext {
-        self.inner.context()
-    }
-
+    type Spec = P::Spec;
     fn genesis_validators_root(&self) -> Result<Root, StateProviderError> {
         let cache = self.cache.clone().into_map();
         match cache.values().next() {
             Some(state) => Ok(state.genesis_validators_root()),
-            None => Ok(self.state_at_slot(0)?.genesis_validators_root()),
+            None => Ok(self.state_at_slot(0.into())?.genesis_validators_root()),
         }
     }
 
@@ -102,19 +99,16 @@ impl<P: StateProvider> StateProvider for CacheStateProvider<P> {
 }
 
 #[derive(Clone)]
-pub struct FileProvider {
+pub struct FileProvider<E: EthSpec> {
     directory: PathBuf,
-    context: HostContext,
+    spec: E,
 }
 
-impl FileProvider {
-    pub fn new(
-        directory: impl Into<PathBuf>,
-        context: &HostContext,
-    ) -> Result<Self, anyhow::Error> {
+impl<E: EthSpec> FileProvider<E> {
+    pub fn new(directory: impl Into<PathBuf>, spec: E) -> Result<Self, anyhow::Error> {
         let provider = Self {
             directory: directory.into(),
-            context: context.clone(),
+            spec,
         };
         ensure!(provider.directory.is_dir(), "not a directory");
 
@@ -122,8 +116,8 @@ impl FileProvider {
     }
 
     pub fn save_state(&self, state: &BeaconState) -> Result<(), anyhow::Error> {
-        let slot = state.slot();
-        let epoch = self.context.compute_epoch_at_slot(slot);
+        let slot = Slot::from(state.slot());
+        let epoch = slot.epoch(E::slots_per_epoch());
         let file = self.directory.join(format!("{}_beacon_state.ssz", slot));
         ensure!(
             !file.exists(),
@@ -136,12 +130,9 @@ impl FileProvider {
     }
 }
 
-impl StateProvider for FileProvider {
-    fn context(&self) -> &HostContext {
-        &self.context
-    }
-
-    fn state_at_slot(&self, slot: u64) -> Result<StateRef, StateProviderError> {
+impl<E: EthSpec> StateProvider for FileProvider<E> {
+    type Spec = E;
+    fn state_at_slot(&self, slot: Slot) -> Result<StateRef, StateProviderError> {
         let file = self.directory.join(format!("{}_beacon_state.ssz", slot));
         if !file.exists() {
             return Err(StateProviderError::NotFound(slot));

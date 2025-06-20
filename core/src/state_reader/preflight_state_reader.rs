@@ -5,7 +5,7 @@ use thiserror::Error;
 
 use super::{StateInput, host_state_reader::HostReaderError};
 use crate::{
-    Checkpoint, Ctx, Epoch, RandaoMixIndex, Root, StatePatchBuilder, StateProvider, StateReader,
+    Checkpoint, Epoch, RandaoMixIndex, Root, StatePatchBuilder, StateProvider, StateReader,
     ValidatorIndex, ValidatorInfo, Version, beacon_state::mainnet::BeaconState,
     mainnet::ElectraBeaconState,
 };
@@ -166,7 +166,7 @@ where
     fn patch_builder(
         &self,
         epoch: Epoch,
-    ) -> Result<StatePatchBuilder<S::Context>, HostReaderError> {
+    ) -> Result<StatePatchBuilder<<S as StateProvider>::Spec>, HostReaderError> {
         let context = StateReader::context(self.inner);
         let state = self
             .inner
@@ -181,11 +181,7 @@ where
     SR: StateReader,
 {
     type Error = SR::Error;
-    type Context = SR::Context;
-
-    fn context(&self) -> &Self::Context {
-        self.inner.context()
-    }
+    type Spec = SR::Spec;
 
     fn genesis_validators_root(&self) -> Result<Root, Self::Error> {
         self.inner.genesis_validators_root()

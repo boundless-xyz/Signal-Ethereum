@@ -14,7 +14,8 @@ pub use host::StatePatchBuilder;
 #[cfg(feature = "host")]
 mod host {
     use super::*;
-    use crate::{Ctx, RandaoMixIndex, StateRef};
+    use crate::{RandaoMixIndex, StateRef};
+    use beacon_types::EthSpec;
     use tracing::debug;
 
     pub struct StatePatchBuilder<'a, CTX> {
@@ -25,7 +26,7 @@ mod host {
 
     impl<'a, CTX> StatePatchBuilder<'a, CTX>
     where
-        CTX: Ctx,
+        CTX: EthSpec,
     {
         pub fn new(state: StateRef, context: &'a CTX) -> Self {
             Self {

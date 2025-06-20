@@ -41,8 +41,8 @@ pub use verify::*;
 
 // Need to redefine/redeclare a bunch of types and constants because we can't use ssz-rs and ethereum-consensus in the guest
 
-pub type Epoch = u64;
-pub type Slot = u64;
+pub type Epoch = beacon_types::Epoch;
+pub type Slot = beacon_types::Slot;
 pub type CommitteeIndex = usize;
 pub type ValidatorIndex = usize;
 pub type RandaoMixIndex = u64;
@@ -105,7 +105,7 @@ pub struct ValidatorInfo {
 impl ValidatorInfo {
     /// Checks if the validator is active at the given epoch.
     pub fn is_active_at(&self, epoch: Epoch) -> bool {
-        self.activation_epoch <= epoch && epoch < self.exit_epoch
+        self.activation_epoch <= epoch.into() && epoch < self.exit_epoch
     }
 }
 

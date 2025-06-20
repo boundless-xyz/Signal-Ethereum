@@ -3,6 +3,7 @@ use crate::{
 };
 use alloy_primitives::B256;
 use alloy_primitives::aliases::B32;
+use beacon_types::EthSpec;
 use sha2::Digest;
 use std::cmp::{max, min};
 use thiserror::Error;
@@ -29,9 +30,7 @@ pub enum StateReaderError {
 
 pub trait StateReader {
     type Error: std::error::Error;
-    type Context: Ctx;
-
-    fn context(&self) -> &Self::Context;
+    type Spec: EthSpec;
 
     /// Return `state.genesis_validators_root`.
     fn genesis_validators_root(&self) -> Result<Root, Self::Error>;

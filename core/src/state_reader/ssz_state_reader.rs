@@ -1,9 +1,14 @@
 use super::StateReader;
 use crate::{
-    Checkpoint, Ctx, Epoch, GuestContext, PublicKey, RandaoMixIndex, Root, Slot, StatePatch,
+    Checkpoint, Epoch, PublicKey, RandaoMixIndex, Root, Slot, StatePatch,
     VALIDATOR_LIST_TREE_DEPTH, VALIDATOR_TREE_DEPTH, ValidatorIndex, ValidatorInfo, Version,
+    guest_context::{
+        fork_current_version_gindex, genesis_validators_root_gindex, randao_mixes_0_gindex,
+        slot_gindex, validators_gindex,
+    },
 };
 use alloy_primitives::B256;
+use beacon_types::EthSpec;
 use serde::{Deserialize, Serialize};
 use ssz_multiproofs::Multiproof;
 use std::collections::BTreeMap;
@@ -29,9 +34,7 @@ pub struct StateInput<'a> {
     pub patches: BTreeMap<Epoch, StatePatch>,
 }
 
-pub struct SszStateReader<'a> {
-    context: &'a GuestContext,
-
+pub struct SszStateReader<E: EthSpec> {
     // beacon state fields
     genesis_validators_root: B256,
     slot: Slot,
@@ -41,6 +44,7 @@ pub struct SszStateReader<'a> {
 
     // additional unverified data
     patches: BTreeMap<Epoch, StatePatch>,
+    _spec: std::marker::PhantomData<E>,
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -63,11 +67,10 @@ pub enum SszReaderError {
 }
 
 impl StateInput<'_> {
-    pub fn into_state_reader(
+    pub fn into_state_reader<E: EthSpec>(
         self,
-        context: &GuestContext,
         checkpoint: Checkpoint,
-    ) -> Result<SszStateReader, SszReaderError> {
+    ) -> Result<SszStateReader<E>, SszReaderError> {
         // beacon block inclusion proofs
         self.beacon_block
             .verify(&checkpoint.root)
@@ -75,12 +78,10 @@ impl StateInput<'_> {
                 msg: "Beacon block root mismatch".to_string(),
                 source: e,
             })?;
-        let (epoch_boundary_slot, state_root) =
-            extract_beacon_block_multiproof(context, &self.beacon_block).map_err(|e| {
-                SszReaderError::SszMultiproof {
-                    msg: "Failed to extract beacon block multiproof".to_string(),
-                    source: e,
-                }
+        let (epoch_boundary_slot, state_root) = extract_beacon_block_multiproof(&self.beacon_block)
+            .map_err(|e| SszReaderError::SszMultiproof {
+                msg: "Failed to extract beacon block multiproof".to_string(),
+                source: e,
             })?;
 
         // beacon state inclusion proofs
@@ -91,7 +92,7 @@ impl StateInput<'_> {
                 source: e,
             })?;
         let (genesis_validators_root, slot, fork_current_version, validators_root, randao) =
-            extract_beacon_state_multiproof(context, &self.beacon_state).map_err(|e| {
+            extract_beacon_state_multiproof(&self.beacon_state).map_err(|e| {
                 SszReaderError::SszMultiproof {
                     msg: "Failed to extract beacon state multiproof".to_string(),
                     source: e,
@@ -113,7 +114,7 @@ impl StateInput<'_> {
             })?;
 
         // make sure that the state actually corresponds to the state of the checkpoint epoch
-        for _epoch in context.compute_epoch_at_slot(epoch_boundary_slot)..checkpoint.epoch {
+        for _epoch in epoch_boundary_slot.epoch(E::slots_per_epoch())..checkpoint.epoch {
             // TODO: process_epoch
             // update the slot
             // update the validators
@@ -122,24 +123,20 @@ impl StateInput<'_> {
         }
 
         Ok(SszStateReader {
-            context,
             slot,
             genesis_validators_root,
             fork_current_version,
             validators,
             randao,
             patches: self.patches,
+            _spec: std::marker::PhantomData,
         })
     }
 }
 
-impl StateReader for SszStateReader<'_> {
+impl<E: EthSpec> StateReader for SszStateReader<E> {
     type Error = SszReaderError;
-    type Context = GuestContext;
-
-    fn context(&self) -> &Self::Context {
-        self.context
-    }
+    type Spec = E;
 
     fn genesis_validators_root(&self) -> Result<Root, Self::Error> {
         Ok(self.genesis_validators_root)
@@ -162,7 +159,7 @@ impl StateReader for SszStateReader<'_> {
     }
 
     fn randao_mix(&self, epoch: Epoch, index: RandaoMixIndex) -> Result<Option<B256>, Self::Error> {
-        let randao = if self.context.compute_epoch_at_slot(self.slot) == epoch {
+        let randao = if self.slot.epoch(E::slots_per_epoch()) == epoch {
             self.randao.get(&index)
         } else {
             self.patches
@@ -177,7 +174,6 @@ impl StateReader for SszStateReader<'_> {
 }
 
 fn extract_beacon_block_multiproof(
-    _ctx: &GuestContext,
     beacon_block: &Multiproof<'_>,
 ) -> Result<(Slot, B256), ssz_multiproofs::Error> {
     let mut values = beacon_block.values();
@@ -197,25 +193,24 @@ fn extract_beacon_block_multiproof(
 /// - fork_current_version
 /// - validators_root
 /// - randao_mixes (only the ones used)
-fn extract_beacon_state_multiproof(
-    ctx: &GuestContext,
+fn extract_beacon_state_multiproof<E: EthSpec>(
     beacon_state: &Multiproof<'_>,
 ) -> Result<(B256, Slot, [u8; 4], B256, BTreeMap<u64, B256>), ssz_multiproofs::Error> {
     let mut beacon_state_iter = beacon_state.values();
     let genesis_validators_root =
-        beacon_state_iter.next_assert_gindex(ctx.genesis_validators_root_gindex())?;
-    let slot = beacon_state_iter.next_assert_gindex(ctx.slot_gindex())?;
+        beacon_state_iter.next_assert_gindex(genesis_validators_root_gindex())?;
+    let slot = beacon_state_iter.next_assert_gindex(slot_gindex())?;
     let fork_current_version =
-        beacon_state_iter.next_assert_gindex(ctx.fork_current_version_gindex())?;
-    let validators_root = beacon_state_iter.next_assert_gindex(ctx.validators_gindex())?;
+        beacon_state_iter.next_assert_gindex(fork_current_version_gindex())?;
+    let validators_root = beacon_state_iter.next_assert_gindex(validators_gindex())?;
 
     // the remaining values of the beacon state correspond to RANDAO
-    let randao_gindex_base = ctx.randao_mixes_0_gindex();
+    let randao_gindex_base = randao_mixes_0_gindex();
     let randao = beacon_state_iter
         .map(|(gindex, randao)| {
             // 0 <= index <= EPOCHS_PER_HISTORICAL_VECTOR
             assert!(gindex >= randao_gindex_base);
-            assert!(gindex <= randao_gindex_base + ctx.epochs_per_historical_vector());
+            assert!(gindex <= randao_gindex_base + E::epochs_per_historical_vector());
 
             let index = gindex - randao_gindex_base;
             (index, B256::from(randao))

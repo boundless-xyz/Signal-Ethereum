@@ -14,8 +14,9 @@
 
 use super::StateReader;
 use crate::{
-    ConsensusState, Ctx, Epoch, GuestContext, PublicKey, RandaoMixIndex, Root, Slot, StatePatch,
-    VALIDATOR_LIST_TREE_DEPTH, VALIDATOR_TREE_DEPTH, ValidatorIndex, ValidatorInfo, Version,
+    ConsensusState, Ctx, Epoch, FAR_FUTURE_EPOCH, GuestContext, PublicKey, RandaoMixIndex, Root,
+    Slot, StatePatch, VALIDATOR_LIST_TREE_DEPTH, VALIDATOR_TREE_DEPTH, ValidatorIndex,
+    ValidatorInfo, Version,
 };
 use alloy_primitives::B256;
 use serde::{Deserialize, Serialize};
@@ -145,9 +146,21 @@ impl StateInput<'_> {
             process_registry_updates(context, &mut validators, finalized_checkpoint_epoch, epoch);
         }
 
-        // state patches must only be used for future epochs
-        if let Some((epoch, _)) = self.patches.first_key_value() {
-            assert!(epoch > &state_epoch);
+        // validating state patches
+        for (&patch_epoch, patch) in &self.patches {
+            // state patches must only be used for future epochs
+            assert!(patch_epoch > state_epoch);
+
+            for (idx, &exit_epoch) in &patch.validator_exits {
+                let prev_validator = validators.get(idx).unwrap();
+
+                // exit_epoch must only change once
+                assert_eq!(prev_validator.exit_epoch, FAR_FUTURE_EPOCH);
+                // exit epoch must be in the future
+                assert!(exit_epoch >= compute_activation_exit_epoch(context, patch_epoch));
+                
+                // TODO: validate against churn
+            }
         }
 
         Ok(SszStateReader {
@@ -181,11 +194,13 @@ impl StateReader for SszStateReader<'_> {
         &self,
         epoch: Epoch,
     ) -> Result<impl Iterator<Item = (ValidatorIndex, &ValidatorInfo)>, Self::Error> {
+        let patch = self.patches.get(&epoch).expect("missing state patch");
+
         Ok(self
             .validators
             .iter()
             .map(|(idx, validator)| (*idx, validator))
-            .filter(move |(_, validator)| validator.is_active_at(epoch)))
+            .filter(move |(idx, validator)| patch.is_active_validator(idx, validator, epoch)))
     }
 
     fn randao_mix(&self, epoch: Epoch, index: RandaoMixIndex) -> Result<Option<B256>, Self::Error> {

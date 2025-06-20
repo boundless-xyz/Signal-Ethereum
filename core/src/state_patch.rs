@@ -19,9 +19,26 @@ use std::collections::BTreeMap;
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct StatePatch {
     pub randao_mixes: BTreeMap<RandaoMixIndex, B256>,
+    pub validator_exits: BTreeMap<ValidatorIndex, Epoch>,
 }
 
-use crate::RandaoMixIndex;
+impl StatePatch {
+    /// Checks if the validator is active at the given epoch.
+    #[inline]
+    pub fn is_active_validator(
+        &self,
+        idx: &ValidatorIndex,
+        validator: &ValidatorInfo,
+        epoch: Epoch,
+    ) -> bool {
+        match self.validator_exits.get(idx) {
+            Some(exit_epoch) => epoch < *exit_epoch && validator.is_active_at(epoch),
+            None => validator.is_active_at(epoch),
+        }
+    }
+}
+
+use crate::{Epoch, RandaoMixIndex, ValidatorIndex, ValidatorInfo};
 #[cfg(feature = "host")]
 pub use host::StatePatchBuilder;
 
@@ -29,6 +46,7 @@ pub use host::StatePatchBuilder;
 mod host {
     use super::*;
     use crate::{Ctx, RandaoMixIndex, StateRef};
+    use ethereum_consensus::phase0::Validator;
     use tracing::debug;
 
     pub struct StatePatchBuilder<'a, CTX> {
@@ -54,6 +72,15 @@ mod host {
             self.patch
                 .randao_mixes
                 .insert(idx, B256::from_slice(randao.as_slice()));
+        }
+
+        pub fn validator_diff(&mut self, validators: impl IntoIterator<Item = &'a Validator>) {
+            for (idx, (a, b)) in self.state.validators().iter().zip(validators).enumerate() {
+                // store validator exits
+                if a.exit_epoch != b.exit_epoch {
+                    self.patch.validator_exits.insert(idx, a.exit_epoch);
+                }
+            }
         }
 
         pub fn build(self) -> StatePatch {

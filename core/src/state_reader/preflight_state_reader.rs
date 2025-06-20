@@ -138,6 +138,14 @@ where
                 patch.randao_mix(idx);
             }
         }
+        for epoch in self.validator_epochs.take() {
+            if epoch != self.trusted_checkpoint.epoch {
+                let patch = patch_builder
+                    .entry(epoch)
+                    .or_insert(self.patch_builder(epoch).unwrap());
+                patch.validator_diff(trusted_state.validators().iter());
+            }
+        }
         let patches = patch_builder
             .into_iter()
             .map(|(k, v)| (k, v.build()))

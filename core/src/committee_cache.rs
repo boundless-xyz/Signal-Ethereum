@@ -1,10 +1,10 @@
-use crate::shuffle_list::shuffle_list;
 use crate::{CommitteeIndex, Epoch, Slot, ValidatorIndex, ensure};
 use alloc::{vec, vec::Vec};
 use alloy_primitives::B256;
 use beacon_types::EthSpec;
 use core::num::NonZeroUsize;
 use core::ops::Range;
+use swap_or_not_shuffle::shuffle_list;
 use tracing::debug;
 
 /// Computes and stores the shuffling for an epoch. Provides various getters to allow callers to

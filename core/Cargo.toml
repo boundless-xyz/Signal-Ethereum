@@ -30,6 +30,7 @@ sha2 = { workspace = true, default-features = false }
 ssz-multiproofs = { path = "../ssz-multiproofs" }
 ssz_rs = { workspace = true, default-features = true, optional = true, features = ["serde"] }
 ssz_types = { version = "0.8.0" }
+swap_or_not_shuffle = { workspace = true }
 syn = { version = "2.0", optional = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }

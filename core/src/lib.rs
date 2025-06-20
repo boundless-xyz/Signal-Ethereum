@@ -18,7 +18,6 @@ mod consensus_state;
 mod guest_context;
 #[cfg(feature = "host")]
 mod input_builder;
-mod shuffle_list;
 mod state_patch;
 mod state_reader;
 mod threshold;

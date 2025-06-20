@@ -48,7 +48,7 @@ impl<CTX: Ctx, CR: ChainReader> InputBuilder<CTX, CR> {
     }
 
     /// Given the current Checkpoint, query a beacon node to build an input that can be
-    /// used to evolve this state to a new state in the "best" way possible
+    /// used to evolve the consensus state at this checkpoint to a new consensus state in the "best" way possible
     pub async fn build(&self, trusted_checkpoint: Checkpoint) -> Result<Input, InputBuilderError> {
         // Find the first consensus state that confirms the finality of the trusted_checkpoint
         let finalization_epoch = self.find_finalization_epoch(trusted_checkpoint).await?;
@@ -106,7 +106,7 @@ impl<CTX: Ctx, CR: ChainReader> InputBuilder<CTX, CR> {
         unreachable!()
     }
 
-    /// Starting from a given state, find all subsequent states that form a chain to the next finalized checkpoint.
+    /// Starting from a given state, find all subsequent consensus_states that form a chain to the next finalized checkpoint.
     async fn get_justifications_until_new_finality(
         &self,
         start_epoch: Epoch,

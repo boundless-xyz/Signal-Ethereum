@@ -1,14 +1,12 @@
 use crate::{
-    AttestationData, BEACON_ATTESTER_DOMAIN, BlsError, CommitteeCache, Domain, Epoch, Input,
-    PublicKey, Root, ShuffleData, Signature, StateReader, StateTransitionError, ValidatorIndex,
-    ValidatorInfo, consensus_state::ConsensusState, ensure, fast_aggregate_verify_pre_aggregated,
+    AttestationData, BEACON_ATTESTER_DOMAIN, BlsError, CommitteeCache, Epoch, Input, PublicKey,
+    ShuffleData, Signature, StateReader, StateTransitionError, ValidatorIndex, ValidatorInfo,
+    consensus_state::ConsensusState, ensure, fast_aggregate_verify_pre_aggregated,
     get_attesting_indices, threshold::threshold,
 };
 use alloc::collections::BTreeMap;
-use beacon_types::EthSpec;
+use beacon_types::{EthSpec, SignedRoot};
 use tracing::{debug, info};
-use tree_hash::TreeHash;
-use tree_hash_derive::TreeHash;
 #[derive(thiserror::Error, Debug, PartialEq)]
 pub enum VerifyError {
     #[error("Invalid attestation: {0}")]
@@ -172,10 +170,17 @@ fn is_valid_indexed_attestation<'a, S: StateReader>(
     if pubkeys.is_empty() {
         return Ok(false);
     }
-    let domain = state_reader
-        .get_domain(BEACON_ATTESTER_DOMAIN, data.target.epoch)
-        .map_err(|e| VerifyError::StateReaderError(e.to_string()))?;
-    let signing_root = compute_signing_root(data, domain);
+    let domain = S::Spec::default_spec().get_domain(
+        data.target.epoch,
+        beacon_types::Domain::BeaconAttester,
+        &state_reader
+            .fork(data.target.epoch)
+            .map_err(|e| VerifyError::StateReaderError(e.to_string()))?,
+        state_reader
+            .genesis_validators_root()
+            .map_err(|e| VerifyError::StateReaderError(e.to_string()))?,
+    );
+    let signing_root = data.signing_root(domain);
 
     Ok(fast_aggregate_verify_pre_aggregated(
         &PublicKey::aggregate(&pubkeys)?,
@@ -218,20 +223,4 @@ pub fn get_shufflings_for_epoch<S: StateReader>(
         epoch,
     )
     .map_err(Into::into)
-}
-
-fn compute_signing_root<T: TreeHash>(ssz_object: &T, domain: Domain) -> Root {
-    let object_root = ssz_object.tree_hash_root();
-
-    #[derive(TreeHash)]
-    pub struct SigningData {
-        pub object_root: Root,
-        pub domain: Domain,
-    }
-
-    let s = SigningData {
-        object_root,
-        domain,
-    };
-    s.tree_hash_root()
 }

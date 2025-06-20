@@ -7,8 +7,7 @@ use thiserror::Error;
 use super::{StateInput, host_state_reader::HostReaderError};
 use crate::{
     Checkpoint, Epoch, RandaoMixIndex, Root, StatePatchBuilder, StateProvider, StateReader,
-    ValidatorIndex, ValidatorInfo, Version, beacon_state::mainnet::BeaconState,
-    mainnet::ElectraBeaconState,
+    ValidatorIndex, ValidatorInfo, beacon_state::mainnet::BeaconState, mainnet::ElectraBeaconState,
 };
 use alloy_primitives::B256;
 use ethereum_consensus::phase0::BeaconBlockHeader;
@@ -90,7 +89,9 @@ where
             BeaconState::Electra(state) => proof_builder
                 .with_path::<ElectraBeaconState>(&["genesis_validators_root".into()])
                 .with_path::<ElectraBeaconState>(&["slot".into()])
+                .with_path::<ElectraBeaconState>(&["fork".into(), "previous_version".into()])
                 .with_path::<ElectraBeaconState>(&["fork".into(), "current_version".into()])
+                .with_path::<ElectraBeaconState>(&["fork".into(), "epoch".into()])
                 .with_path::<ElectraBeaconState>(&["validators".into()])
                 .build(state)
                 .unwrap(),
@@ -184,8 +185,8 @@ where
         self.inner.genesis_validators_root()
     }
 
-    fn fork_current_version(&self, epoch: Epoch) -> Result<Version, Self::Error> {
-        self.inner.fork_current_version(epoch)
+    fn fork(&self, epoch: Epoch) -> Result<beacon_types::Fork, Self::Error> {
+        self.inner.fork(epoch)
     }
 
     fn active_validators(

@@ -1,14 +1,14 @@
 use super::StateReader;
 use crate::{
     Checkpoint, Epoch, PublicKey, RandaoMixIndex, Root, Slot, StatePatch,
-    VALIDATOR_LIST_TREE_DEPTH, VALIDATOR_TREE_DEPTH, ValidatorIndex, ValidatorInfo, Version,
+    VALIDATOR_LIST_TREE_DEPTH, VALIDATOR_TREE_DEPTH, ValidatorIndex, ValidatorInfo,
     guest_context::{
-        fork_current_version_gindex, genesis_validators_root_gindex, randao_mixes_0_gindex,
-        slot_gindex, validators_gindex,
+        fork_current_version_gindex, fork_epoch_gindex, fork_previous_version_gindex,
+        genesis_validators_root_gindex, randao_mixes_0_gindex, slot_gindex, validators_gindex,
     },
 };
 use alloy_primitives::B256;
-use beacon_types::EthSpec;
+use beacon_types::{EthSpec, Fork};
 use serde::{Deserialize, Serialize};
 use ssz_multiproofs::Multiproof;
 use std::collections::BTreeMap;
@@ -38,7 +38,7 @@ pub struct SszStateReader<E: EthSpec> {
     // beacon state fields
     genesis_validators_root: B256,
     slot: Slot,
-    fork_current_version: Version,
+    fork: Fork,
     validators: BTreeMap<ValidatorIndex, ValidatorInfo>,
     randao: BTreeMap<RandaoMixIndex, B256>,
 
@@ -91,7 +91,7 @@ impl StateInput<'_> {
                 msg: "Beacon state root mismatch".to_string(),
                 source: e,
             })?;
-        let (genesis_validators_root, slot, fork_current_version, validators_root, randao) =
+        let (genesis_validators_root, slot, fork, validators_root, randao) =
             extract_beacon_state_multiproof::<E>(&self.beacon_state).map_err(|e| {
                 SszReaderError::SszMultiproof {
                     msg: "Failed to extract beacon state multiproof".to_string(),
@@ -127,7 +127,7 @@ impl StateInput<'_> {
         Ok(SszStateReader {
             slot,
             genesis_validators_root,
-            fork_current_version,
+            fork,
             validators,
             randao,
             patches: self.patches,
@@ -144,9 +144,8 @@ impl<E: EthSpec> StateReader for SszStateReader<E> {
         Ok(self.genesis_validators_root)
     }
 
-    fn fork_current_version(&self, _epoch: Epoch) -> Result<Version, Self::Error> {
-        // TODO: the fork current version might change
-        Ok(self.fork_current_version)
+    fn fork(&self, _epoch: Epoch) -> Result<beacon_types::Fork, Self::Error> {
+        Ok(self.fork.clone())
     }
 
     fn active_validators(
@@ -192,18 +191,26 @@ fn extract_beacon_block_multiproof(
 /// Currently, includes:
 /// - genesis_validators_root
 /// - slot
-/// - fork_current_version
+/// - fork
 /// - validators_root
 /// - randao_mixes (only the ones used)
 fn extract_beacon_state_multiproof<E: EthSpec>(
     beacon_state: &Multiproof<'_>,
-) -> Result<(B256, Slot, [u8; 4], B256, BTreeMap<u64, B256>), ssz_multiproofs::Error> {
+) -> Result<(B256, Slot, Fork, B256, BTreeMap<u64, B256>), ssz_multiproofs::Error> {
     let mut beacon_state_iter = beacon_state.values();
     let genesis_validators_root =
         beacon_state_iter.next_assert_gindex(genesis_validators_root_gindex())?;
     let slot = beacon_state_iter.next_assert_gindex(slot_gindex())?;
+    let fork_previous_version =
+        beacon_state_iter.next_assert_gindex(fork_previous_version_gindex())?;
     let fork_current_version =
         beacon_state_iter.next_assert_gindex(fork_current_version_gindex())?;
+    let fork_epoch = beacon_state_iter.next_assert_gindex(fork_epoch_gindex())?;
+    let fork = Fork {
+        previous_version: fork_previous_version[0..4].try_into().unwrap(),
+        current_version: fork_current_version[0..4].try_into().unwrap(),
+        epoch: u64_from_chunk(fork_epoch).into(),
+    };
     let validators_root = beacon_state_iter.next_assert_gindex(validators_gindex())?;
 
     // the remaining values of the beacon state correspond to RANDAO
@@ -222,7 +229,7 @@ fn extract_beacon_state_multiproof<E: EthSpec>(
     Ok((
         genesis_validators_root.into(),
         u64_from_chunk(slot.into()).into(),
-        fork_current_version[0..4].try_into().unwrap(),
+        fork,
         validators_root.into(),
         randao,
     ))

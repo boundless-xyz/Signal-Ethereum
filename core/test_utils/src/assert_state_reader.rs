@@ -1,7 +1,7 @@
 use alloy_primitives::B256;
 use beacon_types::EthSpec;
 use std::iter;
-use z_core::{Epoch, RandaoMixIndex, Root, StateReader, ValidatorIndex, ValidatorInfo, Version};
+use z_core::{Epoch, RandaoMixIndex, Root, StateReader, ValidatorIndex, ValidatorInfo};
 
 /// A simple state reader used for debugging and testing.
 pub struct AssertStateReader<'a, S, R> {
@@ -31,9 +31,9 @@ impl<E: EthSpec, S: StateReader<Spec = E>, R: StateReader<Spec = E>> StateReader
         Ok(a)
     }
 
-    fn fork_current_version(&self, epoch: Epoch) -> Result<Version, Self::Error> {
-        let a = self.reader_a.fork_current_version(epoch)?;
-        let b = self.reader_b.fork_current_version(epoch).unwrap();
+    fn fork(&self, epoch: Epoch) -> Result<beacon_types::Fork, Self::Error> {
+        let a = self.reader_a.fork(epoch)?;
+        let b = self.reader_b.fork(epoch).unwrap();
         assert_eq!(a, b);
         Ok(a)
     }

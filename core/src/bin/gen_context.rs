@@ -33,7 +33,7 @@ fn gen_guest_context_impl(
         let return_type = syn::parse_str::<syn::Type>(ret_type).unwrap();
 
         quote! {
-            pub fn #method_name(&self) -> #return_type {
+            pub fn #method_name() -> #return_type {
                 #value
             }
         }
@@ -58,9 +58,14 @@ where
             Path::from(&["genesis_validators_root".into()]),
         ),
         (
+            "fork_previous_version",
+            Path::from(&["fork".into(), "previous_version".into()]),
+        ),
+        (
             "fork_current_version",
             Path::from(&["fork".into(), "current_version".into()]),
         ),
+        ("fork_epoch", Path::from(&["fork".into(), "epoch".into()])),
         ("validators", Path::from(&["validators".into()])),
         (
             "randao_mixes_0",

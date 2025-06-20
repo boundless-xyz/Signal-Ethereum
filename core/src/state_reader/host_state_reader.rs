@@ -1,10 +1,10 @@
 use crate::{
     CacheStateProvider, Epoch, RandaoMixIndex, Root, Slot, StateProvider, StateProviderError,
-    StateReader, StateRef, ValidatorIndex, ValidatorInfo, Version,
+    StateReader, StateRef, ValidatorIndex, ValidatorInfo,
     state_reader::state_provider::FileProvider,
 };
 use alloy_primitives::B256;
-use beacon_types::EthSpec;
+use beacon_types::{EthSpec, Fork};
 use elsa::FrozenMap;
 use ethereum_consensus::phase0::Validator;
 use ssz_rs::prelude::*;
@@ -71,9 +71,13 @@ impl<P: StateProvider> StateReader for HostStateReader<P> {
         Ok(self.provider.genesis_validators_root()?)
     }
 
-    fn fork_current_version(&self, epoch: Epoch) -> Result<Version, HostReaderError> {
+    fn fork(&self, epoch: Epoch) -> Result<Fork, HostReaderError> {
         let state = self.provider.state_at_epoch(epoch)?;
-        Ok(state.fork().current_version)
+        Ok(Fork {
+            previous_version: state.fork().previous_version,
+            current_version: state.fork().current_version,
+            epoch: state.fork().epoch.into(),
+        })
     }
 
     fn active_validators(

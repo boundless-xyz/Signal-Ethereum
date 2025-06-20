@@ -85,7 +85,7 @@ where
 
         let mut public_keys = Vec::with_capacity(trusted_state.validators().len());
 
-        info!("Building validator proof");
+        info!("Building validators proof");
         let mut proof_builder = MultiproofBuilder::new();
         proof_builder = proof_builder.with_path::<Validators>(&[PathElement::Length]);
 
@@ -107,7 +107,7 @@ where
         }
         let validator_multiproof = proof_builder.build(trusted_state.validators()).unwrap();
         validator_multiproof.verify(&validators_root).unwrap();
-        info!("Validator multiproof finished");
+        info!("Validators proof finished");
         debug!(
             num = public_keys.len(),
             num_total = trusted_state.validators().len(),

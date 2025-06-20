@@ -127,7 +127,7 @@ impl<CTX: Ctx, CR: ChainReader> InputBuilder<CTX, CR> {
                 .await?;
 
             // add potential justification
-            if let Some(link) = prev_state.justification(&current_state) {
+            if let Some(link) = prev_state.transition_link(&current_state) {
                 links.push(link);
             }
 

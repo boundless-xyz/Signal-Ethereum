@@ -28,8 +28,8 @@ impl ConsensusState {
             && self.current_justified_checkpoint.epoch >= self.previous_justified_checkpoint.epoch
     }
 
-    /// Returns the justification which lead to the transition self->other if any.
-    pub fn justification(&self, other: &Self) -> Option<Link> {
+    /// Returns the justification link which lead to the transition self->other if any.
+    pub fn transition_link(&self, other: &Self) -> Option<Link> {
         assert!(self.is_consistent() && other.is_consistent());
         // other must be newer or equal
         assert!(

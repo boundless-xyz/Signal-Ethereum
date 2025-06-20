@@ -65,11 +65,9 @@ async fn test_zkasper_sync(
                 .count()
         );
 
-        let trusted_checkpoint = consensus_state.finalized_checkpoint;
-
         // Build the input and verify it
         let builder = InputBuilder::new(harness.context().clone(), harness);
-        match builder.build(trusted_checkpoint).await {
+        match builder.build(consensus_state.finalized_checkpoint).await {
             Ok(input) => {
                 println!(
                     "Attestors per link: {:?}",
@@ -95,7 +93,7 @@ async fn test_zkasper_sync(
                 // build a self-contained SSZ reader
                 let ssz_state_reader = preflight_state_reader
                     .to_input()
-                    .into_state_reader(&GuestContext, trusted_checkpoint)
+                    .into_state_reader(&GuestContext, &consensus_state)
                     .expect("Failed to convert to SSZ state reader");
                 // Merge into a single AssertStateReader that ensures identical data returned for each read
                 let assert_sr = AssertStateReader::new(&state_reader, &ssz_state_reader);

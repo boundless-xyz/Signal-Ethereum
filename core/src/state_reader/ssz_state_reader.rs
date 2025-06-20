@@ -1,6 +1,6 @@
 use super::StateReader;
 use crate::{
-    Checkpoint, Ctx, Epoch, GuestContext, PublicKey, RandaoMixIndex, Root, Slot, StatePatch,
+    ConsensusState, Ctx, Epoch, GuestContext, PublicKey, RandaoMixIndex, Root, Slot, StatePatch,
     VALIDATOR_LIST_TREE_DEPTH, VALIDATOR_TREE_DEPTH, ValidatorIndex, ValidatorInfo, Version,
 };
 use alloy_primitives::B256;
@@ -34,10 +34,8 @@ pub struct SszStateReader<'a> {
 
     // beacon state fields
     genesis_validators_root: B256,
-    slot: Slot,
     fork_current_version: Version,
     validators: BTreeMap<ValidatorIndex, ValidatorInfo>,
-    randao: BTreeMap<RandaoMixIndex, B256>,
 
     // additional unverified data
     patches: BTreeMap<Epoch, StatePatch>,
@@ -63,75 +61,92 @@ pub enum SszReaderError {
 }
 
 impl StateInput<'_> {
-    pub fn into_state_reader(
+    pub fn into_state_reader<'a>(
         self,
-        context: &GuestContext,
-        checkpoint: Checkpoint,
-    ) -> Result<SszStateReader, SszReaderError> {
-        // beacon block inclusion proofs
+        context: &'a GuestContext,
+        consensus_state: &ConsensusState,
+    ) -> Result<SszStateReader<'a>, SszReaderError> {
+        // check that the beacon block proofs correspond to the finalized epoch boundary block
         self.beacon_block
-            .verify(&checkpoint.root)
+            .verify(&consensus_state.finalized_checkpoint.root)
             .map_err(|e| SszReaderError::SszVerify {
                 msg: "Beacon block root mismatch".to_string(),
                 source: e,
             })?;
-        let (epoch_boundary_slot, state_root) =
+        // extract the proven state root from the beacon block
+        let state_root =
             extract_beacon_block_multiproof(context, &self.beacon_block).map_err(|e| {
                 SszReaderError::SszMultiproof {
-                    msg: "Failed to extract beacon block multiproof".to_string(),
+                    msg: "Invalid beacon block proof".to_string(),
                     source: e,
                 }
             })?;
 
-        // beacon state inclusion proofs
+        // check that the beacon state proofs correspond to the state of the beacon block
         self.beacon_state
             .verify(&state_root)
             .map_err(|e| SszReaderError::SszVerify {
                 msg: "Beacon state root mismatch".to_string(),
                 source: e,
             })?;
-        let (genesis_validators_root, slot, fork_current_version, validators_root, randao) =
-            extract_beacon_state_multiproof(context, &self.beacon_state).map_err(|e| {
-                SszReaderError::SszMultiproof {
-                    msg: "Failed to extract beacon state multiproof".to_string(),
-                    source: e,
-                }
-            })?;
-        assert_eq!(epoch_boundary_slot, slot);
-
-        // validator list inclusion proofs
-        let validators = extract_validators_multiproof(
-            &self.active_validators,
-            self.public_keys,
-            checkpoint.epoch,
-        )
-        .map_err(|e| SszReaderError::SszMultiproof {
-            msg: "Failed to extract active validators multiproof".to_string(),
-            source: e,
+        let (
+            genesis_validators_root,
+            slot,
+            fork_current_version,
+            validators_root,
+            finalized_checkpoint_epoch,
+        ) = extract_beacon_state_multiproof(context, &self.beacon_state).map_err(|e| {
+            SszReaderError::SszMultiproof {
+                msg: "Invalid beacon state proof".to_string(),
+                source: e,
+            }
         })?;
+
+        // check that the validator proofs correspond to the validators root of the beacon state
         self.active_validators
             .verify(&validators_root)
             .map_err(|e| SszReaderError::SszVerify {
                 msg: "Validators root mismatch".to_string(),
                 source: e,
             })?;
+        // validator list inclusion proofs
+        let mut validators =
+            extract_validators_multiproof(self.public_keys, &self.active_validators).map_err(
+                |e| SszReaderError::SszMultiproof {
+                    msg: "Invalid beacon state proof".to_string(),
+                    source: e,
+                },
+            )?;
 
-        // make sure that the state actually corresponds to the state of the checkpoint epoch
-        for _epoch in context.compute_epoch_at_slot(epoch_boundary_slot)..checkpoint.epoch {
-            // TODO: process_epoch
-            // update the slot
-            // update the validators
-            // update RANDAO?
-            unimplemented!("process_epoch()")
+        let state_epoch = context.compute_epoch_at_slot(slot);
+
+        // Our trusted state is from `slot`, but our consensus state is at
+        // `current_justified_checkpoint`. This means that we have missed all the state changes
+        // introduced by the intermediate `state_transition()` calls. From the trusted state, we
+        // only use the validator registry, so it boils down to the process_registry_updates().
+        for epoch in state_epoch..=consensus_state.current_justified_checkpoint.epoch {
+            // By definition, we know that the next finalization will happen at the
+            // `current_justified_checkpoint`.
+            let finalized_checkpoint_epoch =
+                if epoch < consensus_state.current_justified_checkpoint.epoch {
+                    finalized_checkpoint_epoch
+                } else {
+                    consensus_state.finalized_checkpoint.epoch
+                };
+
+            process_registry_updates(context, &mut validators, finalized_checkpoint_epoch, epoch);
+        }
+
+        // state patches must only be used for future epochs
+        if let Some((epoch, _)) = self.patches.first_key_value() {
+            assert!(epoch > &state_epoch);
         }
 
         Ok(SszStateReader {
             context,
-            slot,
             genesis_validators_root,
             fork_current_version,
             validators,
-            randao,
             patches: self.patches,
         })
     }
@@ -158,81 +173,71 @@ impl StateReader for SszStateReader<'_> {
         &self,
         epoch: Epoch,
     ) -> Result<impl Iterator<Item = (ValidatorIndex, &ValidatorInfo)>, Self::Error> {
-        let latest_finalized = self.context.compute_epoch_at_slot(self.slot);
         Ok(self
             .validators
             .iter()
             .map(|(idx, validator)| (*idx, validator))
-            .filter(move |(_, validator)| validator.is_active_at(latest_finalized, epoch)))
+            .filter(move |(_, validator)| validator.is_active_at(epoch)))
     }
 
     fn randao_mix(&self, epoch: Epoch, index: RandaoMixIndex) -> Result<Option<B256>, Self::Error> {
-        let randao = if self.context.compute_epoch_at_slot(self.slot) == epoch {
-            self.randao.get(&index)
-        } else {
-            self.patches
-                .get(&epoch)
-                .ok_or(Self::Error::MissingStatePatch(epoch))?
-                .randao_mixes
-                .get(&index)
-        };
+        let randao = self
+            .patches
+            .get(&epoch)
+            .ok_or(Self::Error::MissingStatePatch(epoch))?
+            .randao_mixes
+            .get(&index);
 
         Ok(randao.cloned())
     }
 }
 
+/// Extracts the relevant fields from the inclusion proof of the beacon block.
+///
+/// Currently, includes:
+/// - state_root
 fn extract_beacon_block_multiproof(
     _ctx: &GuestContext,
     beacon_block: &Multiproof<'_>,
-) -> Result<(Slot, B256), ssz_multiproofs::Error> {
+) -> Result<B256, ssz_multiproofs::Error> {
     let mut values = beacon_block.values();
-    // TODO: Make indices constant
-    let slot: &[u8; 32] = values.next_assert_gindex(8)?;
+    // TODO: Make index constant
     let state_root: &[u8; 32] = values.next_assert_gindex(11)?;
 
     assert!(values.next().is_none());
 
-    Ok((u64_from_chunk(slot), state_root.into()))
+    Ok(state_root.into())
 }
 
 /// Extracts the relevant fields from the multiproof of the BeaconState.
+///
 /// Currently, includes:
 /// - genesis_validators_root
 /// - slot
 /// - fork_current_version
 /// - validators_root
-/// - randao_mixes (only the ones used)
+/// - finalized_checkpoint.epoch
 fn extract_beacon_state_multiproof(
     ctx: &GuestContext,
     beacon_state: &Multiproof<'_>,
-) -> Result<(B256, Slot, [u8; 4], B256, BTreeMap<u64, B256>), ssz_multiproofs::Error> {
-    let mut beacon_state_iter = beacon_state.values();
+) -> Result<(B256, Slot, [u8; 4], B256, Epoch), ssz_multiproofs::Error> {
+    let mut values = beacon_state.values();
     let genesis_validators_root =
-        beacon_state_iter.next_assert_gindex(ctx.genesis_validators_root_gindex())?;
-    let slot = beacon_state_iter.next_assert_gindex(ctx.slot_gindex())?;
-    let fork_current_version =
-        beacon_state_iter.next_assert_gindex(ctx.fork_current_version_gindex())?;
-    let validators_root = beacon_state_iter.next_assert_gindex(ctx.validators_gindex())?;
+        values.next_assert_gindex(ctx.genesis_validators_root_gindex())?;
+    let slot = values.next_assert_gindex(ctx.slot_gindex())?;
+    let fork_current_version = values.next_assert_gindex(ctx.fork_current_version_gindex())?;
+    let validators_root = values.next_assert_gindex(ctx.validators_gindex())?;
+    let finalized_checkpoint_epoch =
+        values.next_assert_gindex(ctx.finalized_checkpoint_epoch_gindex())?;
 
-    // the remaining values of the beacon state correspond to RANDAO
-    let randao_gindex_base = ctx.randao_mixes_0_gindex();
-    let randao = beacon_state_iter
-        .map(|(gindex, randao)| {
-            // 0 <= index <= EPOCHS_PER_HISTORICAL_VECTOR
-            assert!(gindex >= randao_gindex_base);
-            assert!(gindex <= randao_gindex_base + ctx.epochs_per_historical_vector());
-
-            let index = gindex - randao_gindex_base;
-            (index, B256::from(randao))
-        })
-        .collect();
+    assert!(values.next().is_none());
 
     Ok((
         genesis_validators_root.into(),
         u64_from_chunk(slot),
         fork_current_version[0..4].try_into().unwrap(),
         validators_root.into(),
-        randao,
+        u64_from_chunk(finalized_checkpoint_epoch),
     ))
 }
 
@@ -316,6 +321,33 @@ fn extract_validators_multiproof(
     assert!(values.next().is_none());
 
     Ok(validator_cache)
+}
+
+/// Updates the `Registry`, i.e. the part of the beacon state that stores validator records. This is called during epoch processing.
+///
+/// See: https://github.com/ethereum/consensus-specs/blob/dev/specs/electra/beacon-chain.md#modified-process_registry_updates
+fn process_registry_updates(
+    ctx: &impl Ctx,
+    registry: &mut BTreeMap<ValidatorIndex, ValidatorInfo>,
+    finalized_checkpoint_epoch: Epoch,
+    current_epoch: Epoch,
+) {
+    let activation_epoch = compute_activation_exit_epoch(ctx, current_epoch);
+
+    for validator in registry.values_mut() {
+        // process activation eligibility:
+        if validator.is_eligible_for_activation_queue(ctx) {
+            validator.activation_eligibility_epoch = current_epoch + 1;
+        }
+        // process activations:
+        if validator.is_eligible_for_activation(finalized_checkpoint_epoch) {
+            validator.activation_epoch = activation_epoch;
+        }
+    }
+}
+
+fn compute_activation_exit_epoch(ctx: &impl Ctx, epoch: Epoch) -> Epoch {
+    epoch + 1 + ctx.max_seed_lookahead()
 }
 
 /// Extracts an u64 from a 32-byte SSZ chunk.

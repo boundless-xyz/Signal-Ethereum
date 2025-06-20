@@ -19,10 +19,12 @@ pub trait Ctx {
     }
     fn epochs_per_historical_vector(&self) -> u64;
     fn min_seed_lookahead(&self) -> u64;
+    fn max_seed_lookahead(&self) -> u64;
 
     fn shuffle_round_count(&self) -> u64;
     fn target_committee_size(&self) -> u64;
     fn max_deposits(&self) -> usize;
+    fn min_activation_balance(&self) -> u64;
 }
 
 #[cfg(feature = "host")]
@@ -65,6 +67,10 @@ impl Ctx for HostContext {
         self.0.min_seed_lookahead
     }
 
+    fn max_seed_lookahead(&self) -> u64 {
+        self.0.max_seed_lookahead
+    }
+
     fn shuffle_round_count(&self) -> u64 {
         self.0.shuffle_round_count
     }
@@ -75,5 +81,9 @@ impl Ctx for HostContext {
 
     fn max_deposits(&self) -> usize {
         self.0.max_deposits
+    }
+
+    fn min_activation_balance(&self) -> u64 {
+        self.0.min_activation_balance
     }
 }

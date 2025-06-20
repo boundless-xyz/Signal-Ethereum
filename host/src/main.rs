@@ -173,7 +173,7 @@ fn run_verify<R: StateReader + StateProvider>(
         let state_input = reader.to_input();
         let ssz_reader = state_input
             .clone()
-            .into_state_reader(&GuestContext, input.state.finalized_checkpoint)?;
+            .into_state_reader(&GuestContext, &input.state)?;
         let ssz_consensus_state =
             verify(&AssertStateReader::new(&ssz_reader, &reader), input.clone()).unwrap(); // will panic if verification fails
         info!("Ssz Verification Success!");

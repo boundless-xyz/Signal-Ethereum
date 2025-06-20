@@ -51,44 +51,26 @@ where
             .unwrap();
         let beacon_state_root = trusted_state.hash_tree_root().unwrap();
 
-        info!("Building beacon block multiproof");
+        info!("Building beacon block proof");
         let mut epoch_boundary_block = trusted_state.latest_block_header().clone();
         epoch_boundary_block.state_root = beacon_state_root;
         let block_multiproof = MultiproofBuilder::new()
-            .with_path::<BeaconBlockHeader>(&["slot".into()])
             .with_path::<BeaconBlockHeader>(&["state_root".into()])
             .build(&epoch_boundary_block)
             .unwrap();
         block_multiproof
             .verify(&self.trusted_checkpoint.root)
             .unwrap();
-        info!("Beacon block multiproof finished");
+        info!("Beacon block proof finished");
 
-        let mut patch_builder: BTreeMap<Epoch, StatePatchBuilder<S::Context>> = BTreeMap::new();
-        let mut proof_builder: MultiproofBuilder = MultiproofBuilder::new();
-
-        for (epoch, indices) in self.mix_epochs.take() {
-            if epoch == self.trusted_checkpoint.epoch {
-                for idx in indices {
-                    let path = ["randao_mixes".into(), (idx as usize).into()];
-                    proof_builder = proof_builder.with_path::<ElectraBeaconState>(&path);
-                }
-            } else {
-                let patch = patch_builder
-                    .entry(epoch)
-                    .or_insert(self.patch_builder(epoch).unwrap());
-                for idx in indices {
-                    patch.randao_mix(idx);
-                }
-            }
-        }
-
+        info!("Building beacon state proof");
         let state_multiproof = match trusted_state.deref() {
-            BeaconState::Electra(state) => proof_builder
+            BeaconState::Electra(state) => MultiproofBuilder::new()
                 .with_path::<ElectraBeaconState>(&["genesis_validators_root".into()])
                 .with_path::<ElectraBeaconState>(&["slot".into()])
                 .with_path::<ElectraBeaconState>(&["fork".into(), "current_version".into()])
                 .with_path::<ElectraBeaconState>(&["validators".into()])
+                .with_path::<ElectraBeaconState>(&["finalized_checkpoint".into(), "epoch".into()])
                 .build(state)
                 .unwrap(),
             _ => {
@@ -96,7 +78,7 @@ where
             }
         };
         state_multiproof.verify(&beacon_state_root).unwrap();
-        info!("State multiproof finished");
+        info!("Beacon state proof finished");
 
         let validators_root = trusted_state.validators().hash_tree_root().unwrap();
         type Validators = List<Validator, VALIDATOR_REGISTRY_LIMIT>;
@@ -132,6 +114,16 @@ where
             "Included validators",
         );
 
+        info!("Building state patches");
+        let mut patch_builder: BTreeMap<Epoch, StatePatchBuilder<S::Context>> = BTreeMap::new();
+        for (epoch, indices) in self.mix_epochs.take() {
+            let patch = patch_builder
+                .entry(epoch)
+                .or_insert(self.patch_builder(epoch).unwrap());
+            for idx in indices {
+                patch.randao_mix(idx);
+            }
+        }
         let patches = patch_builder
             .into_iter()
             .map(|(k, v)| (k, v.build()))

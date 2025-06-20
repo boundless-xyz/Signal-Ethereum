@@ -105,24 +105,25 @@ pub struct ValidatorInfo {
 
 // TODO(willem): Move these to the context once we have decided how we want to do that
 const FAR_FUTURE_EPOCH: u64 = Epoch::MAX;
-const MAX_SEED_LOOKAHEAD: u64 = 4;
 
 impl ValidatorInfo {
-    /// Checks if the validator is active at the given epoch given knowledge of the most recently finalized epoch
-    pub fn is_active_at(&self, latest_finalized: Epoch, epoch: Epoch) -> bool {
-        // Account for the case where the validator eligibility epoch has been finalized
-        let activation_epoch = if self.activation_epoch == FAR_FUTURE_EPOCH
-            && self.activation_eligibility_epoch <= latest_finalized
-        {
-            // Activation_epoch will be set to current_epoch + 1 + MAX_SEED_LOOKAHEAD
-            // while processing the epoch immediately after the activation eligibility epoch
-            // was finalized. That is where the extra 1 epoch comes from.
-            self.activation_eligibility_epoch + 2 + MAX_SEED_LOOKAHEAD
-        } else {
-            self.activation_epoch
-        };
+    /// Check if ``validator`` is eligible to be placed into the activation queue.
+    pub fn is_eligible_for_activation_queue(&self, ctx: &impl Ctx) -> bool {
+        self.activation_eligibility_epoch == FAR_FUTURE_EPOCH
+            && self.effective_balance >= ctx.min_activation_balance()
+    }
 
-        activation_epoch <= epoch && epoch < self.exit_epoch
+    /// Check if the validator is eligible for activation with respect to the given state.
+    pub fn is_eligible_for_activation(&self, finalized_checkpoint_epoch: Epoch) -> bool {
+        // placement in queue if finalized
+        self.activation_eligibility_epoch <= finalized_checkpoint_epoch
+            // has not yet been activated
+            && self.activation_epoch == FAR_FUTURE_EPOCH
+    }
+
+    /// Checks if the validator is active at the given epoch given knowledge of the most recently finalized epoch
+    pub fn is_active_at(&self, epoch: Epoch) -> bool {
+        self.activation_epoch <= epoch && epoch < self.exit_epoch
     }
 }
 

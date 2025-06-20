@@ -154,11 +154,12 @@ impl StateReader for SszStateReader<'_> {
         &self,
         epoch: Epoch,
     ) -> Result<impl Iterator<Item = (ValidatorIndex, &ValidatorInfo)>, Self::Error> {
+        let latest_finalized = self.context.compute_epoch_at_slot(self.slot);
         Ok(self
             .validators
             .iter()
             .map(|(idx, validator)| (*idx, validator))
-            .filter(move |(_, validator)| validator.is_active_at(epoch)))
+            .filter(move |(_, validator)| validator.is_active_at(latest_finalized, epoch)))
     }
 
     fn randao_mix(&self, epoch: Epoch, index: RandaoMixIndex) -> Result<Option<B256>, Self::Error> {
@@ -263,6 +264,10 @@ fn extract_validators_multiproof(
                 values.next().ok_or(ssz_multiproofs::Error::MissingValue)?;
             let effective_balance = u64_from_chunk(effective_balance);
 
+            let (_, activation_eligibility_epoch) =
+                values.next().ok_or(ssz_multiproofs::Error::MissingValue)?;
+            let activation_eligibility_epoch = u64_from_chunk(activation_eligibility_epoch);
+
             let (_, activation_epoch) =
                 values.next().ok_or(ssz_multiproofs::Error::MissingValue)?;
             let activation_epoch = u64_from_chunk(activation_epoch);
@@ -282,6 +287,7 @@ fn extract_validators_multiproof(
                 ValidatorInfo {
                     pubkey,
                     effective_balance,
+                    activation_eligibility_epoch,
                     activation_epoch,
                     exit_epoch,
                 },

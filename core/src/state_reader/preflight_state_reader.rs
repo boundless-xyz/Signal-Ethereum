@@ -121,6 +121,7 @@ where
 
             let balance_epoch_path: &[Path] = &[
                 &[idx.into(), "effective_balance".into()],
+                &[idx.into(), "activation_eligibility_epoch".into()],
                 &[idx.into(), "activation_epoch".into()],
                 &[idx.into(), "exit_epoch".into()],
             ];

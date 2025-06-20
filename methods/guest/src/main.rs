@@ -3,7 +3,11 @@
 // All rights reserved.
 
 use risc0_zkvm::guest::env;
-use z_core::{verify, GuestContext, Input, Output, StateInput};
+use z_core::{
+    compute_fork_data_root, verify, GuestContext, Input, Output, Root, StateInput, StateReader,
+};
+
+mod config;
 
 fn main() {
     let filter = tracing_subscriber::filter::EnvFilter::from_default_env()
@@ -31,6 +35,15 @@ fn main() {
         state_input.into_state_reader(&GuestContext, input.state.finalized_checkpoint)
     }
     .unwrap();
+
+    assert_eq!(
+        state_reader.fork_data_root(0).unwrap(), // epoch 0 arg is ignored by SSZ state reader
+        compute_fork_data_root(
+            config::VERSION,
+            Root::from_slice(&config::GENESIS_VALIDATORS_ROOT)
+        ),
+        "Fork data root mismatch. State is not consistent with the expected chain"
+    );
 
     // the input bytes are no longer needed
     drop((ssz_reader_bytes, input_bytes));

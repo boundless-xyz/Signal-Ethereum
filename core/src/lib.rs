@@ -20,6 +20,7 @@ use alloy_rlp::{RlpDecodable, RlpEncodable};
 use core::fmt;
 use core::fmt::Display;
 use std::collections::BTreeMap;
+use tree_hash::TreeHash;
 
 mod attestation;
 #[cfg(feature = "host")]
@@ -208,6 +209,21 @@ impl From<ethereum_consensus::electra::Checkpoint> for Checkpoint {
             root: checkpoint.root,
         }
     }
+}
+
+/// Return the 32-byte fork data root for the `current_version` and `genesis_validators_root`.
+/// This is used primarily in signature domains to avoid collisions across forks/chains.
+pub fn compute_fork_data_root(current_version: Version, genesis_validators_root: Root) -> Root {
+    #[derive(TreeHash)]
+    struct ForkData {
+        current_version: Version,
+        genesis_validators_root: Root,
+    }
+    ForkData {
+        current_version,
+        genesis_validators_root,
+    }
+    .tree_hash_root()
 }
 
 #[macro_export]

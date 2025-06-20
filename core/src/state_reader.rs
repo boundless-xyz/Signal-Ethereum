@@ -14,14 +14,13 @@
 
 use crate::{
     Ctx, Domain, DomainType, Epoch, RandaoMixIndex, Root, ValidatorIndex, ValidatorInfo, Version,
+    compute_fork_data_root,
 };
 use alloy_primitives::B256;
 use alloy_primitives::aliases::B32;
 use sha2::Digest;
 use std::cmp::{max, min};
 use thiserror::Error;
-use tree_hash::TreeHash;
-use tree_hash_derive::TreeHash;
 
 #[cfg(feature = "host")]
 mod host_state_reader;
@@ -50,8 +49,7 @@ pub trait StateReader {
     /// Return `state.genesis_validators_root`.
     fn genesis_validators_root(&self) -> Result<Root, Self::Error>;
 
-    /// Return `state.fork.current_version`.
-    // TODO(ec2): This should be handled in such a way that things won't break in the event of hardfork.
+    /// Return `states[epoch].fork.current_version`.
     fn fork_current_version(&self, epoch: Epoch) -> Result<Version, Self::Error>;
 
     /// Return the sequence of active validators at `epoch`.
@@ -65,6 +63,17 @@ pub trait StateReader {
 
     /// Return `state.randao_mixes[idx]`.
     fn randao_mix(&self, epoch: Epoch, idx: RandaoMixIndex) -> Result<Option<B256>, Self::Error>;
+
+    /// The fork data root serves as a unique identifier for the chain that we are on
+    /// Both fields used to compute this are part of the state so this allows for checking that
+    /// the state is consistent with a particular chain
+    fn fork_data_root(&self, epoch: Epoch) -> Result<Root, Self::Error> {
+        let fork_version = self.fork_current_version(epoch)?;
+        Ok(compute_fork_data_root(
+            fork_version,
+            self.genesis_validators_root()?,
+        ))
+    }
 
     /// Return the RANDAO mix at a recent `epoch`.
     fn get_randao_mix(&self, state_epoch: Epoch, epoch: Epoch) -> Result<B256, Self::Error> {
@@ -129,7 +138,6 @@ pub trait StateReader {
     }
 
     fn get_domain(&self, domain_type: DomainType, epoch: Epoch) -> Result<Domain, Self::Error> {
-        // TODO: fork_version = state.fork.previous_version if epoch < state.fork.epoch else state.fork.current_version
         let fork_version = self.fork_current_version(epoch)?;
         Ok(compute_domain(
             domain_type,
@@ -152,21 +160,6 @@ fn compute_domain(
     domain[4..].copy_from_slice(&fork_data_root.as_slice()[..28]);
 
     domain.into()
-}
-
-/// Return the 32-byte fork data root for the `current_version` and `genesis_validators_root`.
-/// This is used primarily in signature domains to avoid collisions across forks/chains.
-fn compute_fork_data_root(current_version: Version, genesis_validators_root: Root) -> Root {
-    #[derive(TreeHash)]
-    struct ForkData {
-        current_version: Version,
-        genesis_validators_root: Root,
-    }
-    ForkData {
-        current_version,
-        genesis_validators_root,
-    }
-    .tree_hash_root()
 }
 
 #[inline]

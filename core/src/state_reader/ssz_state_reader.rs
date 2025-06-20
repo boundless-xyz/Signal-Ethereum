@@ -160,7 +160,6 @@ impl StateReader for SszStateReader<'_> {
     }
 
     fn fork_current_version(&self, _epoch: Epoch) -> Result<Version, Self::Error> {
-        // TODO: the fork current version might change
         Ok(self.fork_current_version)
     }
 

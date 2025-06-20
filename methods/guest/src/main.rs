@@ -1,22 +1,5 @@
 use risc0_zkvm::guest::env;
-use sha2::{Digest, Sha256};
-use z_core::{verify, GuestContext, Input, StateInput};
-
-fn print_mem() {
-    const STACK_TOP: usize = 0x0020_0400;
-    const TEXT_START: usize = 0x0020_0800;
-    extern "C" {
-        static _end: u8;
-    }
-    let heap_start = unsafe { (&_end) as *const u8 as usize };
-    println!("code size: {}", heap_start - TEXT_START);
-    let x: u32 = 0;
-    let ptr = &x as *const u32 as usize;
-    println!("stack: {ptr:x}, usage: {}", STACK_TOP - ptr);
-    let a = Box::new(1);
-    let heap_pos = Box::into_raw(a) as *mut i32 as usize;
-    println!("heap:  {heap_pos:x}, usage: {}", heap_pos - heap_start,);
-}
+use z_core::{verify, GuestContext, Input, Output, StateInput};
 
 fn main() {
     let filter = tracing_subscriber::filter::EnvFilter::from_default_env()
@@ -41,30 +24,22 @@ fn main() {
         ));
 
         env::log("Verify and Cache SszStateReader");
-        state_input.into_state_reader(input.trusted_checkpoint_state_root.into(), &GuestContext)
+        state_input.into_state_reader(&GuestContext, input.state.finalized_checkpoint)
     }
     .unwrap();
 
     // the input bytes are no longer needed
     drop((ssz_reader_bytes, input_bytes));
 
-    env::commit(&input.trusted_checkpoint_state_root);
-
     env::log("Running FFG state update");
 
-    let trusted_state_root = input.trusted_checkpoint_state_root;
-
-    let pre_state_bytes = bincode::serialize(&input.consensus_state).unwrap();
-    let pre_state_hash = Sha256::digest(&pre_state_bytes);
-
+    let pre_state = input.state.clone();
     let post_state = verify(&state_reader, input).unwrap();
-    let post_state_bytes = bincode::serialize(&post_state).unwrap();
-    let post_state_hash = Sha256::digest(&post_state_bytes);
 
     // write public output to the journal
-    env::commit_slice(trusted_state_root.as_slice());
-    env::commit_slice(&pre_state_hash);
-    env::commit_slice(&post_state_hash);
-
-    print_mem();
+    let output = Output {
+        pre_state,
+        post_state,
+    };
+    env::commit_slice(&output.abi_encode())
 }

@@ -8,14 +8,13 @@ use beacon_chain::{
 use beacon_types::{
     ChainSpec, Epoch, EthSpec, FixedBytesExtended, Hash256, Keypair, MainnetEthSpec, Slot,
 };
-pub use test_harness_state_reader::HarnessStateReader;
 use z_core::ConsensusState;
 
 mod assert_state_reader;
 mod test_harness_state_reader;
 
 type E = MainnetEthSpec;
-pub type TestHarness = BeaconChainHarness<EphemeralHarnessType<E>>;
+pub type TestHarness = test_harness_state_reader::TestHarness<EphemeralHarnessType<E>>;
 
 pub fn get_spec() -> Arc<ChainSpec> {
     let altair_fork_epoch = Epoch::new(0);
@@ -93,7 +92,7 @@ pub async fn get_harness(
             .fork_name_unchecked()
             .electra_enabled()
     );
-    harness
+    harness.into()
 }
 
 pub fn consensus_state_from_state(

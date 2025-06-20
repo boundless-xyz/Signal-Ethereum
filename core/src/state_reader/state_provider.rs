@@ -1,41 +1,105 @@
-use crate::{Ctx, Epoch, HostContext, beacon_state::mainnet::BeaconState};
-use anyhow::ensure;
+use crate::{Checkpoint, Ctx, Epoch, HostContext, Root, Slot, beacon_state::mainnet::BeaconState};
+use anyhow::{Context, ensure};
+use elsa::FrozenMap;
+use ssz_rs::HashTreeRoot;
 use std::fs;
 use std::path::PathBuf;
-use tracing::debug;
+use std::sync::Arc;
+use tracing::{debug, warn};
+
+#[derive(Debug, thiserror::Error)]
+pub enum StateProviderError {
+    #[error("invalid checkpoint")]
+    InvalidCheckpoint,
+    #[error("state for slot {0} not found")]
+    NotFound(Slot),
+    #[error(transparent)]
+    Other(#[from] anyhow::Error),
+}
+
+pub type StateRef = Arc<BeaconState>;
 
 pub trait StateProvider {
     fn context(&self) -> &HostContext;
-    /// Returns the beacon state at the start of a given epoch. If the slot there is a skip slot,
-    /// it will return the state at the latest block header slot that is less than to the epoch's start slot.
-    fn get_state_at_epoch_boundary(
-        &self,
-        epoch: Epoch,
-    ) -> Result<Option<BeaconState>, anyhow::Error> {
-        let slot = self.context().compute_start_slot_at_epoch(epoch);
-        let state = self.get_state_at_slot(slot);
 
-        if let Ok(Some(state)) = state {
-            let latest_block_header = state.latest_block_header();
-            if latest_block_header.slot == slot {
-                Ok(Some(state))
-            } else {
-                tracing::info!(
-                    "Epoch {}, State slot {} does not match latest block header slot {}, going backwards",
-                    epoch,
-                    slot,
-                    latest_block_header.slot
-                );
-                self.get_state_at_slot(latest_block_header.slot)
-            }
-        } else {
-            state
-        }
+    fn genesis_validators_root(&self) -> Result<Root, StateProviderError> {
+        Ok(self.state_at_slot(0)?.genesis_validators_root())
     }
-    fn get_state_at_slot(&self, slot: u64) -> Result<Option<BeaconState>, anyhow::Error>;
+
+    fn state_at_checkpoint(&self, checkpoint: Checkpoint) -> Result<StateRef, StateProviderError> {
+        let state = self.state_at_epoch(checkpoint.epoch)?;
+
+        // check that the start_slot is indeed the epoch boundary
+        let epoch_boundary_slot = state.latest_block_header().slot;
+        if epoch_boundary_slot == state.slot() {
+            return Ok(state);
+        }
+
+        warn!(
+            "Epoch {} does not contain the epoch boundary block, etching slot {}",
+            checkpoint.epoch, epoch_boundary_slot
+        );
+
+        let state = self.state_at_slot(epoch_boundary_slot)?;
+
+        // check that the state matches the epoch boundary block
+        let mut epoch_boundary_block = state.latest_block_header().clone();
+        epoch_boundary_block.state_root = state.hash_tree_root().unwrap();
+        crate::ensure!(
+            checkpoint.root == epoch_boundary_block.hash_tree_root().unwrap(),
+            StateProviderError::InvalidCheckpoint
+        );
+
+        Ok(state)
+    }
+
+    fn state_at_epoch(&self, epoch: Epoch) -> Result<StateRef, StateProviderError> {
+        let start_slot = self.context().compute_start_slot_at_epoch(epoch);
+        self.state_at_slot(start_slot)
+    }
+
+    fn state_at_slot(&self, slot: Slot) -> Result<StateRef, StateProviderError>;
 }
 
-pub type BoxedStateProvider = Box<dyn StateProvider>;
+#[derive(Clone)]
+pub struct CacheStateProvider<P> {
+    inner: P,
+    cache: FrozenMap<Slot, Box<Arc<BeaconState>>>,
+}
+
+impl<P: StateProvider> CacheStateProvider<P> {
+    pub fn new(provider: P) -> Self {
+        Self {
+            inner: provider,
+            cache: FrozenMap::new(),
+        }
+    }
+}
+
+impl<P: StateProvider> StateProvider for CacheStateProvider<P> {
+    fn context(&self) -> &HostContext {
+        self.inner.context()
+    }
+
+    fn genesis_validators_root(&self) -> Result<Root, StateProviderError> {
+        let cache = self.cache.clone().into_map();
+        match cache.values().next() {
+            Some(state) => Ok(state.genesis_validators_root()),
+            None => Ok(self.state_at_slot(0)?.genesis_validators_root()),
+        }
+    }
+
+    fn state_at_slot(&self, slot: Slot) -> Result<StateRef, StateProviderError> {
+        match self.cache.get(&slot) {
+            None => {
+                let state = self.inner.state_at_slot(slot)?;
+                self.cache.insert(slot, state.clone().into());
+                Ok(state)
+            }
+            Some(beacon_state) => Ok(beacon_state.clone()),
+        }
+    }
+}
 
 #[derive(Clone)]
 pub struct FileProvider {
@@ -56,6 +120,7 @@ impl FileProvider {
 
         Ok(provider)
     }
+
     pub fn save_state(&self, state: &BeaconState) -> Result<(), anyhow::Error> {
         let slot = state.slot();
         let epoch = self.context.compute_epoch_at_slot(slot);
@@ -76,23 +141,17 @@ impl StateProvider for FileProvider {
         &self.context
     }
 
-    fn get_state_at_slot(&self, slot: u64) -> Result<Option<BeaconState>, anyhow::Error> {
-        let epoch = self.context.compute_epoch_at_slot(slot);
+    fn state_at_slot(&self, slot: u64) -> Result<StateRef, StateProviderError> {
         let file = self.directory.join(format!("{}_beacon_state.ssz", slot));
         if !file.exists() {
-            return Ok(None);
+            return Err(StateProviderError::NotFound(slot));
         }
 
-        debug!("Loading beacon state at slot {slot} in epoch: {epoch}");
-        let bytes = fs::read(&file)?;
-        let state: BeaconState = ssz_rs::deserialize(&bytes)?;
+        let bytes = fs::read(&file)
+            .with_context(|| format!("failed to read beacon state file {}", file.display()))?;
+        let state: BeaconState =
+            ssz_rs::deserialize(&bytes).context("failed to deserialize beacon state")?;
 
-        Ok(Some(state))
-    }
-}
-
-impl From<FileProvider> for BoxedStateProvider {
-    fn from(provider: FileProvider) -> Self {
-        Box::new(provider)
+        Ok(state.into())
     }
 }

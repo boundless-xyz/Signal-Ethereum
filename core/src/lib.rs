@@ -1,8 +1,12 @@
 extern crate alloc;
-
-use core::fmt;
+extern crate core;
 
 use alloy_primitives::B256;
+use alloy_rlp::{RlpDecodable, RlpEncodable};
+use core::fmt;
+use core::fmt::Display;
+use std::collections::BTreeMap;
+
 mod attestation;
 #[cfg(feature = "host")]
 mod beacon_state;
@@ -41,46 +45,51 @@ pub type Epoch = u64;
 pub type Slot = u64;
 pub type CommitteeIndex = usize;
 pub type ValidatorIndex = usize;
+pub type RandaoMixIndex = u64;
 pub type Root = B256;
 pub type Version = [u8; 4];
 pub type ForkDigest = [u8; 4];
-pub type Domain = [u8; 32];
+pub type Domain = B256;
+pub type DomainType = [u8; 4];
 
 // Mainnet constants
 pub type MaxValidatorsPerSlot = U131072; // 2**11
 pub type MaxCommitteesPerSlot = U64; // 2**6
-pub const BEACON_ATTESTER_DOMAIN: [u8; 4] = 1u32.to_le_bytes();
+pub const BEACON_ATTESTER_DOMAIN: DomainType = 1u32.to_le_bytes();
 pub const VALIDATOR_REGISTRY_LIMIT: u64 = 2u64.pow(40);
 pub const VALIDATOR_LIST_TREE_DEPTH: u32 = VALIDATOR_REGISTRY_LIMIT.ilog2() + 1; // 41
 pub const VALIDATOR_TREE_DEPTH: u32 = 3;
 
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct Input {
-    pub consensus_state: ConsensusState,
-    pub link: Vec<Link>,
-
+    pub state: ConsensusState,
+    pub links: Vec<Link>,
     pub attestations: Vec<Vec<Attestation>>,
+}
 
-    pub trusted_checkpoint_state_root: Root, // The state root at trusted_checkpoint
+#[derive(Clone, serde::Serialize, serde::Deserialize, RlpEncodable, RlpDecodable)]
+pub struct Output {
+    pub pre_state: ConsensusState,
+    pub post_state: ConsensusState,
+}
+
+impl Output {
+    #[inline]
+    pub fn abi_encode(&self) -> Vec<u8> {
+        alloy_rlp::encode(self)
+    }
 }
 
 impl fmt::Debug for Input {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut by_source: BTreeMap<Checkpoint, usize> = BTreeMap::new();
+        for attestation in self.attestations.iter().flatten() {
+            *by_source.entry(attestation.data.source).or_default() += 1;
+        }
+
         f.debug_struct("Input")
-            .field("consensus_state", &self.consensus_state)
-            .field("link", &self.link)
-            .field(
-                "attestations",
-                &self
-                    .attestations
-                    .iter()
-                    .map(|a| a.len())
-                    .collect::<Vec<usize>>(),
-            )
-            .field(
-                "trusted_checkpoint_state_root",
-                &self.trusted_checkpoint_state_root,
-            )
+            .field("state", &self.state)
+            .field("attestations", &by_source)
             .finish()
     }
 }
@@ -132,14 +141,22 @@ impl From<&beacon_types::Validator> for ValidatorInfo {
     Eq,
     PartialOrd,
     Ord,
+    Hash,
+    TreeHash,
     serde::Serialize,
     serde::Deserialize,
-    Default,
-    TreeHash,
+    RlpEncodable,
+    RlpDecodable,
 )]
 pub struct Checkpoint {
     pub epoch: Epoch,
     pub root: Root,
+}
+
+impl Display for Checkpoint {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "({},{})", self.root, self.epoch)
+    }
 }
 
 #[derive(

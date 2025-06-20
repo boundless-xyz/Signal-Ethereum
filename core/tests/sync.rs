@@ -1,16 +1,22 @@
 //! Tests the ability of ZKasper to sync with a beacon chain through various scenarios.
 //!
-//! This test suite makes heavy use of the Lighthouse test harness to create a valid beacon chain in different states
+//! The basic breakdown of each of these tests is to create a test harness and call various functions to create a chain that
+//! has experienced certain events (e.g. finalization, validator exits, etc) that are valid in a beacon chain.
+//! The function `test_zkasper_sync` is then called to check if the ZKasper input building and state transition process is able
+//! to handle these scenarios correctly.
+use std::sync::{Arc, LazyLock};
+
 use anyhow::anyhow;
 use beacon_chain::BlockError;
 use beacon_chain::test_utils::{AttestationStrategy, BlockStrategy};
+use beacon_types::test_utils::generate_deterministic_keypair;
 use beacon_types::{
-    BlobsList, DepositData, DepositRequest, Epoch, EthSpec, Hash256, Keypair, KzgProofs,
+    BlobsList, ChainSpec, DepositData, DepositRequest, Epoch, EthSpec, Hash256, Keypair, KzgProofs,
     MainnetEthSpec, PublicKeyBytes, SignatureBytes, SignedBeaconBlock, Slot, VariableList,
 };
 use bls::get_withdrawal_credentials;
+use ethereum_consensus::deneb::FAR_FUTURE_EPOCH;
 use state_processing::per_block_processing::is_valid_deposit_signature;
-use std::sync::{Arc, LazyLock};
 use test_log::test;
 use test_utils::{
     AssertStateReader, TestHarness, consensus_state_from_state, get_harness, get_spec,
@@ -65,6 +71,24 @@ async fn test_zkasper_sync(
         let builder = InputBuilder::new(harness.context().clone(), harness);
         match builder.build(trusted_checkpoint).await {
             Ok(input) => {
+                println!(
+                    "Attestors per link: {:?}",
+                    input
+                        .links
+                        .iter()
+                        .zip(input.attestations.iter())
+                        .map(|(link, attestations)| {
+                            (
+                                link,
+                                attestations
+                                    .iter()
+                                    .map(|a| a.aggregation_bits.iter().count())
+                                    .sum::<usize>(),
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                );
+
                 // Perform a preflight verification to record the state reads
                 _ = verify(&preflight_state_reader, input.clone())?;
 
@@ -290,7 +314,7 @@ async fn finalize_after_one_empty_epoch() {
 #[test(tokio::test)]
 async fn finalize_after_inactivity_leak() {
     let spec = get_spec();
-    let harness = get_harness(KEYPAIRS[..].to_vec(), spec.clone(), Slot::new(224)).await;
+    let mut harness = get_harness(KEYPAIRS[..].to_vec(), spec.clone(), Slot::new(224)).await;
 
     // Grab our bootstrap consensus state from there
     let head_state = harness.chain.head_beacon_state_cloned();
@@ -298,10 +322,6 @@ async fn finalize_after_inactivity_leak() {
     let current_epoch = head_state.current_epoch();
 
     println!("Current slot: {}", head_state.slot());
-
-    let two_thirds = (VALIDATOR_COUNT as usize / 3) * 2;
-    let less_than_two_thirds = two_thirds - 2;
-    let attesters = (0..less_than_two_thirds).collect();
 
     // Where we get into leak
     let target_epoch =
@@ -312,13 +332,12 @@ async fn finalize_after_inactivity_leak() {
 
     // progress the chain with less than 2/3rds participation
     // this should result in an inactivity leak
-    harness
-        .extend_chain(
-            (((target_epoch - current_epoch) * harness.slots_per_epoch()) - 1).into(),
-            BlockStrategy::OnCanonicalHead,
-            AttestationStrategy::SomeValidators(attesters),
-        )
-        .await;
+    advance_non_finalizing(
+        &mut harness,
+        Epochs(target_epoch.as_u64() - current_epoch.as_u64()),
+    )
+    .await
+    .unwrap();
 
     assert!(
         harness
@@ -443,24 +462,30 @@ async fn chain_finalizes_but_zkcasper_does_not() {
     );
 }
 
-/// Have one validator exit occur after the trusted state and still be able to finalize
+/// Have one validator exit occur during sync and still be able to finalize
+///
+/// Note this does NOT test the lookahead functionality as the lookahead to finalize is smaller than the difference between
+/// when the exit epoch is set and the epoch it is set to (1 + MAX_SEED_LOOKAHEAD).
 #[test(tokio::test)]
 async fn finalize_when_validator_exits() {
     let spec = get_spec();
-    let harness = get_harness(
+    let mut harness = get_harness(
         KEYPAIRS[..].to_vec(),
         spec,
-        (256u64 * MainnetEthSpec::slots_per_epoch()).into(), // need to start past epoch 256 or else exits are not allowed
+        (256u64 * MainnetEthSpec::slots_per_epoch()).into(), // need to start past epoch 256 or else exits are not allowed. Sorry this makes the test slow
     )
     .await;
 
+    let consensus_state = consensus_state_from_state(&harness.get_current_state());
+
+    let validator_to_exit = 0;
+
+    // build a block with an exit and process it
     harness.advance_slot();
     let state = harness.get_current_state();
     let slot = harness.get_current_slot();
     let exit_valid_at = state.current_epoch() - 1;
-    let validator_to_exit = 0;
 
-    // build a block with an exit and process it
     let (block, _) = harness
         .make_block_with_modifier(harness.get_current_state(), slot, |block| {
             harness.add_voluntary_exit(block, validator_to_exit, exit_valid_at);
@@ -480,63 +505,37 @@ async fn finalize_when_validator_exits() {
         expected_exit_epoch
     );
 
-    // Grab our bootstrap consensus state from the state just before the exit so the exit happens as part of the
-    // ZKasper consensus state update
-    harness
-        .extend_slots((MainnetEthSpec::slots_per_epoch() * 6) as usize)
-        .await;
-    let consensus_state = consensus_state_from_state(&harness.get_current_state());
+    // Run until the exit epoch plus a few more so post-exit attestations are processed
+    advance_finalizing(&mut harness, Epochs(8)).await.unwrap();
     assert_eq!(
-        consensus_state.finalized_checkpoint.epoch,
-        expected_exit_epoch.as_u64() - 1,
+        harness.get_current_state().current_epoch(),
+        expected_exit_epoch.as_u64() + 3,
         "consensus state should be one epoch before the new validator stops participating"
     );
-
-    // progress the chain 3 epochs past our last state so there are attestations to process
-    harness
-        .extend_slots((MainnetEthSpec::slots_per_epoch() * 3) as usize)
-        .await;
 
     test_zkasper_sync(&harness, consensus_state).await.unwrap();
 }
 
-/// Have one validator join and attest in the next epochs and still be able to finalize
-#[test(tokio::test)]
-async fn finalize_when_validator_enters() {
+/// Have one validator deposit, activate and then start attesting to new blocks
+///
+/// Note this does NOT test lookahead as the validator is added to the validator set
+/// and its activation epoch value is set ahead of time.
+/// As long as the lookahead to finalize is smaller than the difference between when the activation epoch is set and the value it is set to
+/// ZKasper will be able to handle it correctly.
+#[tokio::test]
+async fn finalize_when_validator_activates() {
     let spec = get_spec();
     let mut harness = get_harness(KEYPAIRS[..].to_vec(), spec.clone(), Slot::new(224)).await;
 
-    harness.advance_slot();
-    let slot = harness.get_current_slot();
+    let consensus_state = consensus_state_from_state(&harness.get_current_state());
 
     // build a block with a deposit (this will be the first Electra style deposit)
-    // See https://eips.ethereum.org/EIPS/eip-6110
-    // Signature must be valid or it will silently be rejected when the pending deposits are processed
-    let new_keypair = Keypair::random();
+    let new_keypair = generate_deterministic_keypair(VALIDATOR_COUNT as usize);
     let deposit_index = 0;
+    let deposit_request = build_signed_deposit_request(deposit_index, &new_keypair, spec.clone());
 
-    let mut deposit_data = DepositData {
-        pubkey: PublicKeyBytes::from(new_keypair.pk.clone()),
-        withdrawal_credentials: Hash256::from_slice(
-            &get_withdrawal_credentials(&new_keypair.pk, spec.bls_withdrawal_prefix_byte)[..],
-        ),
-        amount: 32 * GWEI_PER_ETH,
-        signature: SignatureBytes::empty(),
-    };
-    deposit_data.signature = deposit_data.create_signature(&new_keypair.sk, &spec);
-    assert!(
-        is_valid_deposit_signature(&deposit_data, &spec).is_ok(),
-        "Deposit signature should be valid"
-    );
-
-    let deposit_request = DepositRequest {
-        pubkey: deposit_data.pubkey,
-        withdrawal_credentials: deposit_data.withdrawal_credentials,
-        amount: deposit_data.amount,
-        signature: deposit_data.signature,
-        index: deposit_index,
-    };
-
+    harness.advance_slot();
+    let slot = harness.get_current_slot();
     let (block, _) = harness
         .make_block_with_modifier(harness.get_current_state(), slot, |block| {
             block.body_mut().execution_requests_mut().unwrap().deposits =
@@ -562,9 +561,105 @@ async fn finalize_when_validator_enters() {
     );
 
     // continue until just before the deposit is processed
-    harness
-        .extend_slots((MainnetEthSpec::slots_per_epoch() * 2 - 1) as usize)
+    advance_finalizing(
+        &mut harness,
+        Slots(MainnetEthSpec::slots_per_epoch() * 2 - 1),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        harness.get_current_state().validators().len() as u64,
+        VALIDATOR_COUNT,
+        "There should be no new validators yet"
+    );
+
+    // Validator should be present in the set but its activation epoch should be set to FAR_FUTURE_EPOCH
+    advance_finalizing(&mut harness, Epochs(1)).await.unwrap();
+
+    assert_eq!(
+        harness.get_current_state().validators().len() as u64,
+        VALIDATOR_COUNT + 1,
+        "New validator added to the set"
+    );
+    assert_eq!(
+        harness
+            .get_current_state()
+            .validators()
+            .get(VALIDATOR_COUNT as usize)
+            .expect("New validator should be present")
+            .activation_epoch,
+        FAR_FUTURE_EPOCH
+    );
+
+    // Run epochs until validator activation epoch is set
+    advance_finalizing(&mut harness, Epochs(7)).await.unwrap();
+
+    assert_eq!(
+        harness
+            .get_current_state()
+            .validators()
+            .get(VALIDATOR_COUNT as usize)
+            .expect("New validator should be present")
+            .activation_epoch,
+        Epoch::new(17),
+    );
+
+    // Add the new validator to the harness signers
+    harness.validator_keypairs.push(new_keypair.clone());
+
+    // add extra epochs so there are attestations using the new validator to be processed
+    advance_finalizing(&mut harness, Epochs(5)).await.unwrap();
+
+    test_zkasper_sync(&harness, consensus_state).await.unwrap();
+}
+
+/// Have a validator activate during a period of non-finalization due to an earlier deposit
+/// This requires a lookahead for ZKasper spanning the epoch where the validators
+/// activation epoch being set and the activation epoch itself
+#[tokio::test]
+async fn finalize_with_validator_activation_and_delayed_finality() {
+    let spec = get_spec();
+    let mut harness = get_harness(KEYPAIRS[..].to_vec(), spec.clone(), Slot::new(224)).await;
+
+    let consensus_state = consensus_state_from_state(&harness.get_current_state());
+
+    // build a block with a deposit (this will be the first Electra style deposit)
+    let new_keypair = generate_deterministic_keypair(VALIDATOR_COUNT as usize);
+    let deposit_index = 0;
+    let deposit_request = build_signed_deposit_request(deposit_index, &new_keypair, spec.clone());
+
+    harness.advance_slot();
+    let slot = harness.get_current_slot();
+    let (block, _) = harness
+        .make_block_with_modifier(harness.get_current_state(), slot, |block| {
+            block.body_mut().execution_requests_mut().unwrap().deposits =
+                VariableList::new(vec![deposit_request]).unwrap();
+        })
         .await;
+    process_block(&harness, block).await.unwrap();
+
+    assert_eq!(
+        harness.get_current_state().deposit_requests_start_index(),
+        Ok(deposit_index),
+        "deposit_requests_start_index should be set by first electra deposit"
+    );
+    assert_eq!(
+        harness
+            .get_current_state()
+            .pending_deposits()
+            .unwrap()
+            .len(),
+        1,
+        "There should be one pending deposit"
+    );
+
+    // continue until just before the deposit is processed
+    advance_finalizing(
+        &mut harness,
+        Slots(MainnetEthSpec::slots_per_epoch() * 2 - 1),
+    )
+    .await
+    .unwrap();
 
     assert_eq!(
         harness.get_current_state().validators().len() as u64,
@@ -572,41 +667,46 @@ async fn finalize_when_validator_enters() {
         "There should be no new validators yet"
     );
 
-    // Run some epochs until the new validator is activated and ready to attest
-    harness
-        .extend_slots((MainnetEthSpec::slots_per_epoch() * 8) as usize)
-        .await;
-
+    // Validator should be present in the set but its activation epoch should be set to FAR_FUTURE_EPOCH
+    advance_finalizing(&mut harness, Epochs(1)).await.unwrap();
     assert_eq!(
         harness.get_current_state().validators().len() as u64,
         VALIDATOR_COUNT + 1,
-        "There should be one new validator after processing the deposit"
+        "New validator added to the set"
     );
-    let activation_epoch = harness
-        .get_current_state()
-        .validators()
-        .get(VALIDATOR_COUNT as usize)
-        .expect("New validator should be present")
-        .activation_epoch;
+    assert_eq!(
+        harness
+            .get_current_state()
+            .validators()
+            .get(VALIDATOR_COUNT as usize)
+            .expect("New validator should be present")
+            .activation_epoch,
+        FAR_FUTURE_EPOCH
+    );
 
+    // Run epochs until validator activation epoch is just set.
+    // NOTE: this is set once the activation_eligibility_epoch has finalized
+    advance_finalizing(&mut harness, Epochs(3)).await.unwrap();
+
+    assert_eq!(
+        harness
+            .get_current_state()
+            .validators()
+            .get(VALIDATOR_COUNT as usize)
+            .expect("New validator should be present")
+            .activation_epoch,
+        Epoch::new(17),
+    );
     // Add the new validator to the harness signers
     harness.validator_keypairs.push(new_keypair.clone());
 
-    // // The case we want to test is where the trusted state is the one just before the new validator starts participating
-    harness
-        .extend_slots((MainnetEthSpec::slots_per_epoch()) as usize)
-        .await;
-    let consensus_state = consensus_state_from_state(&harness.get_current_state());
-    assert_eq!(
-        consensus_state.finalized_checkpoint.epoch,
-        activation_epoch.as_u64() - 1,
-        "consensus state should be one epoch before the new validator starts participating"
-    );
+    // From here we want to experience a number of epochs without finalization
+    advance_non_finalizing(&mut harness, Epochs(8))
+        .await
+        .unwrap();
 
-    // add extra epochs so there are attestations to process
-    harness
-        .extend_slots((MainnetEthSpec::slots_per_epoch() * 3) as usize)
-        .await;
+    // Then start finalizing again
+    advance_finalizing(&mut harness, Epochs(3)).await.unwrap();
 
     test_zkasper_sync(&harness, consensus_state).await.unwrap();
 }
@@ -628,5 +728,71 @@ async fn process_block(
         harness.process_block_result(block).await?;
     }
 
+    Ok(())
+}
+
+fn build_signed_deposit_request(
+    deposit_index: u64,
+    keypair: &Keypair,
+    spec: Arc<ChainSpec>,
+) -> DepositRequest {
+    let mut deposit_data = DepositData {
+        pubkey: PublicKeyBytes::from(keypair.pk.clone()),
+        withdrawal_credentials: Hash256::from_slice(
+            &get_withdrawal_credentials(&keypair.pk, spec.bls_withdrawal_prefix_byte)[..],
+        ),
+        amount: 32 * GWEI_PER_ETH,
+        signature: SignatureBytes::empty(),
+    };
+    deposit_data.signature = deposit_data.create_signature(&keypair.sk, &spec);
+    assert!(
+        is_valid_deposit_signature(&deposit_data, &spec).is_ok(),
+        "Deposit signature should be valid"
+    );
+
+    DepositRequest {
+        pubkey: deposit_data.pubkey,
+        withdrawal_credentials: deposit_data.withdrawal_credentials,
+        amount: deposit_data.amount,
+        signature: deposit_data.signature,
+        index: deposit_index,
+    }
+}
+
+enum AdvanceBy {
+    Epochs(u64),
+    Slots(u64),
+}
+use AdvanceBy::*;
+
+async fn advance_finalizing(harness: &mut TestHarness, by: AdvanceBy) -> Result<(), BlockError> {
+    let slots = match by {
+        Epochs(e) => e * harness.slots_per_epoch(),
+        Slots(s) => s,
+    };
+    harness.extend_slots(slots as usize).await;
+    Ok(())
+}
+
+async fn advance_non_finalizing(harness: &TestHarness, by: AdvanceBy) -> Result<(), BlockError> {
+    let slots = match by {
+        Epochs(e) => e * harness.slots_per_epoch(),
+        Slots(s) => s,
+    };
+
+    let two_thirds = (harness.validator_keypairs.len() / 3) * 2;
+    let less_than_two_thirds = two_thirds - 2;
+    let attesters = (0..less_than_two_thirds).collect();
+
+    if harness.chain.slot().unwrap() == harness.chain.canonical_head.cached_head().head_slot() {
+        harness.advance_slot();
+    }
+    harness
+        .extend_chain(
+            slots as usize,
+            BlockStrategy::OnCanonicalHead,
+            AttestationStrategy::SomeValidators(attesters),
+        )
+        .await;
     Ok(())
 }

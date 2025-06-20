@@ -116,6 +116,7 @@ where
                     .with_path::<Validators>(&[idx.into(), "public_key".into(), 0.into()])
                     .with_path::<Validators>(&[idx.into(), "public_key".into(), 47.into()])
                     .with_path::<Validators>(&[idx.into(), "effective_balance".into()])
+                    .with_path::<Validators>(&[idx.into(), "activation_eligibility_epoch".into()])
                     .with_path::<Validators>(&[idx.into(), "activation_epoch".into()])
                     .with_path::<Validators>(&[idx.into(), "exit_epoch".into()]);
 

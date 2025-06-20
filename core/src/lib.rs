@@ -98,14 +98,31 @@ impl fmt::Debug for Input {
 pub struct ValidatorInfo {
     pub pubkey: PublicKey,
     pub effective_balance: u64,
+    pub activation_eligibility_epoch: u64,
     pub activation_epoch: u64,
     pub exit_epoch: u64,
 }
 
+// TODO(willem): Move these to the context once we have decided how we want to do that
+const FAR_FUTURE_EPOCH: u64 = Epoch::MAX;
+const MAX_SEED_LOOKAHEAD: u64 = 4;
+
 impl ValidatorInfo {
-    /// Checks if the validator is active at the given epoch.
-    pub fn is_active_at(&self, epoch: Epoch) -> bool {
-        self.activation_epoch <= epoch && epoch < self.exit_epoch
+    /// Checks if the validator is active at the given epoch given knowledge of the most recently finalized epoch
+    pub fn is_active_at(&self, latest_finalized: Epoch, epoch: Epoch) -> bool {
+        // Account for the case where the validator eligibility epoch has been finalized
+        let activation_epoch = if self.activation_epoch == FAR_FUTURE_EPOCH
+            && self.activation_eligibility_epoch <= latest_finalized
+        {
+            // Activation_epoch will be set to current_epoch + 1 + MAX_SEED_LOOKAHEAD
+            // while processing the epoch immediately after the activation eligibility epoch
+            // was finalized. That is where the extra 1 epoch comes from.
+            self.activation_eligibility_epoch + 2 + MAX_SEED_LOOKAHEAD
+        } else {
+            self.activation_epoch
+        };
+
+        activation_epoch <= epoch && epoch < self.exit_epoch
     }
 }
 
@@ -116,6 +133,7 @@ impl From<&ethereum_consensus::phase0::Validator> for ValidatorInfo {
             pubkey: PublicKey::uncompress(&v.public_key).unwrap(),
             effective_balance: v.effective_balance,
             activation_epoch: v.activation_epoch,
+            activation_eligibility_epoch: v.activation_eligibility_epoch,
             exit_epoch: v.exit_epoch,
         }
     }
@@ -128,6 +146,7 @@ impl From<&beacon_types::Validator> for ValidatorInfo {
             pubkey: PublicKey::uncompress(&v.pubkey.serialize()).unwrap(),
             effective_balance: v.effective_balance,
             activation_epoch: v.activation_epoch.into(),
+            activation_eligibility_epoch: v.activation_eligibility_epoch.into(),
             exit_epoch: v.exit_epoch.into(),
         }
     }

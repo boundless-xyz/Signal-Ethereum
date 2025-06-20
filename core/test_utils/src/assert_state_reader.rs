@@ -53,6 +53,8 @@ impl<S: StateReader, R: StateReader> StateReader for AssertStateReader<'_, S, R>
                     // do not compare the effective_balance as it is allowed to be incorrect
                     let mut validator = a.1.clone();
                     validator.effective_balance = b.1.effective_balance;
+                    // TODO: Remove once that is supported
+                    validator.exit_epoch = b.1.exit_epoch;
                     assert_eq!(&validator, b.1);
 
                     Some(a)

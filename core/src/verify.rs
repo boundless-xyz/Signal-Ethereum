@@ -4,6 +4,7 @@ use crate::{
     consensus_state::ConsensusState, ensure, fast_aggregate_verify_pre_aggregated,
     get_attesting_indices, threshold::threshold,
 };
+
 use alloc::collections::BTreeMap;
 use beacon_types::{EthSpec, SignedRoot};
 use tracing::{debug, info};

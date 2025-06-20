@@ -17,7 +17,6 @@ use beacon_types::{
 use bls::get_withdrawal_credentials;
 use ethereum_consensus::deneb::FAR_FUTURE_EPOCH;
 use state_processing::per_block_processing::is_valid_deposit_signature;
-use std::sync::{Arc, LazyLock};
 use test_log::test;
 use test_utils::{
     AssertStateReader, TestHarness, consensus_state_from_state, get_harness, get_spec,
@@ -75,7 +74,7 @@ async fn test_zkasper_sync(
                 println!(
                     "Attestors per link: {:?}",
                     input
-                        .link
+                        .links
                         .iter()
                         .zip(input.attestations.iter())
                         .map(|(link, attestations)| {

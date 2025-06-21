@@ -76,6 +76,19 @@ pub enum SszReaderError {
     MissingStatePatch(Epoch),
 }
 
+trait WithContext<T> {
+    fn context(self, msg: &'static str) -> Result<T, SszReaderError>;
+}
+
+impl<T> WithContext<T> for Result<T, ssz_multiproofs::Error> {
+    fn context(self, msg: &'static str) -> Result<T, SszReaderError> {
+        self.map_err(|e| SszReaderError::SszMultiproof {
+            msg: msg.to_string(),
+            source: e.into(),
+        })
+    }
+}
+
 impl StateInput<'_> {
     pub fn into_state_reader(
         self,
@@ -85,32 +98,20 @@ impl StateInput<'_> {
         // beacon block inclusion proofs
         self.beacon_block
             .verify(&checkpoint.root)
-            .map_err(|e| SszReaderError::SszVerify {
-                msg: "Beacon block root mismatch".to_string(),
-                source: e,
-            })?;
+            .context("Beacon block root mismatch")?;
+
         let (epoch_boundary_slot, state_root) =
-            extract_beacon_block_multiproof(context, &self.beacon_block).map_err(|e| {
-                SszReaderError::SszMultiproof {
-                    msg: "Failed to extract beacon block multiproof".to_string(),
-                    source: e,
-                }
-            })?;
+            extract_beacon_block_multiproof(context, &self.beacon_block)
+                .context("Failed to extract beacon block multiproof")?;
 
         // beacon state inclusion proofs
         self.beacon_state
             .verify(&state_root)
-            .map_err(|e| SszReaderError::SszVerify {
-                msg: "Beacon state root mismatch".to_string(),
-                source: e,
-            })?;
+            .context("Beacon state root mismatch")?;
+
         let (genesis_validators_root, slot, fork_current_version, validators_root, randao) =
-            extract_beacon_state_multiproof(context, &self.beacon_state).map_err(|e| {
-                SszReaderError::SszMultiproof {
-                    msg: "Failed to extract beacon state multiproof".to_string(),
-                    source: e,
-                }
-            })?;
+            extract_beacon_state_multiproof(context, &self.beacon_state)
+                .context("Failed to extract beacon block multiproof")?;
         assert_eq!(epoch_boundary_slot, slot);
 
         // validator list inclusion proofs
@@ -119,16 +120,11 @@ impl StateInput<'_> {
             self.public_keys,
             checkpoint.epoch,
         )
-        .map_err(|e| SszReaderError::SszMultiproof {
-            msg: "Failed to extract active validators multiproof".to_string(),
-            source: e,
-        })?;
+        .context("Failed to extract validators multiproof")?;
+
         self.active_validators
             .verify(&validators_root)
-            .map_err(|e| SszReaderError::SszVerify {
-                msg: "Validators root mismatch".to_string(),
-                source: e,
-            })?;
+            .context("Validators root mismatch")?;
 
         // make sure that the state actually corresponds to the state of the checkpoint epoch
         for _epoch in context.compute_epoch_at_slot(epoch_boundary_slot)..checkpoint.epoch {

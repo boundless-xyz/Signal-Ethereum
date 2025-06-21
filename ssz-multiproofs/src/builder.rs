@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::multiproof::{calculate_max_stack_depth, Multiproof};
+use crate::multiproof::{Multiproof, calculate_max_stack_depth};
 use crate::{Descriptor, Result};
 #[cfg(feature = "progress-bar")]
 use indicatif::{ParallelProgressIterator, ProgressBar, ProgressStyle};

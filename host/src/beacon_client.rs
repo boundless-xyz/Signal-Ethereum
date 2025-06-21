@@ -13,8 +13,8 @@
 // limitations under the License.
 
 use ethereum_consensus::{
-    phase0::SignedBeaconBlockHeader, primitives::Root, serde::as_str, types::mainnet::BeaconBlock,
-    Fork,
+    Fork, phase0::SignedBeaconBlockHeader, primitives::Root, serde::as_str,
+    types::mainnet::BeaconBlock,
 };
 use http::StatusCode;
 use http_cache_reqwest::{CACacheManager, Cache, CacheMode, HttpCache, HttpCacheOptions};
@@ -27,7 +27,7 @@ use std::path::PathBuf;
 use std::result::Result as StdResult;
 use tracing::warn;
 use url::Url;
-use z_core::{mainnet::BeaconState, ChainReader, Checkpoint, ConsensusState};
+use z_core::{ChainReader, Checkpoint, ConsensusState, mainnet::BeaconState};
 
 /// Errors returned by the [BeaconClient].
 #[derive(Debug, thiserror::Error)]
@@ -100,7 +100,7 @@ pub struct BeaconClient {
 
 mod middleware {
     use governor::{
-        clock::DefaultClock, state::InMemoryState, state::NotKeyed, Quota, RateLimiter,
+        Quota, RateLimiter, clock::DefaultClock, state::InMemoryState, state::NotKeyed,
     };
     use http::Extensions;
     use reqwest::{Request, Response};

@@ -152,13 +152,22 @@ impl StateInput<'_> {
             assert!(patch_epoch > state_epoch);
 
             for (idx, &exit_epoch) in &patch.validator_exits {
-                let prev_validator = validators.get(idx).unwrap();
+                let validator = validators.get(idx).expect("exit epoch without validator");
+                let &prev = self
+                    .patches
+                    .get(&(patch_epoch - 1))
+                    .and_then(|p| p.validator_exits.get(&idx))
+                    .unwrap_or(&validator.exit_epoch);
+
+                if prev == exit_epoch {
+                    continue;
+                }
 
                 // exit_epoch must only change once
-                assert_eq!(prev_validator.exit_epoch, FAR_FUTURE_EPOCH);
+                assert_eq!(prev, FAR_FUTURE_EPOCH);
                 // exit epoch must be in the future
                 assert!(exit_epoch >= compute_activation_exit_epoch(context, patch_epoch));
-                
+
                 // TODO: validate against churn
             }
         }

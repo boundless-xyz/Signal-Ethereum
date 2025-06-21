@@ -67,6 +67,8 @@ impl<S: StateReader, R: StateReader> StateReader for AssertStateReader<'_, S, R>
                     // do not compare the effective_balance as it is allowed to be incorrect
                     let mut validator = a.1.clone();
                     validator.effective_balance = b.1.effective_balance;
+                    // currently the exit_epoch is not overridden, but still considered for activity
+                    validator.exit_epoch = b.1.exit_epoch;
                     assert_eq!(&validator, b.1);
 
                     Some(a)

@@ -1,3 +1,17 @@
+// Copyright 2025 RISC Zero, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 use super::StateReader;
 use crate::{
     ConsensusState, Ctx, Epoch, GuestContext, PublicKey, RandaoMixIndex, Root, Slot, StatePatch,
@@ -60,6 +74,19 @@ pub enum SszReaderError {
     MissingStatePatch(Epoch),
 }
 
+trait WithContext<T> {
+    fn context(self, msg: &'static str) -> Result<T, SszReaderError>;
+}
+
+impl<T> WithContext<T> for Result<T, ssz_multiproofs::Error> {
+    fn context(self, msg: &'static str) -> Result<T, SszReaderError> {
+        self.map_err(|e| SszReaderError::SszMultiproof {
+            msg: msg.to_string(),
+            source: e.into(),
+        })
+    }
+}
+
 impl StateInput<'_> {
     pub fn into_state_reader<'a>(
         self,
@@ -69,55 +96,35 @@ impl StateInput<'_> {
         // check that the beacon block proofs correspond to the finalized epoch boundary block
         self.beacon_block
             .verify(&consensus_state.finalized_checkpoint.root)
-            .map_err(|e| SszReaderError::SszVerify {
-                msg: "Beacon block root mismatch".to_string(),
-                source: e,
-            })?;
+            .context("Beacon block root mismatch")?;
         // extract the proven state root from the beacon block
-        let state_root =
-            extract_beacon_block_multiproof(context, &self.beacon_block).map_err(|e| {
-                SszReaderError::SszMultiproof {
-                    msg: "Invalid beacon block proof".to_string(),
-                    source: e,
-                }
-            })?;
+        let state_root = extract_beacon_block_multiproof(context, &self.beacon_block)
+            .context("Failed to extract beacon block multiproof")?;
 
         // check that the beacon state proofs correspond to the state of the beacon block
         self.beacon_state
             .verify(&state_root)
-            .map_err(|e| SszReaderError::SszVerify {
-                msg: "Beacon state root mismatch".to_string(),
-                source: e,
-            })?;
+            .context("Beacon state root mismatch")?;
         let (
             genesis_validators_root,
             slot,
             fork_current_version,
             validators_root,
             finalized_checkpoint_epoch,
-        ) = extract_beacon_state_multiproof(context, &self.beacon_state).map_err(|e| {
-            SszReaderError::SszMultiproof {
-                msg: "Invalid beacon state proof".to_string(),
-                source: e,
-            }
-        })?;
+        ) = extract_beacon_state_multiproof(context, &self.beacon_state)
+            .context("Failed to extract beacon block multiproof")?;
 
         // check that the validator proofs correspond to the validators root of the beacon state
         self.active_validators
             .verify(&validators_root)
-            .map_err(|e| SszReaderError::SszVerify {
-                msg: "Validators root mismatch".to_string(),
-                source: e,
-            })?;
+            .context("Validators root mismatch")?;
+        // validator list inclusion proofs
         let mut validators = extract_validators_multiproof(
             &self.active_validators,
             self.public_keys,
             consensus_state.finalized_checkpoint.epoch,
         )
-        .map_err(|e| SszReaderError::SszMultiproof {
-            msg: "Invalid validators proof".to_string(),
-            source: e,
-        })?;
+        .context("Failed to extract validators multiproof")?;
 
         let state_epoch = context.compute_epoch_at_slot(slot);
 

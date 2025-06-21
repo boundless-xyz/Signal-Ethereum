@@ -78,7 +78,14 @@ jobs:
       - name: checkout code
         uses: actions/checkout@v4
         with:
+          # Full history is required by license-check.py
+          fetch-depth: 0
           submodules: recursive
+
+      - name: install python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.10"
 
       - name: install rust
         uses: risc0/risc0/.github/actions/rustup@fbe1d0bb75c21fe36cefd87bae25f424b711b291
@@ -87,6 +94,9 @@ jobs:
         uses: risc0/risc0/.github/actions/sccache@fbe1d0bb75c21fe36cefd87bae25f424b711b291
         with:
           key: ${{ matrix.os }}-${{ matrix.feature }}
+
+      - name: license check
+        run: python license-check.py
 
       - name: lint rust code
         run: cargo fmt --all --check

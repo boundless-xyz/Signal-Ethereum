@@ -1,3 +1,6 @@
+// This file is adapted from SigmaPrime Lighthouse (https://github.com/sigp/lighthouse)
+// Original license: Apache License 2.0
+
 use alloc::vec::Vec;
 use alloy_primitives::FixedBytes;
 use core::mem;

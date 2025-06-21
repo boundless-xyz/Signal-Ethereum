@@ -17,26 +17,8 @@ use std::borrow::Cow;
 use bitvec::prelude::*;
 use sha2::{Digest, Sha256};
 
-use crate::error::{Error, Result};
 use crate::Descriptor;
-
-/// An abstraction around a SSZ merkle multi-proof
-///
-/// This is serializable and  intended to be passed to the ZKVM for verification.
-// #[derive(Debug, PartialEq, Default, serde::Serialize, serde::Deserialize)]
-// pub struct MultiproofOwnedData {
-//     /// The merkle tree nodes corresponding to both leaves and internal proof nodes
-//     pub(crate) data: Vec<u8>,
-
-//     /// mask indicating which nodes are values (1) or proof supporting nodes (0)
-//     pub(crate) value_mask: BitVec<u32, Lsb0>,
-
-//     /// bitvector describing the shape of the proof. See https://github.com/ethereum/consensus-specs/pull/3148
-//     pub(crate) descriptor: Descriptor,
-
-//     /// hint for the depth of the stack needed to verify this proof, useful for preallocation and computing this can be done outside the ZKVM
-//     pub(crate) max_stack_depth: usize,
-// }
+use crate::error::{Error, Result};
 
 /// An abstraction around a SSZ merkle multi-proof
 ///

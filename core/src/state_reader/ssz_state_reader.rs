@@ -6,6 +6,7 @@ use crate::{
         fork_current_version_gindex, fork_epoch_gindex, fork_previous_version_gindex,
         genesis_validators_root_gindex, randao_mixes_0_gindex, slot_gindex, validators_gindex,
     },
+    has_compressed_chunks,
 };
 use alloy_primitives::B256;
 use beacon_types::{EthSpec, Fork};
@@ -261,7 +262,11 @@ fn extract_validators_multiproof(
             };
 
             // Check if the public key matches the compressed chunks.
-            assert!(pubkey.has_compressed_chunks(pk_compressed.0, pk_compressed.1));
+            assert!(has_compressed_chunks(
+                &pubkey,
+                pk_compressed.0,
+                pk_compressed.1
+            ));
 
             let (_, effective_balance) =
                 values.next().ok_or(ssz_multiproofs::Error::MissingValue)?;

@@ -15,7 +15,7 @@ alloy-rlp = { version = "=0.3.11", features = ["derive"] }
 anyhow = { workspace = true }
 beacon_chain = { workspace = true, optional = true } 
 beacon_types = { workspace = true, default-features = false, features = ["legacy-arith"]} 
-blst = { version = "0.3.14", default-features = false, features = ["serde"] }
+bls = { workspace = true }
 elsa = { version = "1.11", optional = true }
 ethereum-consensus = { workspace = true, default-features = false, optional = true }
 ethereum_ssz = "0.7.1"
@@ -39,7 +39,6 @@ tree_hash_derive = { version = "0.8.0" }
 
 
 [dev-dependencies]
-bls = { git = "https://github.com/ec2/lighthouse.git", rev = "68f38bd1bf06149579ec369116e509ecddabebec" }
 state_processing = { git = "https://github.com/ec2/lighthouse.git", rev = "68f38bd1bf06149579ec369116e509ecddabebec" }
 test-log = { version = "0.2", features = ["trace"] }
 test_utils = { path = "test_utils" }
@@ -48,6 +47,6 @@ tokio = { workspace = true }
 [features]
 default = ["host"]
 host = [
-    "dep:ethereum-consensus", "ssz-multiproofs/builder", "blst/default", "ssz-multiproofs/progress-bar", "dep:elsa", "dep:futures", "dep:quote", "dep:syn", "dep:prettyplease", "dep:proc-macro2", "dep:ssz_rs", "dep:beacon_chain", 
+    "dep:ethereum-consensus", "ssz-multiproofs/builder", "ssz-multiproofs/progress-bar", "dep:elsa", "dep:futures", "dep:quote", "dep:syn", "dep:prettyplease", "dep:proc-macro2", "dep:ssz_rs", "dep:beacon_chain", 
     # "dep:beacon_types"
 ]

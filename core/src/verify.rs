@@ -1,12 +1,11 @@
 use crate::{
-    AttestationData, BEACON_ATTESTER_DOMAIN, BlsError, CommitteeCache, Epoch, Input, PublicKey,
-    ShuffleData, Signature, StateReader, StateTransitionError, ValidatorIndex, ValidatorInfo,
-    consensus_state::ConsensusState, ensure, fast_aggregate_verify_pre_aggregated,
-    get_attesting_indices, threshold::threshold,
+    AttestationData, BEACON_ATTESTER_DOMAIN, CommitteeCache, Epoch, Input, ShuffleData,
+    StateReader, StateTransitionError, ValidatorIndex, ValidatorInfo,
+    consensus_state::ConsensusState, ensure, get_attesting_indices, threshold::threshold,
 };
 
 use alloc::collections::BTreeMap;
-use beacon_types::{EthSpec, SignedRoot};
+use beacon_types::{AggregateSignature, EthSpec, SignedRoot};
 use tracing::{debug, info};
 #[derive(thiserror::Error, Debug, PartialEq)]
 pub enum VerifyError {
@@ -26,8 +25,6 @@ pub enum VerifyError {
     },
     #[error("Committee cache error: {0:?}")]
     CommitteeCacheError(#[from] crate::committee_cache::Error),
-    #[error("Bls error: {0}")]
-    BlsError(BlsError),
     #[error("State reader error: {0}")]
     StateReaderError(String),
     #[error("Missing validator info for index: {0}")]
@@ -37,12 +34,6 @@ pub enum VerifyError {
     LighthouseTypesError(beacon_types::Error),
     #[error("Verify error: {0}")]
     Other(String),
-}
-
-impl From<BlsError> for VerifyError {
-    fn from(e: BlsError) -> Self {
-        VerifyError::BlsError(e)
-    }
 }
 
 impl From<beacon_types::Error> for VerifyError {
@@ -121,7 +112,7 @@ pub fn verify<S: StateReader>(
                         state_reader,
                         attesting_validators.into_iter(),
                         data,
-                        attestation.signature().into(),
+                        attestation.signature(),
                     )?,
                     VerifyError::InvalidAttestation("Invalid indexed attestation".to_string(),)
                 );
@@ -162,7 +153,7 @@ fn is_valid_indexed_attestation<'a, S: StateReader>(
     state_reader: &S,
     attesting_validators: impl IntoIterator<Item = &'a &'a ValidatorInfo>,
     data: &AttestationData,
-    signature: Signature,
+    signature: &AggregateSignature,
 ) -> Result<bool, VerifyError> {
     let pubkeys = attesting_validators
         .into_iter()
@@ -183,12 +174,7 @@ fn is_valid_indexed_attestation<'a, S: StateReader>(
     );
     let signing_root = data.signing_root(domain);
 
-    Ok(fast_aggregate_verify_pre_aggregated(
-        &PublicKey::aggregate(&pubkeys)?,
-        signing_root.as_ref(),
-        &signature,
-    )
-    .is_ok())
+    Ok(signature.eth_fast_aggregate_verify(signing_root, &pubkeys))
 }
 
 // this can compute validators for up to

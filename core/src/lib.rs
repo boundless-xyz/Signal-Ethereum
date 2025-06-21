@@ -3,7 +3,7 @@ extern crate core;
 
 use alloy_primitives::B256;
 use alloy_rlp::{Decodable, Encodable, RlpDecodable, RlpEncodable};
-use beacon_types::EthSpec;
+use beacon_types::{EthSpec, PublicKey};
 use core::fmt;
 use core::fmt::Display;
 use std::collections::HashMap;
@@ -98,6 +98,7 @@ impl<E: EthSpec> fmt::Debug for Input<E> {
 
 #[derive(Eq, PartialEq, Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct ValidatorInfo {
+    #[serde(with = "crate::bls::pubkey")]
     pub pubkey: PublicKey,
     pub effective_balance: u64,
     pub activation_epoch: u64,
@@ -115,7 +116,7 @@ impl ValidatorInfo {
 impl From<&ethereum_consensus::phase0::Validator> for ValidatorInfo {
     fn from(v: &ethereum_consensus::phase0::Validator) -> Self {
         Self {
-            pubkey: PublicKey::uncompress(&v.public_key).unwrap(),
+            pubkey: PublicKey::deserialize(&v.public_key).unwrap(),
             effective_balance: v.effective_balance,
             activation_epoch: v.activation_epoch,
             exit_epoch: v.exit_epoch,
@@ -127,7 +128,7 @@ impl From<&ethereum_consensus::phase0::Validator> for ValidatorInfo {
 impl From<&beacon_types::Validator> for ValidatorInfo {
     fn from(v: &beacon_types::Validator) -> Self {
         Self {
-            pubkey: PublicKey::uncompress(&v.pubkey.serialize()).unwrap(),
+            pubkey: v.pubkey.decompress().expect("fail to decompress pub key"),
             effective_balance: v.effective_balance,
             activation_epoch: v.activation_epoch.into(),
             exit_epoch: v.exit_epoch.into(),

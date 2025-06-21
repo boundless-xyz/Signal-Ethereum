@@ -14,9 +14,9 @@
 
 use super::StateReader;
 use crate::{
-    ConsensusState, Ctx, Epoch, FAR_FUTURE_EPOCH, GuestContext, PublicKey, RandaoMixIndex, Root,
-    Slot, StatePatch, VALIDATOR_LIST_TREE_DEPTH, VALIDATOR_TREE_DEPTH, ValidatorIndex,
-    ValidatorInfo, Version,
+    CHURN_LIMIT_QUOTIENT, ConsensusState, Ctx, Epoch, FAR_FUTURE_EPOCH, GuestContext,
+    MIN_PER_EPOCH_CHURN_LIMIT_ELECTRA, PublicKey, RandaoMixIndex, Root, Slot, StatePatch,
+    VALIDATOR_LIST_TREE_DEPTH, VALIDATOR_TREE_DEPTH, ValidatorIndex, ValidatorInfo, Version,
 };
 use alloy_primitives::B256;
 use serde::{Deserialize, Serialize};
@@ -146,29 +146,55 @@ impl StateInput<'_> {
             process_registry_updates(context, &mut validators, finalized_checkpoint_epoch, epoch);
         }
 
+        // get the total active balance at the trusted checkpoint
+        let total_active_balance: u64 = validators
+            .iter()
+            .filter(|(_, v)| v.is_active_at(consensus_state.finalized_checkpoint.epoch))
+            .map(|(_, v)| v.effective_balance)
+            .sum();
+        // exit_epoch changes can happen due to consolidations and exits
+        // get_balance_churn_limit() = get_activation_exit_churn_limit() + get_consolidation_churn_limit()
+        // twice the churn limit seams reasonable ¯\_(ツ)_/¯
+        let churn = 2 * get_balance_churn_limit(context, total_active_balance);
+
+        // TODO: use the state field
+        let earliest_exit_epoch = validators
+            .iter()
+            .filter_map(|(_, v)| (v.exit_epoch != FAR_FUTURE_EPOCH).then_some(v.exit_epoch))
+            .max()
+            .unwrap_or_default();
+        let earliest_exit_epoch = earliest_exit_epoch.max(compute_activation_exit_epoch(
+            context,
+            consensus_state.finalized_checkpoint.epoch,
+        ));
+
         // validating state patches
+        let mut consumed: u64 = 0;
         for (&patch_epoch, patch) in &self.patches {
             // state patches must only be used for future epochs
             assert!(patch_epoch > state_epoch);
 
+            let exit_balance = earliest_exit_epoch.saturating_sub(patch_epoch) * churn + churn;
+
             for (idx, &exit_epoch) in &patch.validator_exits {
                 let validator = validators.get(idx).expect("exit epoch without validator");
-                let &prev = self
+                let &prev_exit_epoch = self
                     .patches
                     .get(&(patch_epoch - 1))
                     .and_then(|p| p.validator_exits.get(&idx))
                     .unwrap_or(&validator.exit_epoch);
 
-                if prev == exit_epoch {
+                if prev_exit_epoch == exit_epoch {
                     continue;
                 }
 
                 // exit_epoch must only change once
-                assert_eq!(prev, FAR_FUTURE_EPOCH);
+                assert_eq!(prev_exit_epoch, FAR_FUTURE_EPOCH);
                 // exit epoch must be in the future
-                assert!(exit_epoch >= compute_activation_exit_epoch(context, patch_epoch));
+                assert!(exit_epoch >= earliest_exit_epoch);
 
-                // TODO: validate against churn
+                assert!(consumed + validator.effective_balance <= exit_balance);
+                consumed += validator.effective_balance;
             }
         }
 
@@ -380,6 +406,11 @@ fn process_registry_updates(
 
 fn compute_activation_exit_epoch(ctx: &impl Ctx, epoch: Epoch) -> Epoch {
     epoch + 1 + ctx.max_seed_lookahead()
+}
+
+fn get_balance_churn_limit(ctx: &impl Ctx, total_active_balance: u64) -> u64 {
+    let churn = MIN_PER_EPOCH_CHURN_LIMIT_ELECTRA.max(total_active_balance / CHURN_LIMIT_QUOTIENT);
+    churn - churn % ctx.effective_balance_increment()
 }
 
 /// Extracts an u64 from a 32-byte SSZ chunk.

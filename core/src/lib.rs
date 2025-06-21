@@ -119,6 +119,8 @@ pub struct ValidatorInfo {
 
 // TODO(willem): Move these to the context once we have decided how we want to do that
 const FAR_FUTURE_EPOCH: u64 = Epoch::MAX;
+const MIN_PER_EPOCH_CHURN_LIMIT_ELECTRA: u64 = 128_000_000_000;
+const CHURN_LIMIT_QUOTIENT: u64 = 65_536;
 
 impl ValidatorInfo {
     /// Check if ``validator`` is eligible to be placed into the activation queue.

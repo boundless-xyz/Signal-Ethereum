@@ -2,6 +2,11 @@
 resolver = "2"
 members = ["core", "host", "methods", "ssz-multiproofs", "core/test_utils"]
 
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+repository = "https://github.com/boundless-xyz/ZKasper/"
+
 # Always optimize; building and running the guest takes much longer without optimization.
 [profile.dev]
 opt-level = 3

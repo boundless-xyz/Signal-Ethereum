@@ -1,3 +1,7 @@
+// Copyright (c) 2025 RISC Zero, Inc.
+//
+// All rights reserved.
+
 use risc0_zkvm::guest::env;
 use z_core::{verify, GuestContext, Input, Output, StateInput};
 

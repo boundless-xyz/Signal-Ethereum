@@ -157,33 +157,43 @@ impl StateInput<'_> {
         // twice the churn limit seams reasonable ¯\_(ツ)_/¯
         let churn = 2 * get_balance_churn_limit(context, total_active_balance);
 
-        // TODO: use the state field
-        let earliest_exit_epoch = validators
+        // find the maximum exit_epoch at the trust checkpoint
+        // this should be equal to state.earliest_exit_epoch + state.earliest_consolidation_epoch
+        let max_exit_epoch = validators
             .iter()
             .filter_map(|(_, v)| (v.exit_epoch != FAR_FUTURE_EPOCH).then_some(v.exit_epoch))
             .max()
             .unwrap_or_default();
-        let earliest_exit_epoch = earliest_exit_epoch.max(compute_activation_exit_epoch(
+        // New exits (consolidations) can only occur with a new block. The earliest this can happen
+        // is during the trusted epoch after the boundary block of the epoch.
+        let earliest_exit_epoch = max_exit_epoch.max(compute_activation_exit_epoch(
             context,
             consensus_state.finalized_checkpoint.epoch,
         ));
 
-        // validating state patches
+        // TODO: move this into a method of the SszStateReader
+        // validate the state patches
         let mut consumed: u64 = 0;
         for (&patch_epoch, patch) in &self.patches {
-            // state patches must only be used for future epochs
-            assert!(patch_epoch > state_epoch);
+            // State patches account for changes introduced by blocks after our trusted checkpoint.
+            // Therefore, no new epochs from earlier times must be patched.
+            assert!(patch_epoch >= consensus_state.finalized_checkpoint.epoch);
 
+            // every epoch starting with the `earliest_exit_epoch` accrues churn
             let exit_balance = earliest_exit_epoch.saturating_sub(patch_epoch) * churn + churn;
 
+            // validate the patched exit epochs
             for (idx, &exit_epoch) in &patch.validator_exits {
-                let validator = validators.get(idx).expect("exit epoch without validator");
+                let validator = validators
+                    .get(idx)
+                    .expect("patched exit_epoch for missing validator");
                 let &prev_exit_epoch = self
                     .patches
                     .get(&(patch_epoch - 1))
                     .and_then(|p| p.validator_exits.get(&idx))
                     .unwrap_or(&validator.exit_epoch);
 
+                // ignore not changing patches
                 if prev_exit_epoch == exit_epoch {
                     continue;
                 }
@@ -192,7 +202,7 @@ impl StateInput<'_> {
                 assert_eq!(prev_exit_epoch, FAR_FUTURE_EPOCH);
                 // exit epoch must be in the future
                 assert!(exit_epoch >= earliest_exit_epoch);
-
+                // churn limit must be respected
                 assert!(consumed + validator.effective_balance <= exit_balance);
                 consumed += validator.effective_balance;
             }

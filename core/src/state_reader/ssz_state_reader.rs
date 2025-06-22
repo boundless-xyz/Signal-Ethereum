@@ -166,21 +166,22 @@ impl StateInput<'_> {
             .unwrap_or_default();
         // New exits (consolidations) can only occur with a new block. The earliest this can happen
         // is during the trusted epoch after the boundary block of the epoch.
-        let earliest_exit_epoch = max_exit_epoch.max(compute_activation_exit_epoch(
+        let mut earliest_exit_epoch = max_exit_epoch.max(compute_activation_exit_epoch(
             context,
             consensus_state.finalized_checkpoint.epoch,
         ));
 
         // TODO: move this into a method of the SszStateReader
-        // validate the state patches
-        let mut consumed: u64 = 0;
+        // validate the state patched
         for (&patch_epoch, patch) in &self.patches {
             // State patches account for changes introduced by blocks after our trusted checkpoint.
             // Therefore, no new epochs from earlier times must be patched.
             assert!(patch_epoch >= consensus_state.finalized_checkpoint.epoch);
 
-            // every epoch starting with the `earliest_exit_epoch` accrues churn
-            let exit_balance = earliest_exit_epoch.saturating_sub(patch_epoch) * churn + churn;
+            // even at the earliest_exit_epoch additional exits can happen
+            // we could subtract state.exit_balance_to_consume and
+            // state.consolidation_balance_to_consume to make this more exact
+            let mut exit_balance_to_consume = churn;
 
             // validate the patched exit epochs
             for (idx, &exit_epoch) in &patch.validator_exits {
@@ -200,11 +201,15 @@ impl StateInput<'_> {
 
                 // exit_epoch must only change once
                 assert_eq!(prev_exit_epoch, FAR_FUTURE_EPOCH);
+
                 // exit epoch must be in the future
                 assert!(exit_epoch >= earliest_exit_epoch);
+                exit_balance_to_consume += (exit_epoch - earliest_exit_epoch) * churn;
+                earliest_exit_epoch = exit_epoch;
+
                 // churn limit must be respected
-                assert!(consumed + validator.effective_balance <= exit_balance);
-                consumed += validator.effective_balance;
+                assert!(exit_balance_to_consume >= validator.effective_balance);
+                exit_balance_to_consume -= validator.effective_balance;
             }
         }
 

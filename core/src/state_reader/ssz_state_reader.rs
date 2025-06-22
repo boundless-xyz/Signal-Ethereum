@@ -14,14 +14,15 @@
 
 use super::StateReader;
 use crate::{
-    CHURN_LIMIT_QUOTIENT, ConsensusState, Ctx, Epoch, FAR_FUTURE_EPOCH, GuestContext,
+    CHURN_LIMIT_QUOTIENT, Checkpoint, ConsensusState, Ctx, Epoch, FAR_FUTURE_EPOCH, GuestContext,
     MIN_PER_EPOCH_CHURN_LIMIT_ELECTRA, PublicKey, RandaoMixIndex, Root, Slot, StatePatch,
     VALIDATOR_LIST_TREE_DEPTH, VALIDATOR_TREE_DEPTH, ValidatorIndex, ValidatorInfo, Version,
 };
 use alloy_primitives::B256;
 use serde::{Deserialize, Serialize};
 use ssz_multiproofs::Multiproof;
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, mem};
+use tracing::debug;
 
 #[derive(Clone, Deserialize, Serialize)]
 pub struct StateInput<'a> {
@@ -60,14 +61,7 @@ pub struct SszStateReader<'a> {
 pub enum SszReaderError {
     #[error("{msg}: Ssz multiproof error: {source}")]
     SszMultiproof {
-        msg: String,
-        #[source]
-        source: ssz_multiproofs::Error,
-    },
-
-    #[error("{msg}: Ssz verify error: {source}")]
-    SszVerify {
-        msg: String,
+        msg: &'static str,
         #[source]
         source: ssz_multiproofs::Error,
     },
@@ -81,16 +75,13 @@ trait WithContext<T> {
 
 impl<T> WithContext<T> for Result<T, ssz_multiproofs::Error> {
     fn context(self, msg: &'static str) -> Result<T, SszReaderError> {
-        self.map_err(|e| SszReaderError::SszMultiproof {
-            msg: msg.to_string(),
-            source: e.into(),
-        })
+        self.map_err(|e| SszReaderError::SszMultiproof { msg, source: e })
     }
 }
 
 impl StateInput<'_> {
     pub fn into_state_reader<'a>(
-        self,
+        mut self,
         context: &'a GuestContext,
         consensus_state: &ConsensusState,
     ) -> Result<SszStateReader<'a>, SszReaderError> {
@@ -122,7 +113,7 @@ impl StateInput<'_> {
         // validator list inclusion proofs
         let mut validators = extract_validators_multiproof(
             &self.active_validators,
-            self.public_keys,
+            mem::take(&mut self.public_keys),
             consensus_state.finalized_checkpoint.epoch,
         )
         .context("Failed to extract validators multiproof")?;
@@ -146,10 +137,27 @@ impl StateInput<'_> {
             process_registry_updates(context, &mut validators, finalized_checkpoint_epoch, epoch);
         }
 
+        self.validate_state_patches(context, consensus_state.finalized_checkpoint, &validators);
+
+        Ok(SszStateReader {
+            context,
+            genesis_validators_root,
+            fork_current_version,
+            validators,
+            patches: self.patches,
+        })
+    }
+
+    fn validate_state_patches(
+        &self,
+        context: &GuestContext,
+        trusted_checkpoint: Checkpoint,
+        validators: &BTreeMap<ValidatorIndex, ValidatorInfo>,
+    ) {
         // get the total active balance at the trusted checkpoint
         let total_active_balance: u64 = validators
             .iter()
-            .filter(|(_, v)| v.is_active_at(consensus_state.finalized_checkpoint.epoch))
+            .filter(|(_, v)| v.is_active_at(trusted_checkpoint.epoch))
             .map(|(_, v)| v.effective_balance)
             .sum();
         // exit_epoch changes can happen due to consolidations and exits
@@ -168,15 +176,16 @@ impl StateInput<'_> {
         // is during the trusted epoch after the boundary block of the epoch.
         let mut earliest_exit_epoch = max_exit_epoch.max(compute_activation_exit_epoch(
             context,
-            consensus_state.finalized_checkpoint.epoch,
+            trusted_checkpoint.epoch,
         ));
 
-        // TODO: move this into a method of the SszStateReader
         // validate the state patched
         for (&patch_epoch, patch) in &self.patches {
+            debug!(patch_epoch, "Validating state patch");
+
             // State patches account for changes introduced by blocks after our trusted checkpoint.
             // Therefore, no new epochs from earlier times must be patched.
-            assert!(patch_epoch >= consensus_state.finalized_checkpoint.epoch);
+            assert!(patch_epoch >= trusted_checkpoint.epoch);
 
             // even at the earliest_exit_epoch additional exits can happen
             // we could subtract state.exit_balance_to_consume and
@@ -191,7 +200,7 @@ impl StateInput<'_> {
                 let &prev_exit_epoch = self
                     .patches
                     .get(&(patch_epoch - 1))
-                    .and_then(|p| p.validator_exits.get(&idx))
+                    .and_then(|p| p.validator_exits.get(idx))
                     .unwrap_or(&validator.exit_epoch);
 
                 // ignore not changing patches
@@ -212,14 +221,6 @@ impl StateInput<'_> {
                 exit_balance_to_consume -= validator.effective_balance;
             }
         }
-
-        Ok(SszStateReader {
-            context,
-            genesis_validators_root,
-            fork_current_version,
-            validators,
-            patches: self.patches,
-        })
     }
 }
 
@@ -244,7 +245,10 @@ impl StateReader for SszStateReader<'_> {
         &self,
         epoch: Epoch,
     ) -> Result<impl Iterator<Item = (ValidatorIndex, &ValidatorInfo)>, Self::Error> {
-        let patch = self.patches.get(&epoch).expect("missing state patch");
+        let patch = self
+            .patches
+            .get(&epoch)
+            .ok_or(SszReaderError::MissingStatePatch(epoch))?;
 
         Ok(self
             .validators

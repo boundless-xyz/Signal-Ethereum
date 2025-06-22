@@ -15,7 +15,7 @@
 use clap::{Parser, ValueEnum};
 use ethereum_consensus::electra;
 use methods::BEACON_GUEST_ELF;
-use risc0_zkvm::{ExecutorEnv, default_executor};
+use risc0_zkvm::{default_executor, ExecutorEnv};
 use ssz_rs::prelude::*;
 use std::{
     fmt::{self, Display},
@@ -26,9 +26,9 @@ use std::{
 use tracing::{info, warn};
 use url::Url;
 use z_core::{
-    CacheStateProvider, ChainReader, Checkpoint, ConsensusState, Ctx, Epoch, GuestContext,
+    verify, CacheStateProvider, ChainReader, Checkpoint, ConsensusState, Ctx, Epoch, GuestContext,
     HostContext, HostStateReader, Input, InputBuilder, PreflightStateReader, Slot, StateInput,
-    StateProvider, StateReader, verify,
+    StateProvider, StateReader,
 };
 use z_core_test_utils::AssertStateReader;
 
@@ -247,7 +247,7 @@ async fn run_sync(
         consensus_state = expected_state;
 
         // uncache old states
-        // provider.clear_states_before(consensus_state.finalized_checkpoint.epoch)?;
+        provider.clear_states_before(consensus_state.finalized_checkpoint.epoch)?;
     }
 }
 

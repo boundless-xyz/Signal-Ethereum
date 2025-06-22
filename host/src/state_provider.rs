@@ -15,7 +15,7 @@
 use anyhow::Context;
 use std::path::PathBuf;
 use tokio::runtime::Handle;
-use z_core::{FileProvider, HostContext, StateProvider, StateProviderError, StateRef};
+use z_core::{Epoch, FileProvider, HostContext, StateProvider, StateProviderError, StateRef};
 
 use crate::beacon_client::BeaconClient;
 
@@ -36,6 +36,13 @@ impl PersistentApiStateProvider {
             file_provider,
             client,
         })
+    }
+
+    pub fn clear_states_before(&self, epoch: Epoch) -> Result<(), anyhow::Error> {
+        self.file_provider
+            .clear_states_before(epoch)
+            .context("failed to clear states before epoch")?;
+        Ok(())
     }
 }
 

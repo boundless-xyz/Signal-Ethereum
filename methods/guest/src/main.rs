@@ -37,7 +37,9 @@ fn main() {
     .unwrap();
 
     assert_eq!(
-        state_reader.fork_data_root(0).unwrap(), // epoch 0 arg is ignored by SSZ state reader
+        state_reader
+            .fork_data_root(input.state.finalized_checkpoint.epoch)
+            .unwrap(),
         compute_fork_data_root(
             config::VERSION,
             Root::from_slice(&config::GENESIS_VALIDATORS_ROOT)

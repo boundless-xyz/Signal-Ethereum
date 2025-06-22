@@ -159,7 +159,13 @@ impl StateReader for SszStateReader<'_> {
         Ok(self.genesis_validators_root)
     }
 
-    fn fork_current_version(&self, _epoch: Epoch) -> Result<Version, Self::Error> {
+    fn fork_current_version(&self, epoch: Epoch) -> Result<Version, Self::Error> {
+        // We only have state.fork.current_version. If the epoch is older than the trusted state,
+        // we would potentially require state.fork.previous_version. Fortunately, older epochs
+        // should never be queried.
+        // Currently, we are in a unique position in that we only support a single fork, Electra,
+        // and no new versions have been announced yet.
+        assert!(epoch >= self.context.compute_epoch_at_slot(self.slot));
         Ok(self.fork_current_version)
     }
 
@@ -167,6 +173,7 @@ impl StateReader for SszStateReader<'_> {
         &self,
         epoch: Epoch,
     ) -> Result<impl Iterator<Item = (ValidatorIndex, &ValidatorInfo)>, Self::Error> {
+        // project the active validators from the trusted state
         let latest_finalized = self.context.compute_epoch_at_slot(self.slot);
         Ok(self
             .validators

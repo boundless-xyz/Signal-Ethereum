@@ -49,6 +49,15 @@ tokio = { workspace = true }
 [features]
 default = ["host"]
 host = [
-    "dep:ethereum-consensus", "ssz-multiproofs/builder", "ssz-multiproofs/progress-bar", "dep:elsa", "dep:futures", "dep:quote", "dep:syn", "dep:prettyplease", "dep:proc-macro2", "dep:ssz_rs", "dep:beacon_chain", 
-    # "dep:beacon_types"
+    "dep:ethereum-consensus",
+    "ssz-multiproofs/builder",
+    "ssz-multiproofs/progress-bar",
+    "dep:elsa",
+    "dep:futures",
+    "dep:quote",
+    "dep:syn",
+    "dep:prettyplease",
+    "dep:proc-macro2",
+    "dep:ssz_rs",
+    "dep:beacon_chain",
 ]

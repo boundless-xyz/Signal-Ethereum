@@ -47,16 +47,14 @@ fn gen_guest_gindices_impl(
         let return_type = syn::parse_str::<syn::Type>(ret_type).unwrap();
 
         quote! {
-            pub fn #method_name() -> #return_type {
+            pub const fn #method_name() -> #return_type {
                 #value
             }
         }
     });
 
     quote! {
-
-            #(#gindex_impls)*
-
+        #(#gindex_impls)*
     }
 }
 

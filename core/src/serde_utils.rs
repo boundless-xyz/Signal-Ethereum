@@ -35,7 +35,7 @@ impl<'de> DeserializeAs<'de, PublicKey> for UncompressedPublicKey {
     #[inline]
     fn deserialize_as<D>(deserializer: D) -> Result<PublicKey, D::Error>
     where
-        D: serde::Deserializer<'de>,
+        D: Deserializer<'de>,
     {
         let raw: [u8; PUBLIC_KEY_UNCOMPRESSED_BYTES_LEN] = serde_arrays::deserialize(deserializer)?;
         PublicKey::deserialize_uncompressed(&raw)

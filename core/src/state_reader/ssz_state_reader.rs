@@ -13,7 +13,6 @@
 // limitations under the License.
 
 use super::StateReader;
-use crate::serde_utils::{U64, UncompressedPublicKey};
 use crate::{
     Checkpoint, Epoch, PublicKey, RandaoMixIndex, Root, Slot, StatePatch,
     VALIDATOR_LIST_TREE_DEPTH, VALIDATOR_TREE_DEPTH, ValidatorIndex, ValidatorInfo,
@@ -21,7 +20,7 @@ use crate::{
         fork_current_version_gindex, fork_epoch_gindex, fork_previous_version_gindex,
         genesis_validators_root_gindex, randao_mixes_0_gindex, slot_gindex, validators_gindex,
     },
-    has_compressed_chunks,
+    has_compressed_chunks, serde_utils,
 };
 use alloy_primitives::B256;
 use beacon_types::{EthSpec, Fork};
@@ -31,7 +30,7 @@ use ssz_multiproofs::Multiproof;
 use std::collections::BTreeMap;
 
 #[serde_as]
-#[derive(Clone, Deserialize, Serialize)]
+#[derive(Clone, PartialEq, Deserialize, Serialize)]
 pub struct StateInput<'a> {
     /// Used fields of the beacon block plus their inclusion proof against the block root.
     #[serde(borrow)]
@@ -46,11 +45,11 @@ pub struct StateInput<'a> {
     pub active_validators: Multiproof<'a>,
 
     /// Public keys of all active validators.
-    #[serde_as(as = "Vec<UncompressedPublicKey>")]
+    #[serde_as(as = "Vec<serde_utils::UncompressedPublicKey>")]
     pub public_keys: Vec<PublicKey>,
 
     /// State patches to "look ahead" to future states.
-    #[serde_as(as = "BTreeMap<U64, _>")]
+    #[serde_as(as = "BTreeMap<serde_utils::U64, _>")]
     pub patches: BTreeMap<Epoch, StatePatch>,
 }
 
@@ -352,9 +351,10 @@ fn u64_from_chunk(node: &[u8; 32]) -> u64 {
 #[cfg(test)]
 mod tests {
     mod state_input {
-        use crate::state_reader::ssz_state_reader::BTreeMap;
         use crate::{Epoch, RandaoMixIndex, StateInput, StatePatch};
         use alloy_primitives::B256;
+        use bls::SecretKey;
+        use std::collections::BTreeMap;
 
         #[test]
         fn bincode() {
@@ -362,7 +362,7 @@ mod tests {
                 beacon_block: Default::default(),
                 beacon_state: Default::default(),
                 active_validators: Default::default(),
-                public_keys: vec![],
+                public_keys: vec![SecretKey::random().public_key()],
                 patches: BTreeMap::from([(
                     Epoch::new(1),
                     StatePatch {
@@ -373,7 +373,7 @@ mod tests {
 
             let bytes = bincode::serialize(&input).unwrap();
             let de = bincode::deserialize::<StateInput>(&bytes).unwrap();
-            assert_eq!(de.patches, input.patches);
+            assert!(input == de);
         }
     }
 }

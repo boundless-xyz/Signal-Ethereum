@@ -21,7 +21,6 @@ use beacon_types::{EthSpec, PublicKey};
 use core::fmt;
 use core::fmt::Display;
 use serde::{Deserializer, Serializer};
-use serde_with::serde_as;
 
 use std::collections::HashMap;
 use tree_hash::TreeHash;

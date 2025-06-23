@@ -82,7 +82,7 @@ async fn test_zkasper_sync(
         // Build the input and verify it
         let builder = InputBuilder::new(harness.context().clone(), harness);
         match builder.build(consensus_state.finalized_checkpoint).await {
-            Ok(input) => {
+            Ok((input, _)) => {
                 println!(
                     "Attestors per link: {:?}",
                     input

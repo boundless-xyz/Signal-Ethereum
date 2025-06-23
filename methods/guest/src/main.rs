@@ -3,7 +3,7 @@
 // All rights reserved.
 
 use risc0_zkvm::guest::env;
-use z_core::{verify, GuestContext, Input, Output, StateInput};
+use z_core::{GuestContext, Input, Output, StateInput, verify};
 
 fn main() {
     let filter = tracing_subscriber::filter::EnvFilter::from_default_env()

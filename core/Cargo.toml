@@ -1,7 +1,9 @@
 [package]
 name = "z-core"
-version = "0.1.0"
-edition = "2024"
+version = { workspace = true }
+edition = { workspace = true }
+repository = { workspace = true }
+license = "Apache-2.0"
 
 [[bin]]
 name = "gen_context"

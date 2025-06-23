@@ -1,3 +1,17 @@
+// Copyright 2025 RISC Zero, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 use alloy_primitives::B256;
 use beacon_types::EthSpec;
 use std::iter;
@@ -53,7 +67,11 @@ impl<E: EthSpec, S: StateReader<Spec = E>, R: StateReader<Spec = E>> StateReader
                     assert_eq!(a.1.pubkey, b.1.pubkey);
                     Some(a)
                 }
-                (a, b) => panic!("Wrong size: empty={}, empty={}", a.is_none(), b.is_none()),
+                (a, b) => panic!(
+                    "One active validator iterator ended while the other has remaining validators. Left={:?}, Right={:?}",
+                    a.map(|v| v.0),
+                    b.map(|v| v.0)
+                ),
             }
         }))
     }

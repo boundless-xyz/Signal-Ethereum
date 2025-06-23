@@ -13,9 +13,11 @@
 // limitations under the License.
 
 use crate::{Epoch, Slot};
+use beacon_types::EthSpec;
 use bls::{PUBLIC_KEY_UNCOMPRESSED_BYTES_LEN, PublicKey};
 use serde::{Deserialize, Deserializer, Serializer};
 use serde_with::{DeserializeAs, SerializeAs};
+use ssz::{Decode, Encode};
 
 pub struct UncompressedPublicKey;
 
@@ -64,5 +66,37 @@ impl<'de> DeserializeAs<'de, Slot> for U64 {
     #[inline]
     fn deserialize_as<D: Deserializer<'de>>(deserializer: D) -> Result<Slot, D::Error> {
         Ok(Slot::new(u64::deserialize(deserializer)?))
+    }
+}
+
+pub struct DiskAttestation;
+impl<E: EthSpec> SerializeAs<beacon_types::Attestation<E>> for DiskAttestation {
+    #[inline]
+    fn serialize_as<S>(
+        source: &beacon_types::Attestation<E>,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let att_ref = source.to_ref();
+        let source = beacon_types::attestation::AttestationRefOnDisk::<E>::from(att_ref);
+        let bytes = source.as_ssz_bytes();
+        serializer.serialize_bytes(&bytes)
+    }
+}
+
+impl<'de, E: EthSpec> DeserializeAs<'de, beacon_types::Attestation<E>> for DiskAttestation {
+    #[inline]
+    fn deserialize_as<D>(deserializer: D) -> Result<beacon_types::Attestation<E>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let bytes = serde_with::Bytes::deserialize_as(deserializer)?;
+        Ok(
+            beacon_types::attestation::AttestationOnDisk::<E>::from_ssz_bytes(bytes)
+                .map_err(|err| serde::de::Error::custom(format!("{:?}", err)))?
+                .into(),
+        )
     }
 }

@@ -26,6 +26,8 @@ use serde_with::serde_as;
 use std::collections::HashMap;
 use tree_hash::TreeHash;
 
+use crate::serde_utils::{DiskAttestation, UncompressedPublicKey};
+
 mod attestation;
 #[cfg(feature = "host")]
 mod beacon_state;
@@ -82,6 +84,8 @@ pub const VALIDATOR_TREE_DEPTH: u32 = 3;
 pub struct Input<E: EthSpec> {
     pub state: ConsensusState,
     pub links: Vec<Link>,
+
+    #[serde_as(as = "Vec<Vec<DiskAttestation>>")]
     pub attestations: Vec<Vec<Attestation<E>>>,
 }
 

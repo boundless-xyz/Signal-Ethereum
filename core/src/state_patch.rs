@@ -45,24 +45,20 @@ pub use host::StatePatchBuilder;
 #[cfg(feature = "host")]
 mod host {
     use super::*;
-    use crate::{Ctx, RandaoMixIndex, StateRef};
+    use crate::{RandaoMixIndex, StateRef};
+    use beacon_types::EthSpec;
     use ethereum_consensus::phase0::Validator;
     use tracing::debug;
 
-    pub struct StatePatchBuilder<'a, CTX> {
+    pub struct StatePatchBuilder {
         state: StateRef,
-        context: &'a CTX,
         patch: StatePatch,
     }
 
-    impl<'a, CTX> StatePatchBuilder<'a, CTX>
-    where
-        CTX: Ctx,
-    {
-        pub fn new(state: StateRef, context: &'a CTX) -> Self {
+    impl StatePatchBuilder {
+        pub fn new(state: StateRef) -> Self {
             Self {
                 state,
-                context,
                 patch: Default::default(),
             }
         }
@@ -74,18 +70,18 @@ mod host {
                 .insert(idx, B256::from_slice(randao.as_slice()));
         }
 
-        pub fn validator_diff(&mut self, validators: impl IntoIterator<Item = &'a Validator>) {
+        pub fn validator_diff<'a>(&mut self, validators: impl IntoIterator<Item = &'a Validator>) {
             for (idx, (a, b)) in self.state.validators().iter().zip(validators).enumerate() {
                 // store validator exits
                 if a.exit_epoch != b.exit_epoch {
-                    self.patch.validator_exits.insert(idx, a.exit_epoch);
+                    self.patch.validator_exits.insert(idx, a.exit_epoch.into());
                 }
             }
         }
 
-        pub fn build(self) -> StatePatch {
+        pub fn build<E: EthSpec>(self) -> StatePatch {
             debug!(
-                epoch = self.context.compute_epoch_at_slot(self.state.slot()),
+                epoch = self.state.slot() * E::slots_per_epoch(),
                 randao_mixes = self.patch.randao_mixes.len(),
                 validator_exits = self.patch.validator_exits.len(),
                 "Created state patch",

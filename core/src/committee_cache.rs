@@ -12,23 +12,25 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::shuffle_list::shuffle_list;
-use crate::{CommitteeIndex, Ctx, Epoch, Slot, ValidatorIndex, ensure};
+use crate::{CommitteeIndex, Epoch, Slot, ValidatorIndex, ensure};
 use alloc::{vec, vec::Vec};
 use alloy_primitives::B256;
+use beacon_types::{ChainSpec, EthSpec};
 use core::num::NonZeroUsize;
 use core::ops::Range;
+use swap_or_not_shuffle::shuffle_list;
 use tracing::debug;
 
 /// Computes and stores the shuffling for an epoch. Provides various getters to allow callers to
 /// read the committees for the given epoch.
 #[derive(Debug, Default)]
-pub struct CommitteeCache {
+pub struct CommitteeCache<E: EthSpec> {
     initialized_epoch: Option<Epoch>,
     shuffling: Vec<usize>,
     shuffling_positions: Vec<Option<NonZeroUsize>>,
     committees_per_slot: usize,
     slots_per_epoch: usize,
+    _phantom: core::marker::PhantomData<E>,
 }
 
 #[derive(thiserror::Error, Debug, PartialEq)]
@@ -56,17 +58,17 @@ pub struct ShuffleData {
     pub(crate) committees_per_slot: u64,
 }
 
-impl CommitteeCache {
+impl<E: EthSpec> CommitteeCache<E> {
     /// Return a new, fully initialized cache.
-    pub fn initialized<C: Ctx>(
+    pub fn initialized(
+        spec: &ChainSpec,
         ShuffleData {
             seed,
             indices: active_validator_indices,
             committees_per_slot,
         }: ShuffleData,
         epoch: Epoch,
-        context: &C,
-    ) -> Result<CommitteeCache, Error> {
+    ) -> Result<CommitteeCache<E>, Error> {
         // May cause divide-by-zero errors.
         ensure!(committees_per_slot > 0, Error::ZeroSlotsPerEpoch);
 
@@ -82,7 +84,7 @@ impl CommitteeCache {
         );
         let shuffling = shuffle_list(
             active_validator_indices,
-            context.shuffle_round_count() as u8,
+            spec.shuffle_round_count,
             &seed[..],
             false,
         )
@@ -103,7 +105,8 @@ impl CommitteeCache {
             shuffling,
             shuffling_positions,
             committees_per_slot: committees_per_slot.try_into().unwrap(),
-            slots_per_epoch: context.slots_per_epoch().try_into().unwrap(),
+            slots_per_epoch: E::slots_per_epoch() as usize,
+            _phantom: core::marker::PhantomData,
         })
     }
 
@@ -125,23 +128,22 @@ impl CommitteeCache {
     /// This is the validator indices for the committee members
     ///
     /// Return `None` if the cache is uninitialized, or the `slot` or `index` is out of range.
-    pub fn get_beacon_committee<C: Ctx>(
+    pub fn get_beacon_committee(
         &self,
         slot: Slot,
         index: CommitteeIndex,
-        context: &C,
     ) -> Result<&[usize], Error> {
         ensure!(self.initialized_epoch.is_some(), Error::NotInitialized);
         ensure!(
-            self.is_initialized_at(context.compute_epoch_at_slot(slot)),
-            Error::NotInitializedAtEpoch(context.compute_epoch_at_slot(slot),)
+            self.is_initialized_at(slot.epoch(E::slots_per_epoch())),
+            Error::NotInitializedAtEpoch(slot.epoch(E::slots_per_epoch()))
         );
         ensure!(
             index < self.committees_per_slot,
             Error::ShuffleIndexOutOfBounds(index)
         );
 
-        let committee_index = compute_committee_index_in_epoch(
+        let committee_index = beacon_types::compute_committee_index_in_epoch(
             slot,
             self.slots_per_epoch,
             self.committees_per_slot,
@@ -154,15 +156,11 @@ impl CommitteeCache {
     /// Get all the Beacon committees at a given `slot`.
     ///
     /// Committees are sorted by ascending index order 0..committees_per_slot
-    pub fn get_beacon_committees_at_slot<C: Ctx>(
-        &self,
-        slot: Slot,
-        context: &C,
-    ) -> Result<Vec<&[usize]>, Error> {
+    pub fn get_beacon_committees_at_slot(&self, slot: Slot) -> Result<Vec<&[usize]>, Error> {
         ensure!(self.initialized_epoch.is_some(), Error::NotInitialized);
 
         (0..self.get_committee_count_per_slot())
-            .map(|index| self.get_beacon_committee(slot, index, context))
+            .map(|index| self.get_beacon_committee(slot, index))
             .collect()
     }
 
@@ -177,7 +175,7 @@ impl CommitteeCache {
     ///
     /// Always returns `usize::default()` for a non-initialized epoch.
     pub fn epoch_committee_count(&self) -> usize {
-        epoch_committee_count(self.committees_per_slot, self.slots_per_epoch)
+        beacon_types::epoch_committee_count(self.committees_per_slot, self.slots_per_epoch)
     }
 
     /// Returns the number of committees per slot for this cache's epoch.
@@ -196,7 +194,11 @@ impl CommitteeCache {
     ///
     /// Will also return `None` if the index is out of bounds.
     fn compute_committee_range(&self, index: CommitteeIndex) -> Option<Range<usize>> {
-        compute_committee_range_in_epoch(self.epoch_committee_count(), index, self.shuffling.len())
+        beacon_types::compute_committee_range_in_epoch(
+            self.epoch_committee_count(),
+            index,
+            self.shuffling.len(),
+        )
     }
 
     /// Returns the index of some validator in `self.shuffling`.
@@ -207,43 +209,4 @@ impl CommitteeCache {
             .get(validator_index)?
             .map(|p| p.get() - 1)
     }
-}
-
-/// Computes the position of the given `committee_index` with respect to all committees in the
-/// epoch.
-///
-/// The return result may be used to provide input to the `compute_committee_range_in_epoch`
-/// function.
-pub fn compute_committee_index_in_epoch(
-    slot: Slot,
-    slots_per_epoch: usize,
-    committees_per_slot: usize,
-    committee_index: CommitteeIndex,
-) -> CommitteeIndex {
-    (slot % slots_per_epoch as u64) as CommitteeIndex * committees_per_slot
-        + committee_index as CommitteeIndex
-}
-
-/// Computes the range for slicing the shuffled indices to determine the members of a committee.
-///
-/// The `index_in_epoch` parameter can be computed computed using
-/// `compute_committee_index_in_epoch`.
-pub fn compute_committee_range_in_epoch(
-    epoch_committee_count: usize,
-    index_in_epoch: usize,
-    shuffling_len: usize,
-) -> Option<Range<usize>> {
-    if epoch_committee_count == 0 || index_in_epoch >= epoch_committee_count {
-        return None;
-    }
-
-    let start = (shuffling_len * index_in_epoch) / epoch_committee_count;
-    let end = (shuffling_len * (index_in_epoch + 1)) / epoch_committee_count;
-
-    Some(start..end)
-}
-
-/// Returns the total number of committees in an epoch.
-pub fn epoch_committee_count(committees_per_slot: usize, slots_per_epoch: usize) -> usize {
-    committees_per_slot * slots_per_epoch
 }

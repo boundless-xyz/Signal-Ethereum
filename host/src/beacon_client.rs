@@ -274,10 +274,7 @@ impl BeaconClient {
 
 impl From<CheckpointResponse> for Checkpoint {
     fn from(response: CheckpointResponse) -> Self {
-        Self {
-            epoch: response.epoch,
-            root: response.root,
-        }
+        Self::new(response.epoch.into(), response.root)
     }
 }
 

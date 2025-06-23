@@ -13,11 +13,12 @@
 // limitations under the License.
 
 use crate::{
-    CacheStateProvider, Epoch, HostContext, RandaoMixIndex, Root, Slot, StateProvider,
-    StateProviderError, StateReader, StateRef, ValidatorIndex, ValidatorInfo, Version,
+    CacheStateProvider, Epoch, RandaoMixIndex, Root, Slot, StateProvider, StateProviderError,
+    StateReader, StateRef, ValidatorIndex, ValidatorInfo,
     state_reader::state_provider::FileProvider,
 };
 use alloy_primitives::B256;
+use beacon_types::{ChainSpec, EthSpec, Fork};
 use elsa::FrozenMap;
 use ethereum_consensus::phase0::Validator;
 use ssz_rs::prelude::*;
@@ -44,6 +45,7 @@ pub enum HostReaderError {
 }
 
 pub struct HostStateReader<P> {
+    spec: ChainSpec,
     provider: P,
     validator_cache: FrozenMap<Epoch, Vec<(ValidatorIndex, ValidatorInfo)>>,
 }
@@ -51,6 +53,7 @@ pub struct HostStateReader<P> {
 impl<P: StateProvider> HostStateReader<P> {
     pub fn new(provider: P) -> Self {
         Self {
+            spec: P::Spec::default_spec(),
             provider,
             validator_cache: Default::default(),
         }
@@ -61,20 +64,15 @@ impl<P: StateProvider> HostStateReader<P> {
     }
 }
 
-impl HostStateReader<CacheStateProvider<FileProvider>> {
-    pub fn new_with_dir(
-        dir: impl Into<PathBuf>,
-        context: HostContext,
-    ) -> Result<Self, HostReaderError> {
-        let provider = CacheStateProvider::new(FileProvider::new(dir, &context)?);
+impl<E: EthSpec> HostStateReader<CacheStateProvider<FileProvider<E>>> {
+    pub fn new_with_dir(dir: impl Into<PathBuf>) -> Result<Self, HostReaderError> {
+        let provider = CacheStateProvider::new(FileProvider::new(dir)?);
         Ok(Self::new(provider))
     }
 }
 
 impl<P: StateProvider> StateProvider for HostStateReader<P> {
-    fn context(&self) -> &HostContext {
-        self.provider.context()
-    }
+    type Spec = P::Spec;
 
     fn state_at_slot(&self, slot: Slot) -> Result<StateRef, StateProviderError> {
         self.provider.state_at_slot(slot)
@@ -83,19 +81,23 @@ impl<P: StateProvider> StateProvider for HostStateReader<P> {
 
 impl<P: StateProvider> StateReader for HostStateReader<P> {
     type Error = HostReaderError;
-    type Context = HostContext;
+    type Spec = P::Spec;
 
-    fn context(&self) -> &Self::Context {
-        self.provider.context()
+    fn chain_spec(&self) -> &ChainSpec {
+        &self.spec
     }
 
     fn genesis_validators_root(&self) -> Result<Root, HostReaderError> {
         Ok(self.provider.genesis_validators_root()?)
     }
 
-    fn fork_current_version(&self, epoch: Epoch) -> Result<Version, HostReaderError> {
+    fn fork(&self, epoch: Epoch) -> Result<Fork, HostReaderError> {
         let state = self.provider.state_at_epoch(epoch)?;
-        Ok(state.fork().current_version)
+        Ok(Fork {
+            previous_version: state.fork().previous_version,
+            current_version: state.fork().current_version,
+            epoch: state.fork().epoch.into(),
+        })
     }
 
     fn active_validators(
@@ -114,7 +116,7 @@ impl<P: StateProvider> StateReader for HostStateReader<P> {
                     .validators()
                     .iter()
                     .enumerate()
-                    .filter(move |(_, validator)| is_active_validator(validator, epoch))
+                    .filter(move |(_, validator)| is_active_validator(validator, epoch.into()))
                     .map(move |(idx, validator)| (idx, ValidatorInfo::from(validator)))
                     .collect();
                 debug!("Active validators: {}", validators.len());
@@ -139,6 +141,6 @@ impl<P: StateProvider> StateReader for HostStateReader<P> {
 }
 
 /// Check if `validator` is active.
-fn is_active_validator(validator: &Validator, epoch: Epoch) -> bool {
+fn is_active_validator(validator: &Validator, epoch: u64) -> bool {
     validator.activation_epoch <= epoch && epoch < validator.exit_epoch
 }

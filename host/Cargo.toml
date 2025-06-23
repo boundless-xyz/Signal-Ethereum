@@ -8,6 +8,7 @@ license = "Apache-2.0"
 [dependencies]
 anyhow = "1.0"
 async-trait = "0.1"
+beacon_types = { workspace = true }
 bincode = { workspace = true }
 clap = { version = "4.0", features = ["derive", "env"] }
 ethereum-consensus = { workspace = true }

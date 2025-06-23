@@ -12,6 +12,24 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-fn main() {
-    risc0_build::embed_methods();
+pub const fn slot_gindex() -> u64 {
+    66u64
+}
+pub const fn genesis_validators_root_gindex() -> u64 {
+    65u64
+}
+pub const fn fork_previous_version_gindex() -> u64 {
+    268u64
+}
+pub const fn fork_current_version_gindex() -> u64 {
+    269u64
+}
+pub const fn fork_epoch_gindex() -> u64 {
+    270u64
+}
+pub const fn validators_gindex() -> u64 {
+    75u64
+}
+pub const fn finalized_checkpoint_epoch_gindex() -> u64 {
+    168u64
 }

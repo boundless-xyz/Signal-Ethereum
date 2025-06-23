@@ -17,9 +17,7 @@ use ethereum_consensus::{
     altair::{self},
     bellatrix::{self},
     capella::{self},
-    deneb::{
-        self, Checkpoint, Fork, JUSTIFICATION_BITS_LENGTH, ParticipationFlags, PendingAttestation,
-    },
+    deneb::{self, Checkpoint, Fork, ParticipationFlags, PendingAttestation},
     phase0::{self, BeaconBlockHeader, Validator},
     primitives::{Bytes32, Gwei, Root, Slot},
     ssz::prelude::*,
@@ -358,16 +356,6 @@ impl<
             Self::Electra(inner) => inner.genesis_validators_root,
         }
     }
-    pub fn genesis_validators_root_mut(&mut self) -> &mut Root {
-        match self {
-            Self::Phase0(inner) => &mut inner.genesis_validators_root,
-            Self::Altair(inner) => &mut inner.genesis_validators_root,
-            Self::Bellatrix(inner) => &mut inner.genesis_validators_root,
-            Self::Capella(inner) => &mut inner.genesis_validators_root,
-            Self::Deneb(inner) => &mut inner.genesis_validators_root,
-            Self::Electra(inner) => &mut inner.genesis_validators_root,
-        }
-    }
     pub fn slot(&self) -> Slot {
         match self {
             Self::Phase0(inner) => inner.slot,
@@ -401,17 +389,6 @@ impl<
         }
     }
 
-    pub fn block_roots(&self) -> &Vector<Root, SLOTS_PER_HISTORICAL_ROOT> {
-        match self {
-            Self::Phase0(inner) => &inner.block_roots,
-            Self::Altair(inner) => &inner.block_roots,
-            Self::Bellatrix(inner) => &inner.block_roots,
-            Self::Capella(inner) => &inner.block_roots,
-            Self::Deneb(inner) => &inner.block_roots,
-            Self::Electra(inner) => &inner.block_roots,
-        }
-    }
-
     pub fn state_roots(&self) -> &Vector<Root, SLOTS_PER_HISTORICAL_ROOT> {
         match self {
             Self::Phase0(inner) => &inner.state_roots,
@@ -433,16 +410,7 @@ impl<
             Self::Electra(inner) => &inner.historical_roots,
         }
     }
-    pub fn historical_roots_mut(&mut self) -> &mut List<Root, HISTORICAL_ROOTS_LIMIT> {
-        match self {
-            Self::Phase0(inner) => &mut inner.historical_roots,
-            Self::Altair(inner) => &mut inner.historical_roots,
-            Self::Bellatrix(inner) => &mut inner.historical_roots,
-            Self::Capella(inner) => &mut inner.historical_roots,
-            Self::Deneb(inner) => &mut inner.historical_roots,
-            Self::Electra(inner) => &mut inner.historical_roots,
-        }
-    }
+
     pub fn validators(&self) -> &List<Validator, VALIDATOR_REGISTRY_LIMIT> {
         match self {
             Self::Phase0(inner) => &inner.validators,
@@ -499,16 +467,7 @@ impl<
             Self::Electra(_) => None,
         }
     }
-    pub fn justification_bits(&self) -> &Bitvector<JUSTIFICATION_BITS_LENGTH> {
-        match self {
-            Self::Phase0(inner) => &inner.justification_bits,
-            Self::Altair(inner) => &inner.justification_bits,
-            Self::Bellatrix(inner) => &inner.justification_bits,
-            Self::Capella(inner) => &inner.justification_bits,
-            Self::Deneb(inner) => &inner.justification_bits,
-            Self::Electra(inner) => &inner.justification_bits,
-        }
-    }
+
     pub fn previous_justified_checkpoint(&self) -> &Checkpoint {
         match self {
             Self::Phase0(inner) => &inner.previous_justified_checkpoint,

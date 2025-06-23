@@ -16,10 +16,12 @@ extern crate alloc;
 extern crate core;
 
 use alloy_primitives::B256;
-use alloy_rlp::{RlpDecodable, RlpEncodable};
+use alloy_rlp::{Decodable, Encodable, RlpDecodable, RlpEncodable};
+use beacon_types::{ChainSpec, EthSpec, PublicKey};
 use core::fmt;
 use core::fmt::Display;
-use std::collections::BTreeMap;
+use std::collections::HashMap;
+use tree_hash::TreeHash;
 
 mod attestation;
 #[cfg(feature = "host")]
@@ -27,11 +29,9 @@ mod beacon_state;
 mod bls;
 mod committee_cache;
 mod consensus_state;
-mod context;
-mod guest_context;
+mod guest_gindices;
 #[cfg(feature = "host")]
 mod input_builder;
-mod shuffle_list;
 mod state_patch;
 mod state_reader;
 mod threshold;
@@ -43,20 +43,20 @@ pub use beacon_state::*;
 pub use bls::*;
 pub use committee_cache::*;
 pub use consensus_state::*;
-pub use context::*;
 #[cfg(feature = "host")]
 pub use input_builder::*;
 use ssz_types::typenum::{U64, U131072};
 pub use state_patch::*;
 pub use state_reader::*;
 pub use threshold::*;
-use tree_hash_derive::TreeHash;
 pub use verify::*;
 
+pub type MainnetEthSpec = beacon_types::MainnetEthSpec;
+pub type MinimalEthSpec = beacon_types::MinimalEthSpec;
 // Need to redefine/redeclare a bunch of types and constants because we can't use ssz-rs and ethereum-consensus in the guest
 
-pub type Epoch = u64;
-pub type Slot = u64;
+pub type Epoch = beacon_types::Epoch;
+pub type Slot = beacon_types::Slot;
 pub type CommitteeIndex = usize;
 pub type ValidatorIndex = usize;
 pub type RandaoMixIndex = u64;
@@ -75,10 +75,10 @@ pub const VALIDATOR_LIST_TREE_DEPTH: u32 = VALIDATOR_REGISTRY_LIMIT.ilog2() + 1;
 pub const VALIDATOR_TREE_DEPTH: u32 = 3;
 
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
-pub struct Input {
+pub struct Input<E: EthSpec> {
     pub state: ConsensusState,
     pub links: Vec<Link>,
-    pub attestations: Vec<Vec<Attestation>>,
+    pub attestations: Vec<Vec<Attestation<E>>>,
 }
 
 #[derive(Clone, serde::Serialize, serde::Deserialize, RlpEncodable, RlpDecodable)]
@@ -94,11 +94,13 @@ impl Output {
     }
 }
 
-impl fmt::Debug for Input {
+impl<E: EthSpec> fmt::Debug for Input<E> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let mut by_source: BTreeMap<Checkpoint, usize> = BTreeMap::new();
+        let mut by_source: HashMap<Checkpoint, usize> = HashMap::new();
         for attestation in self.attestations.iter().flatten() {
-            *by_source.entry(attestation.data.source).or_default() += 1;
+            *by_source
+                .entry(attestation.data().source.into())
+                .or_default() += 1;
         }
 
         f.debug_struct("Input")
@@ -108,33 +110,32 @@ impl fmt::Debug for Input {
     }
 }
 
-#[derive(Eq, PartialEq, Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[derive(Eq, PartialEq, Clone, Debug)]
 pub struct ValidatorInfo {
     pub pubkey: PublicKey,
     pub effective_balance: u64,
-    pub activation_eligibility_epoch: u64,
-    pub activation_epoch: u64,
-    pub exit_epoch: u64,
+    pub activation_eligibility_epoch: Epoch,
+    pub activation_epoch: Epoch,
+    pub exit_epoch: Epoch,
 }
-
-// TODO(willem): Move these to the context once we have decided how we want to do that
-const FAR_FUTURE_EPOCH: u64 = Epoch::MAX;
-const MIN_PER_EPOCH_CHURN_LIMIT_ELECTRA: u64 = 128_000_000_000;
-const CHURN_LIMIT_QUOTIENT: u64 = 65_536;
 
 impl ValidatorInfo {
     /// Check if ``validator`` is eligible to be placed into the activation queue.
-    pub fn is_eligible_for_activation_queue(&self, ctx: &impl Ctx) -> bool {
-        self.activation_eligibility_epoch == FAR_FUTURE_EPOCH
-            && self.effective_balance >= ctx.min_activation_balance()
+    pub fn is_eligible_for_activation_queue(&self, spec: &ChainSpec) -> bool {
+        self.activation_eligibility_epoch == spec.far_future_epoch
+            && self.effective_balance >= spec.min_activation_balance
     }
 
     /// Check if the validator is eligible for activation with respect to the given state.
-    pub fn is_eligible_for_activation(&self, finalized_checkpoint_epoch: Epoch) -> bool {
+    pub fn is_eligible_for_activation(
+        &self,
+        spec: &ChainSpec,
+        finalized_checkpoint_epoch: Epoch,
+    ) -> bool {
         // placement in queue if finalized
         self.activation_eligibility_epoch <= finalized_checkpoint_epoch
             // has not yet been activated
-            && self.activation_epoch == FAR_FUTURE_EPOCH
+            && self.activation_epoch == spec.far_future_epoch
     }
 
     /// Checks if the validator is active at the given epoch given knowledge of the most recently finalized epoch
@@ -147,20 +148,7 @@ impl ValidatorInfo {
 impl From<&ethereum_consensus::phase0::Validator> for ValidatorInfo {
     fn from(v: &ethereum_consensus::phase0::Validator) -> Self {
         Self {
-            pubkey: PublicKey::uncompress(&v.public_key).unwrap(),
-            effective_balance: v.effective_balance,
-            activation_epoch: v.activation_epoch,
-            activation_eligibility_epoch: v.activation_eligibility_epoch,
-            exit_epoch: v.exit_epoch,
-        }
-    }
-}
-
-#[cfg(feature = "host")]
-impl From<&beacon_types::Validator> for ValidatorInfo {
-    fn from(v: &beacon_types::Validator) -> Self {
-        Self {
-            pubkey: PublicKey::uncompress(&v.pubkey.serialize()).unwrap(),
+            pubkey: PublicKey::deserialize(&v.public_key).unwrap(),
             effective_balance: v.effective_balance,
             activation_epoch: v.activation_epoch.into(),
             activation_eligibility_epoch: v.activation_eligibility_epoch.into(),
@@ -169,35 +157,103 @@ impl From<&beacon_types::Validator> for ValidatorInfo {
     }
 }
 
-#[derive(
-    Clone,
-    Copy,
-    Debug,
-    PartialEq,
-    Eq,
-    PartialOrd,
-    Ord,
-    Hash,
-    TreeHash,
-    serde::Serialize,
-    serde::Deserialize,
-    RlpEncodable,
-    RlpDecodable,
-)]
-pub struct Checkpoint {
-    pub epoch: Epoch,
-    pub root: Root,
+#[cfg(feature = "host")]
+impl From<&beacon_types::Validator> for ValidatorInfo {
+    fn from(v: &beacon_types::Validator) -> Self {
+        Self {
+            pubkey: v.pubkey.decompress().expect("fail to decompress pub key"),
+            effective_balance: v.effective_balance,
+            activation_epoch: v.activation_epoch,
+            activation_eligibility_epoch: v.activation_eligibility_epoch,
+            exit_epoch: v.exit_epoch,
+        }
+    }
+}
+#[derive(Clone, Copy, Debug, PartialEq, Hash, Eq, serde::Serialize, serde::Deserialize)]
+#[repr(transparent)]
+#[serde(transparent)]
+pub struct Checkpoint(beacon_types::Checkpoint);
+
+impl TreeHash for Checkpoint {
+    fn tree_hash_type() -> tree_hash::TreeHashType {
+        beacon_types::Checkpoint::tree_hash_type()
+    }
+
+    fn tree_hash_packed_encoding(&self) -> tree_hash::PackedEncoding {
+        self.0.tree_hash_packed_encoding()
+    }
+
+    fn tree_hash_packing_factor() -> usize {
+        beacon_types::Checkpoint::tree_hash_packing_factor()
+    }
+
+    fn tree_hash_root(&self) -> tree_hash::Hash256 {
+        self.0.tree_hash_root()
+    }
+}
+
+impl Encodable for Checkpoint {
+    fn encode(&self, out: &mut dyn alloy_rlp::BufMut) {
+        #[derive(RlpEncodable)]
+        struct EncCheckpoint<'a> {
+            pub epoch: u64,
+            pub root: &'a B256,
+        }
+        let enc_checkpoint = EncCheckpoint {
+            epoch: self.0.epoch.as_u64(),
+            root: &self.0.root,
+        };
+        enc_checkpoint.encode(out);
+    }
+}
+
+impl Decodable for Checkpoint {
+    fn decode(buf: &mut &[u8]) -> Result<Self, alloy_rlp::Error> {
+        #[derive(RlpDecodable)]
+        struct DecCheckpoint {
+            pub epoch: u64,
+            pub root: B256,
+        }
+        let dec_checkpoint = DecCheckpoint::decode(buf)?;
+        Ok(Checkpoint(beacon_types::Checkpoint {
+            epoch: beacon_types::Epoch::new(dec_checkpoint.epoch),
+            root: dec_checkpoint.root,
+        }))
+    }
+}
+impl Checkpoint {
+    pub const fn new(epoch: Epoch, root: Root) -> Self {
+        Self(beacon_types::Checkpoint { epoch, root })
+    }
+
+    pub fn epoch(&self) -> Epoch {
+        self.0.epoch
+    }
+
+    pub fn root(&self) -> Root {
+        self.0.root
+    }
 }
 
 impl Display for Checkpoint {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "({},{})", self.root, self.epoch)
+        write!(f, "({},{})", self.root(), self.epoch())
     }
 }
 
-#[derive(
-    Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
-)]
+impl From<beacon_types::Checkpoint> for Checkpoint {
+    fn from(checkpoint: beacon_types::Checkpoint) -> Self {
+        Self::new(checkpoint.epoch, checkpoint.root)
+    }
+}
+
+impl From<Checkpoint> for beacon_types::Checkpoint {
+    fn from(checkpoint: Checkpoint) -> Self {
+        checkpoint.0
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct Link {
     pub source: Checkpoint,
     pub target: Checkpoint,
@@ -206,10 +262,7 @@ pub struct Link {
 #[cfg(feature = "host")]
 impl From<ethereum_consensus::electra::Checkpoint> for Checkpoint {
     fn from(checkpoint: ethereum_consensus::electra::Checkpoint) -> Self {
-        Self {
-            epoch: checkpoint.epoch,
-            root: checkpoint.root,
-        }
+        Self::new(checkpoint.epoch.into(), checkpoint.root)
     }
 }
 

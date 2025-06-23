@@ -4,7 +4,7 @@
 
 use risc0_zkvm::guest::env;
 use z_core::{
-    compute_fork_data_root, verify, GuestContext, Input, Output, Root, StateInput, StateReader,
+    GuestContext, Input, Output, Root, StateInput, StateReader, compute_fork_data_root, verify,
 };
 
 mod config;

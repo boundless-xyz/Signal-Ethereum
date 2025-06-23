@@ -148,6 +148,30 @@ impl FileProvider {
         fs::write(&file, ssz_rs::serialize(state)?)?;
         Ok(())
     }
+
+    pub fn clear_states_before(&self, epoch: Epoch) -> Result<(), anyhow::Error> {
+        let slot = epoch * self.context.slots_per_epoch();
+        tracing::info!(
+            "Clearing all beacon states before epoch: {} (slot: {})",
+            epoch,
+            slot
+        );
+        for entry in fs::read_dir(&self.directory)? {
+            let entry = entry?;
+            if let Some(file_slot) = entry.file_name().to_str() {
+                if let Some(file_slot) = file_slot
+                    .split('_')
+                    .next()
+                    .and_then(|s| s.parse::<Epoch>().ok())
+                {
+                    if file_slot < slot {
+                        fs::remove_file(entry.path())?;
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
 }
 
 impl StateProvider for FileProvider {

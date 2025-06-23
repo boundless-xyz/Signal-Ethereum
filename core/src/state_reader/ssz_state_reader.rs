@@ -1,3 +1,17 @@
+// Copyright 2025 RISC Zero, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 use super::StateReader;
 use crate::{
     Checkpoint, Ctx, Epoch, GuestContext, PublicKey, RandaoMixIndex, Root, Slot, StatePatch,
@@ -62,6 +76,19 @@ pub enum SszReaderError {
     MissingStatePatch(Epoch),
 }
 
+trait WithContext<T> {
+    fn context(self, msg: &'static str) -> Result<T, SszReaderError>;
+}
+
+impl<T> WithContext<T> for Result<T, ssz_multiproofs::Error> {
+    fn context(self, msg: &'static str) -> Result<T, SszReaderError> {
+        self.map_err(|e| SszReaderError::SszMultiproof {
+            msg: msg.to_string(),
+            source: e.into(),
+        })
+    }
+}
+
 impl StateInput<'_> {
     pub fn into_state_reader(
         self,
@@ -71,46 +98,33 @@ impl StateInput<'_> {
         // beacon block inclusion proofs
         self.beacon_block
             .verify(&checkpoint.root)
-            .map_err(|e| SszReaderError::SszVerify {
-                msg: "Beacon block root mismatch".to_string(),
-                source: e,
-            })?;
+            .context("Beacon block root mismatch")?;
+
         let (epoch_boundary_slot, state_root) =
-            extract_beacon_block_multiproof(context, &self.beacon_block).map_err(|e| {
-                SszReaderError::SszMultiproof {
-                    msg: "Failed to extract beacon block multiproof".to_string(),
-                    source: e,
-                }
-            })?;
+            extract_beacon_block_multiproof(context, &self.beacon_block)
+                .context("Failed to extract beacon block multiproof")?;
 
         // beacon state inclusion proofs
         self.beacon_state
             .verify(&state_root)
-            .map_err(|e| SszReaderError::SszVerify {
-                msg: "Beacon state root mismatch".to_string(),
-                source: e,
-            })?;
+            .context("Beacon state root mismatch")?;
+
         let (genesis_validators_root, slot, fork_current_version, validators_root, randao) =
-            extract_beacon_state_multiproof(context, &self.beacon_state).map_err(|e| {
-                SszReaderError::SszMultiproof {
-                    msg: "Failed to extract beacon state multiproof".to_string(),
-                    source: e,
-                }
-            })?;
+            extract_beacon_state_multiproof(context, &self.beacon_state)
+                .context("Failed to extract beacon block multiproof")?;
         assert_eq!(epoch_boundary_slot, slot);
 
         // validator list inclusion proofs
-        let validators = extract_validators_multiproof(self.public_keys, &self.active_validators)
-            .map_err(|e| SszReaderError::SszMultiproof {
-            msg: "Failed to extract active validators multiproof".to_string(),
-            source: e,
-        })?;
+        let validators = extract_validators_multiproof(
+            &self.active_validators,
+            self.public_keys,
+            checkpoint.epoch,
+        )
+        .context("Failed to extract validators multiproof")?;
+
         self.active_validators
             .verify(&validators_root)
-            .map_err(|e| SszReaderError::SszVerify {
-                msg: "Validators root mismatch".to_string(),
-                source: e,
-            })?;
+            .context("Validators root mismatch")?;
 
         // make sure that the state actually corresponds to the state of the checkpoint epoch
         for _epoch in context.compute_epoch_at_slot(epoch_boundary_slot)..checkpoint.epoch {
@@ -154,11 +168,12 @@ impl StateReader for SszStateReader<'_> {
         &self,
         epoch: Epoch,
     ) -> Result<impl Iterator<Item = (ValidatorIndex, &ValidatorInfo)>, Self::Error> {
+        let latest_finalized = self.context.compute_epoch_at_slot(self.slot);
         Ok(self
             .validators
             .iter()
             .map(|(idx, validator)| (*idx, validator))
-            .filter(move |(_, validator)| validator.is_active_at(epoch)))
+            .filter(move |(_, validator)| validator.is_active_at(latest_finalized, epoch)))
     }
 
     fn randao_mix(&self, epoch: Epoch, index: RandaoMixIndex) -> Result<Option<B256>, Self::Error> {
@@ -231,25 +246,42 @@ fn extract_beacon_state_multiproof(
     ))
 }
 
-/// Extracts the active validators from its multiproof. The multiproof contains the compressed public key which is checked
-/// against the public key in the `public_keys` vector which is in the uncompressed form.
-/// The multiproof contains the following fields:
-/// - public key (compressed)
-/// - effective balance
-/// - activation epoch
-/// - exit epoch
+/// Extracts the not-exited validators from the multiproof of the Validators.
+///
+/// The multiproof contains the compressed public key which is checked against the public key in the
+/// `public_keys` vector which is in the uncompressed form.
+/// It contains the `ValidatorInfo` of non-exited validators and only the exit_epoch for exited.
 fn extract_validators_multiproof(
-    public_keys: Vec<PublicKey>,
     validators: &Multiproof<'_>,
+    public_keys: Vec<PublicKey>,
+    current_epoch: Epoch,
 ) -> Result<BTreeMap<ValidatorIndex, ValidatorInfo>, ssz_multiproofs::Error> {
-    let mut values = validators.values();
+    let mut values = validators.values().peekable();
+    let mut pubkeys = public_keys.into_iter();
 
-    let validator_cache = public_keys
-        .into_iter()
-        .map(|pubkey| {
-            // Note: We do not have to verify the gindices here. This is because the root of the Validators
-            // list is verified against the root which is in the top level BeaconState and this is a homogeneous
-            // collection. We are also using the exit_epoch_gindex to calculate the validator index.
+    let mut validator_cache: BTreeMap<ValidatorIndex, ValidatorInfo> = BTreeMap::new();
+    let mut validator_index: ValidatorIndex = 0;
+
+    loop {
+        let (gindex, _) = values.peek().ok_or(ssz_multiproofs::Error::MissingValue)?;
+        // This is the generalized index for the validator list length, which means we are done.
+        if gindex == &3 {
+            break;
+        }
+
+        let validator_base_index: u64 = ((1 << VALIDATOR_LIST_TREE_DEPTH)
+            + (validator_index as u64))
+            * (1 << VALIDATOR_TREE_DEPTH);
+        let exit_epoch_gindex: u64 = validator_base_index + 6;
+
+        if gindex == &exit_epoch_gindex {
+            let (_, exit_epoch) = values.next().unwrap();
+            let exit_epoch = u64_from_chunk(exit_epoch);
+
+            assert!(exit_epoch <= current_epoch);
+        } else {
+            let pubkey = pubkeys.next().unwrap();
+
             let pk_compressed = {
                 let (_, part_1) = values.next().ok_or(ssz_multiproofs::Error::MissingValue)?;
                 let (_, part_2) = values.next().ok_or(ssz_multiproofs::Error::MissingValue)?;
@@ -263,32 +295,36 @@ fn extract_validators_multiproof(
                 values.next().ok_or(ssz_multiproofs::Error::MissingValue)?;
             let effective_balance = u64_from_chunk(effective_balance);
 
+            let (_, activation_eligibility_epoch) =
+                values.next().ok_or(ssz_multiproofs::Error::MissingValue)?;
+            let activation_eligibility_epoch = u64_from_chunk(activation_eligibility_epoch);
+
             let (_, activation_epoch) =
                 values.next().ok_or(ssz_multiproofs::Error::MissingValue)?;
             let activation_epoch = u64_from_chunk(activation_epoch);
 
-            let (exit_epoch_gindex, exit_epoch) =
-                values.next().ok_or(ssz_multiproofs::Error::MissingValue)?;
+            let (_, exit_epoch) = values.next().ok_or(ssz_multiproofs::Error::MissingValue)?;
             let exit_epoch = u64_from_chunk(exit_epoch);
 
-            // We are calculating the validator index from the gindex.
-            let validator_index =
-                (exit_epoch_gindex >> VALIDATOR_TREE_DEPTH) - (1 << VALIDATOR_LIST_TREE_DEPTH);
-            // NOTE: This should not fail until there are more than 2^32 validators.
-            let validator_index = usize::try_from(validator_index).unwrap();
+            let validator_info = ValidatorInfo {
+                pubkey,
+                effective_balance,
+                activation_eligibility_epoch,
+                activation_epoch,
+                exit_epoch,
+            };
+            validator_cache.insert(validator_index, validator_info);
+        }
 
-            Ok((
-                validator_index,
-                ValidatorInfo {
-                    pubkey,
-                    effective_balance,
-                    activation_epoch,
-                    exit_epoch,
-                },
-            ))
-        })
-        .collect::<Result<BTreeMap<_, _>, ssz_multiproofs::Error>>()?;
+        validator_index += 1;
+    }
+
+    let (_, length) = values.next().unwrap();
+    let length = u64_from_chunk(length);
+    assert_eq!(validator_index as u64, length);
+
     assert!(values.next().is_none());
+
     Ok(validator_cache)
 }
 

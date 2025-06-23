@@ -1,3 +1,17 @@
+// Copyright 2025 RISC Zero, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 use crate::{Checkpoint, Ctx, Epoch, HostContext, Root, Slot, beacon_state::mainnet::BeaconState};
 use anyhow::{Context, ensure};
 use elsa::FrozenMap;
@@ -132,6 +146,30 @@ impl FileProvider {
         );
         debug!("Saving beacon state at slot {slot} in epoch: {epoch}");
         fs::write(&file, ssz_rs::serialize(state)?)?;
+        Ok(())
+    }
+
+    pub fn clear_states_before(&self, epoch: Epoch) -> Result<(), anyhow::Error> {
+        let slot = epoch * self.context.slots_per_epoch();
+        tracing::info!(
+            "Clearing all beacon states before epoch: {} (slot: {})",
+            epoch,
+            slot
+        );
+        for entry in fs::read_dir(&self.directory)? {
+            let entry = entry?;
+            if let Some(file_slot) = entry.file_name().to_str() {
+                if let Some(file_slot) = file_slot
+                    .split('_')
+                    .next()
+                    .and_then(|s| s.parse::<Epoch>().ok())
+                {
+                    if file_slot < slot {
+                        fs::remove_file(entry.path())?;
+                    }
+                }
+            }
+        }
         Ok(())
     }
 }

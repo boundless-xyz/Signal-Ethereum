@@ -1,19 +1,34 @@
+// Copyright 2025 RISC Zero, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 use clap::{Parser, ValueEnum};
 use ethereum_consensus::electra;
 use methods::BEACON_GUEST_ELF;
-use risc0_zkvm::{default_executor, ExecutorEnv};
+use risc0_zkvm::{ExecutorEnv, default_executor};
 use ssz_rs::prelude::*;
 use std::{
     fmt::{self, Display},
-    fs,
+    fs::{self, File},
+    io::Write,
     path::PathBuf,
 };
-use tracing::info;
+use tracing::{info, warn};
 use url::Url;
 use z_core::{
-    verify, CacheStateProvider, Checkpoint, ConsensusState, Ctx, Epoch, GuestContext, HostContext,
-    HostStateReader, Input, InputBuilder, PreflightStateReader, StateInput, StateProvider,
-    StateReader,
+    CacheStateProvider, ChainReader, Checkpoint, ConsensusState, Ctx, Epoch, GuestContext,
+    HostContext, HostStateReader, Input, InputBuilder, PreflightStateReader, Slot, StateInput,
+    StateProvider, StateReader, verify,
 };
 use z_core_test_utils::AssertStateReader;
 
@@ -27,10 +42,6 @@ use crate::{beacon_client::BeaconClient, state_provider::PersistentApiStateProvi
 #[derive(Parser, Debug)]
 #[clap(author, version, about, long_about = None)]
 struct Args {
-    /// Trusted epoch
-    #[clap(long)]
-    trusted_epoch: Epoch,
-
     /// Beacon API URL
     #[clap(long, env = "BEACON_RPC_URL")]
     beacon_api: Url,
@@ -77,9 +88,28 @@ enum Command {
         /// If true, runs in R0VM as well, otherwise runs natively
         #[clap(long, default_value_t = ExecMode::Native)]
         mode: ExecMode,
+        /// Trusted epoch
+        #[clap(long)]
+        trusted_epoch: Epoch,
         /// Number of iterations to run
         #[clap(short('i'), long, default_value_t = 1)]
         iterations: u64,
+    },
+    /// Attempts to sync a trusted block root to the latest state available on the Beacon API
+    /// Optionally can log any places the resulting consensus state diverges from the chain for debugging
+    #[clap(name = "sync")]
+    Sync {
+        /// If true, runs in R0VM as well, otherwise runs natively
+        #[clap(long, default_value_t = ExecMode::Native)]
+        mode: ExecMode,
+
+        /// Boostrap from the consensus state that is part of the beacon state at this slot
+        #[clap(long)]
+        start_slot: Slot,
+
+        /// Optional log file to write sync status to
+        #[clap(long, short)]
+        log_path: Option<PathBuf>,
     },
 }
 
@@ -124,12 +154,16 @@ async fn main() -> anyhow::Result<()> {
         &context.clone().into(),
     )?;
 
-    let reader = HostStateReader::new(CacheStateProvider::new(provider));
+    let reader = HostStateReader::new(CacheStateProvider::new(provider.clone()));
 
     match args.command {
-        Command::Verify { mode, iterations } => {
+        Command::Verify {
+            mode,
+            iterations,
+            trusted_epoch,
+        } => {
             let trusted_state =
-                reader.state_at_slot(context.compute_start_slot_at_epoch(args.trusted_epoch))?;
+                reader.state_at_slot(context.compute_start_slot_at_epoch(trusted_epoch))?;
             let epoch_boundary_slot = trusted_state.latest_block_header().slot;
             let trusted_beacon_block = beacon_client.get_block(epoch_boundary_slot).await?.unwrap();
             assert_eq!(
@@ -137,7 +171,7 @@ async fn main() -> anyhow::Result<()> {
                 trusted_state.hash_tree_root().unwrap()
             );
             let mut trusted_checkpoint = Checkpoint {
-                epoch: args.trusted_epoch,
+                epoch: trusted_epoch,
                 root: trusted_beacon_block.hash_tree_root()?,
             };
             info!("Trusted checkpoint: {}", trusted_checkpoint);
@@ -146,16 +180,75 @@ async fn main() -> anyhow::Result<()> {
 
             for i in 0..iterations {
                 tracing::info!("Iteration: {}", i);
-                let input = builder.build(trusted_checkpoint).await?;
+                let (input, _) = builder.build(trusted_checkpoint).await?;
                 tracing::debug!("Input: {:?}", input);
 
                 let consensus_state = run_verify(mode, &reader, input.clone())?; // will panic if verification fails
                 trusted_checkpoint = consensus_state.finalized_checkpoint;
             }
         }
+        Command::Sync {
+            mode,
+            start_slot,
+            log_path,
+        } => {
+            run_sync(&provider, start_slot, &beacon_client, mode, log_path).await?;
+        }
     }
 
     Ok(())
+}
+
+async fn run_sync(
+    provider: &PersistentApiStateProvider,
+    start_slot: Slot,
+    beacon_client: &BeaconClient,
+    mode: ExecMode,
+    log_path: Option<PathBuf>,
+) -> anyhow::Result<()> {
+    info!("Running Sync in mode: {mode}");
+    let context: HostContext = electra::Context::for_mainnet().into();
+
+    let logfile = log_path.map(|path| {
+        fs::create_dir_all(&path.parent().unwrap()).expect("Failed to create log directory");
+        let file = File::create(&path).expect("Failed to create log file");
+        info!("Logging sync progress to: {}", path.display());
+        file
+    });
+
+    let mut consensus_state = beacon_client.get_consensus_state(start_slot).await?;
+    info!("Initial Consensus State: {:#?}", consensus_state);
+    let sr = HostStateReader::<PersistentApiStateProvider>::new(provider.clone().into());
+
+    let input_builder = InputBuilder::new(context, beacon_client.clone());
+
+    loop {
+        let (input, expected_state) = input_builder
+            .build(consensus_state.finalized_checkpoint.clone())
+            .await?;
+        tracing::debug!("Input: {:?}", input);
+        let msg = match run_verify(mode, &sr, input.clone()) {
+            Ok(state) => {
+                info!("Verification successful. New state: {:#?}", &state);
+                if state != expected_state {
+                    format!("New state mismatch: expected {expected_state:?}, got {state:?}")
+                } else {
+                    "Ok".to_string()
+                }
+            }
+            Err(e) => {
+                format!("Verification failed: {e}")
+            }
+        };
+        if let Some(logfile) = &logfile {
+            log_sync(logfile, &consensus_state, &expected_state, &msg);
+        };
+
+        consensus_state = expected_state;
+
+        // uncache old states
+        provider.clear_states_before(consensus_state.finalized_checkpoint.epoch)?;
+    }
 }
 
 fn run_verify<R: StateReader + StateProvider>(
@@ -211,4 +304,10 @@ fn execute_guest_program(state_input: StateInput, input: Input) -> Vec<u8> {
         .expect("failed to execute guest program");
     info!("{} user cycles executed.", session_info.cycles());
     session_info.journal.bytes
+}
+
+fn log_sync(file: &File, from: &ConsensusState, to: &ConsensusState, message: &str) {
+    let mut file = file;
+    writeln!(file, "{:?} -> {:?}\t{}", from, to, message).expect("Failed to write to log file");
+    warn!("Sync status logged: {}", message);
 }

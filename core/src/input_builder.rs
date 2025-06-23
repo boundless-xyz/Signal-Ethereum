@@ -1,3 +1,17 @@
+// Copyright 2025 RISC Zero, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 use crate::{Attestation, Checkpoint, ConsensusState, Ctx, Epoch, Input, Link, ensure};
 use ethereum_consensus::{electra::mainnet::SignedBeaconBlockHeader, types::mainnet::BeaconBlock};
 use std::collections::BTreeMap;
@@ -49,7 +63,10 @@ impl<CTX: Ctx, CR: ChainReader> InputBuilder<CTX, CR> {
 
     /// Given the current Checkpoint, query a beacon node to build an input that can be
     /// used to evolve the consensus state at this checkpoint to a new consensus state in the "best" way possible
-    pub async fn build(&self, trusted_checkpoint: Checkpoint) -> Result<Input, InputBuilderError> {
+    pub async fn build(
+        &self,
+        trusted_checkpoint: Checkpoint,
+    ) -> Result<(Input, ConsensusState), InputBuilderError> {
         // Find the first consensus state that confirms the finality of the trusted_checkpoint
         let finalization_epoch = self.find_finalization_epoch(trusted_checkpoint).await?;
         debug!(
@@ -57,7 +74,7 @@ impl<CTX: Ctx, CR: ChainReader> InputBuilder<CTX, CR> {
             "Found state confirming trusted checkpoint"
         );
 
-        let (state, links) = self
+        let (state, next_state, links) = self
             .get_justifications_until_new_finality(finalization_epoch)
             .await?;
         assert_eq!(state.finalized_checkpoint, trusted_checkpoint);
@@ -69,11 +86,14 @@ impl<CTX: Ctx, CR: ChainReader> InputBuilder<CTX, CR> {
         // Concurrently fetch attestations for all required links.
         let attestations = self.collect_attestations_for_links(&links).await?;
 
-        Ok(Input {
-            state,
-            links,
-            attestations,
-        })
+        Ok((
+            Input {
+                state,
+                links,
+                attestations,
+            },
+            next_state,
+        ))
     }
 
     async fn find_finalization_epoch(
@@ -110,7 +130,7 @@ impl<CTX: Ctx, CR: ChainReader> InputBuilder<CTX, CR> {
     async fn get_justifications_until_new_finality(
         &self,
         start_epoch: Epoch,
-    ) -> Result<(ConsensusState, Vec<Link>), InputBuilderError> {
+    ) -> Result<(ConsensusState, ConsensusState, Vec<Link>), InputBuilderError> {
         let initial_state = self
             .chain_reader
             .get_consensus_state(self.context.compute_start_slot_at_epoch(start_epoch))
@@ -133,7 +153,7 @@ impl<CTX: Ctx, CR: ChainReader> InputBuilder<CTX, CR> {
 
             // If finality has advanced, we have collected all necessary states.
             if current_state.finalized_checkpoint != initial_finalized_checkpoint {
-                return Ok((initial_state, links));
+                return Ok((initial_state, current_state, links));
             }
 
             prev_state = current_state;

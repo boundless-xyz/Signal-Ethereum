@@ -45,14 +45,14 @@ pub enum VerifyError {
     MissingValidatorInfo(ValidatorIndex),
 
     #[error("Lighthouse types: {0:?}")]
-    LighthouseTypesError(beacon_types::Error),
+    LighthouseTypes(beacon_types::Error),
     #[error("Verify error: {0}")]
     Other(String),
 }
 
 impl From<beacon_types::Error> for VerifyError {
     fn from(e: beacon_types::Error) -> Self {
-        VerifyError::LighthouseTypesError(e)
+        VerifyError::LighthouseTypes(e)
     }
 }
 

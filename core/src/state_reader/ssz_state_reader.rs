@@ -16,7 +16,7 @@ use super::StateReader;
 use crate::{
     Checkpoint, Epoch, PublicKey, RandaoMixIndex, Root, Slot, StatePatch,
     VALIDATOR_LIST_TREE_DEPTH, VALIDATOR_TREE_DEPTH, ValidatorIndex, ValidatorInfo,
-    guest_context::{
+    guest_gindices::{
         fork_current_version_gindex, fork_epoch_gindex, fork_previous_version_gindex,
         genesis_validators_root_gindex, randao_mixes_0_gindex, slot_gindex, validators_gindex,
     },

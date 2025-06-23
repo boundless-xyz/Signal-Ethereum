@@ -29,7 +29,7 @@ mod beacon_state;
 mod bls;
 mod committee_cache;
 mod consensus_state;
-mod guest_context;
+mod guest_gindices;
 #[cfg(feature = "host")]
 mod input_builder;
 mod state_patch;

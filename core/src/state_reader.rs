@@ -84,7 +84,6 @@ pub trait StateReader {
         // the seed for epoch is based on the RANDAO from the epoch MIN_SEED_LOOKAHEAD + 1 ago
         let mix = self.get_randao_mix(
             epoch,
-            // TODO (ec2): I think we can do normal arithmetic here instead of `checked_add` since it will saturate.
             epoch
                 .as_u64()
                 .checked_add(

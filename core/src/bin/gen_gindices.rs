@@ -21,7 +21,7 @@ use std::fs;
 use std::io::Write;
 
 fn main() {
-    let dest_filepath = std::path::Path::new("core/src/guest_context.rs");
+    let dest_filepath = std::path::Path::new("core/src/guest_gindices.rs");
     let mut f = fs::OpenOptions::new()
         .write(true)
         .create(true)
@@ -31,7 +31,7 @@ fn main() {
 
     let gindices = beacon_gindices::<z_core::mainnet::ElectraBeaconState>();
 
-    let tokens = gen_guest_context_impl(&gindices);
+    let tokens = gen_guest_gindices_impl(&gindices);
 
     let syntax_tree = syn::parse2(tokens).unwrap();
     let formatted = prettyplease::unparse(&syntax_tree);
@@ -39,7 +39,7 @@ fn main() {
     f.write(&formatted.into_bytes()).unwrap();
 }
 
-fn gen_guest_context_impl(
+fn gen_guest_gindices_impl(
     gindices: &[(String, String, proc_macro2::TokenStream)],
 ) -> proc_macro2::TokenStream {
     let gindex_impls = gindices.iter().map(|(name, ret_type, value)| {

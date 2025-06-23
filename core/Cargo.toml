@@ -6,7 +6,7 @@ repository = { workspace = true }
 license = "Apache-2.0"
 
 [[bin]]
-name = "gen_context"
+name = "gen_gindices"
 test = false
 bench = false
 required-features = ["host"]

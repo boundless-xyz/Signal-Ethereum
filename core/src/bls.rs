@@ -13,8 +13,6 @@
 // limitations under the License.
 
 use beacon_types::PublicKey;
-use bls::PUBLIC_KEY_UNCOMPRESSED_BYTES_LEN;
-use serde_with::{DeserializeAs, SerializeAs};
 
 #[inline]
 pub fn has_compressed_chunks(pk: &PublicKey, chunk1: &[u8; 32], chunk2: &[u8; 32]) -> bool {
@@ -23,30 +21,4 @@ pub fn has_compressed_chunks(pk: &PublicKey, chunk1: &[u8; 32], chunk2: &[u8; 32
     &public_key_bytes[0..32] == chunk1
         && public_key_bytes[32..48] == chunk2[0..16]
         && chunk2[16..32] == [0u8; 16]
-}
-
-pub struct UncompressedPublicKey;
-
-impl SerializeAs<PublicKey> for UncompressedPublicKey {
-    #[inline]
-    fn serialize_as<S>(pk: &PublicKey, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        let raw: [u8; PUBLIC_KEY_UNCOMPRESSED_BYTES_LEN] = pk.serialize_uncompressed();
-        // delegate to serde_arrays to emit a fixed-length array
-        serde_arrays::serialize(&raw, serializer)
-    }
-}
-
-impl<'de> DeserializeAs<'de, PublicKey> for UncompressedPublicKey {
-    #[inline]
-    fn deserialize_as<D>(deserializer: D) -> Result<PublicKey, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let raw: [u8; PUBLIC_KEY_UNCOMPRESSED_BYTES_LEN] = serde_arrays::deserialize(deserializer)?;
-        PublicKey::deserialize_uncompressed(&raw)
-            .map_err(|err| serde::de::Error::custom(format!("{:?}", err)))
-    }
 }

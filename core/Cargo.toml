@@ -29,6 +29,7 @@ quote = { version = "1.0", optional = true }
 serde = { workspace = true }
 serde_arrays = { version = "0.2.0" }
 serde_json = "1.0.133"
+serde_with = "3.13"
 sha2 = { workspace = true, default-features = false }
 ssz-multiproofs = { path = "../ssz-multiproofs" }
 ssz_rs = { workspace = true, default-features = true, optional = true, features = ["serde"] }
@@ -38,11 +39,12 @@ syn = { version = "2.0", optional = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
 tree_hash = { version = "0.8" }
-serde_with = "3.13"
-tree_hash_derive = { version = "0.8.0" }
 
 [dev-dependencies]
+arbitrary = "1.4"
+beacon_types = { workspace = true, default-features = false, features = ["legacy-arith", "arbitrary"] }
 bincode = { workspace = true }
+rand = "0.9"
 state_processing = { git = "https://github.com/ec2/lighthouse.git", rev = "68f38bd1bf06149579ec369116e509ecddabebec" }
 test-log = { version = "0.2", features = ["trace"] }
 test_utils = { path = "test_utils" }

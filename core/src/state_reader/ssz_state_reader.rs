@@ -15,14 +15,13 @@
 use super::StateReader;
 use crate::{
     Checkpoint, ConsensusState, Epoch, PublicKey, RandaoMixIndex, Root, Slot, StatePatch,
-    UncompressedPublicKey, VALIDATOR_LIST_TREE_DEPTH, VALIDATOR_TREE_DEPTH, ValidatorIndex,
-    ValidatorInfo,
+    VALIDATOR_LIST_TREE_DEPTH, VALIDATOR_TREE_DEPTH, ValidatorIndex, ValidatorInfo,
     guest_gindices::{
         finalized_checkpoint_epoch_gindex, fork_current_version_gindex, fork_epoch_gindex,
         fork_previous_version_gindex, genesis_validators_root_gindex, slot_gindex,
         validators_gindex,
     },
-    has_compressed_chunks,
+    has_compressed_chunks, serde_utils,
 };
 use alloy_primitives::B256;
 use beacon_types::{ChainSpec, EthSpec, Fork};
@@ -34,7 +33,7 @@ use std::{collections::BTreeMap, marker::PhantomData, mem};
 use tracing::{debug, trace};
 
 #[serde_as]
-#[derive(Clone, Deserialize, Serialize)]
+#[derive(Clone, PartialEq, Deserialize, Serialize)]
 pub struct StateInput<'a> {
     /// Used fields of the beacon block plus their inclusion proof against the block root.
     #[serde(borrow)]
@@ -49,10 +48,11 @@ pub struct StateInput<'a> {
     pub active_validators: Multiproof<'a>,
 
     /// Public keys of all active validators.
-    #[serde_as(as = "Vec<UncompressedPublicKey>")]
+    #[serde_as(as = "Vec<serde_utils::UncompressedPublicKey>")]
     pub public_keys: Vec<PublicKey>,
 
     /// State patches to "look ahead" to future states.
+    #[serde_as(as = "BTreeMap<serde_utils::U64, _>")]
     pub patches: BTreeMap<Epoch, StatePatch>,
 }
 
@@ -461,4 +461,38 @@ fn get_balance_churn_limit(spec: &ChainSpec, total_active_balance: u64) -> u64 {
 fn u64_from_chunk(node: &[u8; 32]) -> u64 {
     assert!(node[8..].iter().all(|&b| b == 0));
     u64::from_le_bytes(node[..8].try_into().unwrap())
+}
+
+#[cfg(test)]
+mod tests {
+    mod state_input {
+        use crate::{Epoch, RandaoMixIndex, StateInput, StatePatch};
+        use alloy_primitives::B256;
+        use bls::SecretKey;
+        use std::collections::BTreeMap;
+
+        #[test]
+        fn bincode() {
+            let input = StateInput {
+                beacon_block: Default::default(),
+                beacon_state: Default::default(),
+                active_validators: Default::default(),
+                public_keys: vec![
+                    SecretKey::random().public_key(),
+                    SecretKey::random().public_key(),
+                ],
+                patches: BTreeMap::from([(
+                    Epoch::new(1),
+                    StatePatch {
+                        randao_mixes: BTreeMap::from([(RandaoMixIndex::MAX, B256::ZERO)]),
+                        validator_exits: Default::default(),
+                    },
+                )]),
+            };
+
+            let bytes = bincode::serialize(&input).unwrap();
+            let de = bincode::deserialize::<StateInput>(&bytes).unwrap();
+            assert!(input == de);
+        }
+    }
 }

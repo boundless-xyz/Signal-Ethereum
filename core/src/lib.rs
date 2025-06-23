@@ -78,7 +78,6 @@ pub const VALIDATOR_REGISTRY_LIMIT: u64 = 2u64.pow(40);
 pub const VALIDATOR_LIST_TREE_DEPTH: u32 = VALIDATOR_REGISTRY_LIMIT.ilog2() + 1; // 41
 pub const VALIDATOR_TREE_DEPTH: u32 = 3;
 
-#[serde_as]
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct Input<E: EthSpec> {
     pub state: ConsensusState,

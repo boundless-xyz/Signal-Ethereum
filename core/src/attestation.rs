@@ -26,25 +26,23 @@ pub fn get_attesting_indices<E: EthSpec>(
     attn: &Attestation<E>,
     committee_cache: &committee_cache::CommitteeCache<E>,
 ) -> Result<BTreeSet<usize>, committee_cache::Error> {
-    // Committee indices are collected int a BTreeSet because they are required to be sorted.
-    let committee_indices = attn
-        .get_committee_indices_map()
-        .into_iter()
-        .collect::<BTreeSet<_>>();
+    let attn = attn.as_electra().expect("attestation is not electra type");
+    let committee_indices = attn.get_committee_indices();
+
     let mut attesting_indices: BTreeSet<usize> = BTreeSet::new();
     let mut committee_offset = 0;
+
     for committee_index in committee_indices {
         assert!(committee_index < committee_cache.get_committee_count_per_slot() as u64);
 
         let committee =
-            committee_cache.get_beacon_committee(attn.data().slot, committee_index as usize)?;
+            committee_cache.get_beacon_committee(attn.data.slot, committee_index as usize)?;
 
         let mut committee_attesters = committee
             .iter()
             .enumerate()
             .filter_map(|(i, attester_index)| {
-                attn.aggregation_bits_electra()
-                    .expect("fail to get electra aggregation bits")
+                attn.aggregation_bits
                     .get(committee_offset + i)
                     .expect("aggregation_bits access out of bounds")
                     .then_some(*attester_index)
@@ -56,12 +54,7 @@ pub fn get_attesting_indices<E: EthSpec>(
         committee_offset += committee.len();
     }
     // Bitfield length matches total number of participants
-    assert_eq!(
-        attn.aggregation_bits_electra()
-            .expect("fail to get electra aggregation bits")
-            .len(),
-        committee_offset
-    );
+    assert_eq!(attn.aggregation_bits.len(), committee_offset);
     Ok(attesting_indices.into_iter().collect())
 }
 

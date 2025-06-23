@@ -110,7 +110,7 @@ impl<P: StateProvider> StateReader for HostStateReader<P> {
                     .validators()
                     .iter()
                     .enumerate()
-                    .filter(move |(_, validator)| is_active_validator(validator, epoch))
+                    .filter(move |(_, validator)| is_active_validator(validator, epoch.into()))
                     .map(move |(idx, validator)| (idx, ValidatorInfo::from(validator)))
                     .collect();
                 debug!("Active validators: {}", validators.len());
@@ -135,6 +135,6 @@ impl<P: StateProvider> StateReader for HostStateReader<P> {
 }
 
 /// Check if `validator` is active.
-fn is_active_validator(validator: &Validator, epoch: Epoch) -> bool {
-    validator.activation_epoch <= epoch.into() && epoch.as_u64() < validator.exit_epoch
+fn is_active_validator(validator: &Validator, epoch: u64) -> bool {
+    validator.activation_epoch <= epoch && epoch < validator.exit_epoch
 }

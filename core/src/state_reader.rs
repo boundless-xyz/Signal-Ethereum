@@ -62,7 +62,8 @@ pub trait StateReader {
 
     /// Return the RANDAO mix at a recent `epoch`.
     fn get_randao_mix(&self, state_epoch: Epoch, epoch: Epoch) -> Result<B256, Self::Error> {
-        let idx: RandaoMixIndex = (epoch % Self::Spec::epochs_per_historical_vector() as u64)
+        let idx: RandaoMixIndex = (epoch
+            % Self::Spec::epochs_per_historical_vector() as RandaoMixIndex)
             .try_into()
             .unwrap();
 

@@ -195,15 +195,14 @@ impl TreeHash for Checkpoint {
 
 mod private {
     use alloy_primitives::B256;
-    use alloy_rlp::{RlpDecodable, RlpEncodable};
 
-    #[derive(serde::Serialize, RlpEncodable)]
+    #[derive(serde::Serialize, alloy_rlp::RlpEncodable)]
     pub struct EncCheckpoint<'a> {
         epoch: u64,
         root: &'a B256,
     }
 
-    #[derive(serde::Deserialize, RlpDecodable)]
+    #[derive(serde::Deserialize, alloy_rlp::RlpDecodable)]
     pub struct DecCheckpoint {
         epoch: u64,
         root: B256,

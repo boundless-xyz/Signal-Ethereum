@@ -16,8 +16,8 @@ use test_utils::{
     AssertStateReader, TestHarness, consensus_state_from_state, get_harness, get_spec,
 };
 use z_core::{
-    ConsensusState, GuestContext, HostStateReader, InputBuilder, PreflightStateReader,
-    StateProvider, StateReader, VerifyError, threshold, verify,
+    ConsensusState, HostStateReader, InputBuilder, PreflightStateReader, StateReader, VerifyError,
+    threshold, verify,
 };
 
 pub const VALIDATOR_COUNT: u64 = 48;
@@ -54,7 +54,7 @@ async fn test_zkasper_sync(
         println!(
             "n validators: {}",
             state_reader
-                .active_validators(consensus_state.finalized_checkpoint.epoch)
+                .active_validators(consensus_state.finalized_checkpoint.epoch())
                 .unwrap()
                 .count()
         );
@@ -62,7 +62,7 @@ async fn test_zkasper_sync(
         let trusted_checkpoint = consensus_state.finalized_checkpoint;
 
         // Build the input and verify it
-        let builder = InputBuilder::new(harness.context().clone(), harness);
+        let builder = InputBuilder::new(harness);
         match builder.build(trusted_checkpoint).await {
             Ok(input) => {
                 // Perform a preflight verification to record the state reads
@@ -71,7 +71,7 @@ async fn test_zkasper_sync(
                 // build a self-contained SSZ reader
                 let ssz_state_reader = preflight_state_reader
                     .to_input()
-                    .into_state_reader(&GuestContext, trusted_checkpoint)
+                    .into_state_reader(trusted_checkpoint)
                     .expect("Failed to convert to SSZ state reader");
                 // Merge into a single AssertStateReader that ensures identical data returned for each read
                 let assert_sr = AssertStateReader::new(&state_reader, &ssz_state_reader);
@@ -89,13 +89,13 @@ async fn test_zkasper_sync(
     }
 
     assert_eq!(
-        consensus_state.finalized_checkpoint.epoch,
+        consensus_state.finalized_checkpoint.epoch(),
         head_state.finalized_checkpoint().epoch.as_u64(),
         "finalized checkpoint should match"
     );
 
     assert_eq!(
-        consensus_state.current_justified_checkpoint.epoch,
+        consensus_state.current_justified_checkpoint.epoch(),
         head_state.current_justified_checkpoint().epoch.as_u64(),
         "current justified checkpoint should match"
     );
@@ -271,17 +271,18 @@ async fn finalize_after_one_empty_epoch() {
         .await;
     let new_consensus_state = consensus_state_from_state(&harness.get_current_state());
     assert!(
-        consensus_state.finalized_checkpoint.epoch < new_consensus_state.finalized_checkpoint.epoch,
+        consensus_state.finalized_checkpoint.epoch()
+            < new_consensus_state.finalized_checkpoint.epoch(),
         "Consensus state should have finalized after extending the chain with attestations"
     );
     assert!(
-        consensus_state.previous_justified_checkpoint.epoch
-            < new_consensus_state.previous_justified_checkpoint.epoch,
+        consensus_state.previous_justified_checkpoint.epoch()
+            < new_consensus_state.previous_justified_checkpoint.epoch(),
         "Consensus state should have new previous justified after extending the chain with attestations"
     );
     assert!(
-        consensus_state.current_justified_checkpoint.epoch
-            < new_consensus_state.current_justified_checkpoint.epoch,
+        consensus_state.current_justified_checkpoint.epoch()
+            < new_consensus_state.current_justified_checkpoint.epoch(),
         "Consensus state should have new current justified after extending the chain with attestations"
     );
     test_zkasper_sync(&harness, consensus_state).await.unwrap();
@@ -487,7 +488,7 @@ async fn finalize_when_validator_exits() {
         .await;
     let consensus_state = consensus_state_from_state(&harness.get_current_state());
     assert_eq!(
-        consensus_state.finalized_checkpoint.epoch,
+        consensus_state.finalized_checkpoint.epoch(),
         expected_exit_epoch.as_u64() - 1,
         "consensus state should be one epoch before the new validator stops participating"
     );
@@ -598,7 +599,7 @@ async fn finalize_when_validator_enters() {
         .await;
     let consensus_state = consensus_state_from_state(&harness.get_current_state());
     assert_eq!(
-        consensus_state.finalized_checkpoint.epoch,
+        consensus_state.finalized_checkpoint.epoch(),
         activation_epoch.as_u64() - 1,
         "consensus state should be one epoch before the new validator starts participating"
     );

@@ -18,6 +18,7 @@ use beacon_types::EthSpec;
 pub use beacon_types::{Attestation, AttestationData};
 
 use crate::committee_cache;
+
 /// Return the set of attesting indices corresponding to `aggregation_bits` and `committee_bits`.
 ///
 /// See: https://github.com/ethereum/consensus-specs/blob/dev/specs/electra/beacon-chain.md#modified-get_attesting_indices
@@ -25,7 +26,11 @@ pub fn get_attesting_indices<E: EthSpec>(
     attn: &Attestation<E>,
     committee_cache: &committee_cache::CommitteeCache<E>,
 ) -> Result<BTreeSet<usize>, committee_cache::Error> {
-    let committee_indices = attn.get_committee_indices_map();
+    // Committee indices are collected int a BTreeSet because they are required to be sorted.
+    let committee_indices = attn
+        .get_committee_indices_map()
+        .into_iter()
+        .collect::<BTreeSet<_>>();
     let mut attesting_indices: BTreeSet<usize> = BTreeSet::new();
     let mut committee_offset = 0;
     for committee_index in committee_indices {

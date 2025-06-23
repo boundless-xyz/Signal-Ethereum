@@ -15,11 +15,14 @@
 extern crate alloc;
 extern crate core;
 
+use crate::serde_utils::DiskAttestation;
 use alloy_primitives::B256;
 use alloy_rlp::{Decodable, Encodable, RlpDecodable, RlpEncodable};
 use beacon_types::{EthSpec, PublicKey};
 use core::fmt;
 use core::fmt::Display;
+use serde::{Deserializer, Serializer};
+use serde_with::serde_as;
 use std::collections::HashMap;
 use tree_hash::TreeHash;
 
@@ -32,6 +35,7 @@ mod consensus_state;
 mod guest_gindices;
 #[cfg(feature = "host")]
 mod input_builder;
+mod serde_utils;
 mod state_patch;
 mod state_reader;
 mod threshold;
@@ -74,10 +78,13 @@ pub const VALIDATOR_REGISTRY_LIMIT: u64 = 2u64.pow(40);
 pub const VALIDATOR_LIST_TREE_DEPTH: u32 = VALIDATOR_REGISTRY_LIMIT.ilog2() + 1; // 41
 pub const VALIDATOR_TREE_DEPTH: u32 = 3;
 
-#[derive(Clone, serde::Serialize, serde::Deserialize)]
+#[serde_as]
+#[derive(Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Input<E: EthSpec> {
     pub state: ConsensusState,
     pub links: Vec<Link>,
+
+    #[serde_as(as = "Vec<Vec<DiskAttestation>>")]
     pub attestations: Vec<Vec<Attestation<E>>>,
 }
 
@@ -110,9 +117,8 @@ impl<E: EthSpec> fmt::Debug for Input<E> {
     }
 }
 
-#[derive(Eq, PartialEq, Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ValidatorInfo {
-    #[serde(with = "crate::bls::pubkey")]
     pub pubkey: PublicKey,
     pub effective_balance: u64,
     pub activation_eligibility_epoch: u64,
@@ -168,9 +174,8 @@ impl From<&beacon_types::Validator> for ValidatorInfo {
         }
     }
 }
-#[derive(Clone, Copy, Debug, PartialEq, Hash, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Hash, Eq)]
 #[repr(transparent)]
-#[serde(transparent)]
 pub struct Checkpoint(beacon_types::Checkpoint);
 
 impl TreeHash for Checkpoint {
@@ -191,33 +196,67 @@ impl TreeHash for Checkpoint {
     }
 }
 
-impl Encodable for Checkpoint {
-    fn encode(&self, out: &mut dyn alloy_rlp::BufMut) {
-        #[derive(RlpEncodable)]
-        struct EncCheckpoint<'a> {
-            pub epoch: u64,
-            pub root: &'a B256,
+mod private {
+    use alloy_primitives::B256;
+
+    #[derive(serde::Serialize, alloy_rlp::RlpEncodable)]
+    pub struct EncCheckpoint<'a> {
+        epoch: u64,
+        root: &'a B256,
+    }
+
+    #[derive(serde::Deserialize, alloy_rlp::RlpDecodable)]
+    pub struct DecCheckpoint {
+        epoch: u64,
+        root: B256,
+    }
+
+    impl<'a> From<&'a super::Checkpoint> for EncCheckpoint<'a> {
+        #[inline]
+        fn from(c: &'a super::Checkpoint) -> Self {
+            Self {
+                epoch: c.0.epoch.as_u64(),
+                root: &c.0.root,
+            }
         }
-        let enc_checkpoint = EncCheckpoint {
-            epoch: self.0.epoch.as_u64(),
-            root: &self.0.root,
-        };
-        enc_checkpoint.encode(out);
+    }
+
+    impl From<DecCheckpoint> for super::Checkpoint {
+        #[inline]
+        fn from(dec: DecCheckpoint) -> Self {
+            Self(beacon_types::Checkpoint {
+                epoch: dec.epoch.into(),
+                root: dec.root,
+            })
+        }
+    }
+}
+
+impl serde::Serialize for Checkpoint {
+    #[inline]
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        private::EncCheckpoint::from(self).serialize(serializer)
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for Checkpoint {
+    #[inline]
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        Ok(private::DecCheckpoint::deserialize(deserializer)?.into())
+    }
+}
+
+impl Encodable for Checkpoint {
+    #[inline]
+    fn encode(&self, out: &mut dyn alloy_rlp::BufMut) {
+        private::EncCheckpoint::from(self).encode(out)
     }
 }
 
 impl Decodable for Checkpoint {
+    #[inline]
     fn decode(buf: &mut &[u8]) -> Result<Self, alloy_rlp::Error> {
-        #[derive(RlpDecodable)]
-        struct DecCheckpoint {
-            pub epoch: u64,
-            pub root: B256,
-        }
-        let dec_checkpoint = DecCheckpoint::decode(buf)?;
-        Ok(Checkpoint(beacon_types::Checkpoint {
-            epoch: beacon_types::Epoch::new(dec_checkpoint.epoch),
-            root: dec_checkpoint.root,
-        }))
+        Ok(private::DecCheckpoint::decode(buf)?.into())
     }
 }
 impl Checkpoint {
@@ -272,4 +311,50 @@ macro_rules! ensure {
             return Err($err);
         }
     };
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use arbitrary::{Arbitrary, Unstructured};
+    use rand::{Rng, rng};
+
+    #[test]
+    fn bincode_input() {
+        let mut raw_data = vec![0u8; 512];
+        rng().fill(raw_data.as_mut_slice());
+        let mut unstructured = Unstructured::new(&raw_data[..]);
+
+        fn checkpoint(u: &mut Unstructured<'_>) -> beacon_types::Checkpoint {
+            beacon_types::Checkpoint::arbitrary(u).unwrap()
+        }
+
+        let attestation = Attestation::<MainnetEthSpec>::empty_for_signing(
+            1,
+            1,
+            Slot::arbitrary(&mut unstructured).unwrap(),
+            Default::default(),
+            checkpoint(&mut unstructured),
+            checkpoint(&mut unstructured),
+            &MainnetEthSpec::default_spec(),
+        )
+        .unwrap();
+
+        let input = Input::<MainnetEthSpec> {
+            state: ConsensusState {
+                previous_justified_checkpoint: Checkpoint(checkpoint(&mut unstructured)),
+                current_justified_checkpoint: Checkpoint(checkpoint(&mut unstructured)),
+                finalized_checkpoint: Checkpoint(checkpoint(&mut unstructured)),
+            },
+            links: vec![Link {
+                source: Checkpoint(checkpoint(&mut unstructured)),
+                target: Checkpoint(checkpoint(&mut unstructured)),
+            }],
+            attestations: vec![vec![attestation]],
+        };
+
+        let bytes = bincode::serialize(&input).unwrap();
+        let de = bincode::deserialize::<Input<MainnetEthSpec>>(&bytes).unwrap();
+        assert_eq!(input, de);
+    }
 }

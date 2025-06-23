@@ -79,8 +79,7 @@ impl<E: EthSpec> SerializeAs<beacon_types::Attestation<E>> for DiskAttestation {
     where
         S: Serializer,
     {
-        let att_ref = source.to_ref();
-        let source = beacon_types::attestation::AttestationRefOnDisk::<E>::from(att_ref);
+        let source = beacon_types::attestation::AttestationRefOnDisk::<E>::from(source.to_ref());
         let bytes = source.as_ssz_bytes();
         serializer.serialize_bytes(&bytes)
     }

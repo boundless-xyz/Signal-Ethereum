@@ -466,7 +466,7 @@ fn u64_from_chunk(node: &[u8; 32]) -> u64 {
 #[cfg(test)]
 mod tests {
     mod state_input {
-        use crate::{Epoch, RandaoMixIndex, StateInput, StatePatch};
+        use crate::{Epoch, RandaoMixIndex, StateInput, StatePatch, ValidatorIndex};
         use alloy_primitives::B256;
         use bls::SecretKey;
         use std::collections::BTreeMap;
@@ -485,7 +485,7 @@ mod tests {
                     Epoch::new(1),
                     StatePatch {
                         randao_mixes: BTreeMap::from([(RandaoMixIndex::MAX, B256::ZERO)]),
-                        validator_exits: Default::default(),
+                        validator_exits: BTreeMap::from([(ValidatorIndex::MAX, Epoch::new(1))]),
                     },
                 )]),
             };

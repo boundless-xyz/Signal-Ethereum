@@ -12,13 +12,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::serde_utils;
 use alloy_primitives::B256;
-use serde::{Deserialize, Serialize};
+use serde_with::serde_as;
 use std::collections::BTreeMap;
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde_as]
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct StatePatch {
     pub randao_mixes: BTreeMap<RandaoMixIndex, B256>,
+    #[serde_as(as = "BTreeMap<_, serde_utils::U64>")]
     pub validator_exits: BTreeMap<ValidatorIndex, Epoch>,
 }
 

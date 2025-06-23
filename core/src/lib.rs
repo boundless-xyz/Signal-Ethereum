@@ -15,6 +15,7 @@
 extern crate alloc;
 extern crate core;
 
+use crate::serde_utils::DiskAttestation;
 use alloy_primitives::B256;
 use alloy_rlp::{Decodable, Encodable, RlpDecodable, RlpEncodable};
 use beacon_types::{EthSpec, PublicKey};
@@ -22,11 +23,8 @@ use core::fmt;
 use core::fmt::Display;
 use serde::{Deserializer, Serializer};
 use serde_with::serde_as;
-
 use std::collections::HashMap;
 use tree_hash::TreeHash;
-
-use crate::serde_utils::DiskAttestation;
 
 mod attestation;
 #[cfg(feature = "host")]
@@ -81,7 +79,7 @@ pub const VALIDATOR_LIST_TREE_DEPTH: u32 = VALIDATOR_REGISTRY_LIMIT.ilog2() + 1;
 pub const VALIDATOR_TREE_DEPTH: u32 = 3;
 
 #[serde_as]
-#[derive(Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Input<E: EthSpec> {
     pub state: ConsensusState,
     pub links: Vec<Link>,
@@ -313,4 +311,50 @@ macro_rules! ensure {
             return Err($err);
         }
     };
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use arbitrary::{Arbitrary, Unstructured};
+    use rand::{Rng, rng};
+
+    #[test]
+    fn bincode_input() {
+        let mut raw_data = vec![0u8; 512];
+        rng().fill(raw_data.as_mut_slice());
+        let mut unstructured = Unstructured::new(&raw_data[..]);
+
+        fn checkpoint(u: &mut Unstructured<'_>) -> beacon_types::Checkpoint {
+            beacon_types::Checkpoint::arbitrary(u).unwrap()
+        }
+
+        let attestation = Attestation::<MainnetEthSpec>::empty_for_signing(
+            1,
+            1,
+            Slot::arbitrary(&mut unstructured).unwrap(),
+            Default::default(),
+            checkpoint(&mut unstructured),
+            checkpoint(&mut unstructured),
+            &MainnetEthSpec::default_spec(),
+        )
+        .unwrap();
+
+        let input = Input::<MainnetEthSpec> {
+            state: ConsensusState {
+                previous_justified_checkpoint: Checkpoint(checkpoint(&mut unstructured)),
+                current_justified_checkpoint: Checkpoint(checkpoint(&mut unstructured)),
+                finalized_checkpoint: Checkpoint(checkpoint(&mut unstructured)),
+            },
+            links: vec![Link {
+                source: Checkpoint(checkpoint(&mut unstructured)),
+                target: Checkpoint(checkpoint(&mut unstructured)),
+            }],
+            attestations: vec![vec![attestation]],
+        };
+
+        let bytes = bincode::serialize(&input).unwrap();
+        let de = bincode::deserialize::<Input<MainnetEthSpec>>(&bytes).unwrap();
+        assert_eq!(input, de);
+    }
 }

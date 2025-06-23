@@ -72,13 +72,10 @@ impl<'de> DeserializeAs<'de, Slot> for U64 {
 pub struct DiskAttestation;
 impl<E: EthSpec> SerializeAs<beacon_types::Attestation<E>> for DiskAttestation {
     #[inline]
-    fn serialize_as<S>(
+    fn serialize_as<S: Serializer>(
         source: &beacon_types::Attestation<E>,
         serializer: S,
-    ) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
+    ) -> Result<S::Ok, S::Error> {
         let source = beacon_types::attestation::AttestationRefOnDisk::<E>::from(source.to_ref());
         let bytes = source.as_ssz_bytes();
         serializer.serialize_bytes(&bytes)
@@ -87,10 +84,9 @@ impl<E: EthSpec> SerializeAs<beacon_types::Attestation<E>> for DiskAttestation {
 
 impl<'de, E: EthSpec> DeserializeAs<'de, beacon_types::Attestation<E>> for DiskAttestation {
     #[inline]
-    fn deserialize_as<D>(deserializer: D) -> Result<beacon_types::Attestation<E>, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
+    fn deserialize_as<D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<beacon_types::Attestation<E>, D::Error> {
         let bytes = serde_with::Bytes::deserialize_as(deserializer)?;
         Ok(
             beacon_types::attestation::AttestationOnDisk::<E>::from_ssz_bytes(bytes)

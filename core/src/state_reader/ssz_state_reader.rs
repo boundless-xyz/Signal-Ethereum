@@ -362,7 +362,10 @@ mod tests {
                 beacon_block: Default::default(),
                 beacon_state: Default::default(),
                 active_validators: Default::default(),
-                public_keys: vec![SecretKey::random().public_key()],
+                public_keys: vec![
+                    SecretKey::random().public_key(),
+                    SecretKey::random().public_key(),
+                ],
                 patches: BTreeMap::from([(
                     Epoch::new(1),
                     StatePatch {

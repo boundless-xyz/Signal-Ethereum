@@ -15,8 +15,8 @@ required-features = ["host"]
 alloy-primitives = { workspace = true, features = ["rlp"] }
 alloy-rlp = { version = "=0.3.11", features = ["derive"] }
 anyhow = { workspace = true }
-beacon_chain = { workspace = true, optional = true } 
-beacon_types = { workspace = true, default-features = false, features = ["legacy-arith"]} 
+beacon_chain = { workspace = true, optional = true }
+beacon_types = { workspace = true, default-features = false, features = ["legacy-arith"] }
 bls = { workspace = true }
 elsa = { version = "1.11", optional = true }
 ethereum-consensus = { workspace = true, default-features = false, optional = true }
@@ -28,6 +28,7 @@ quote = { version = "1.0", optional = true }
 serde = { workspace = true }
 serde_arrays = { version = "0.2.0" }
 serde_json = "1.0.133"
+serde_with = "3.13"
 sha2 = { workspace = true, default-features = false }
 ssz-multiproofs = { path = "../ssz-multiproofs" }
 ssz_rs = { workspace = true, default-features = true, optional = true, features = ["serde"] }
@@ -39,8 +40,8 @@ tracing = { workspace = true }
 tree_hash = { version = "0.8" }
 tree_hash_derive = { version = "0.8.0" }
 
-
 [dev-dependencies]
+bincode = { workspace = true }
 state_processing = { git = "https://github.com/ec2/lighthouse.git", rev = "68f38bd1bf06149579ec369116e509ecddabebec" }
 test-log = { version = "0.2", features = ["trace"] }
 test_utils = { path = "test_utils" }

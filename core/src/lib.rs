@@ -32,6 +32,7 @@ mod consensus_state;
 mod guest_gindices;
 #[cfg(feature = "host")]
 mod input_builder;
+mod serde_utils;
 mod state_patch;
 mod state_reader;
 mod threshold;

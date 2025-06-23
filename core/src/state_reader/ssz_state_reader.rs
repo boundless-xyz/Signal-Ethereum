@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use super::StateReader;
+use crate::serde_utils::{U64, UncompressedPublicKey};
 use crate::{
     Checkpoint, Epoch, PublicKey, RandaoMixIndex, Root, Slot, StatePatch,
     VALIDATOR_LIST_TREE_DEPTH, VALIDATOR_TREE_DEPTH, ValidatorIndex, ValidatorInfo,
@@ -25,9 +26,11 @@ use crate::{
 use alloy_primitives::B256;
 use beacon_types::{EthSpec, Fork};
 use serde::{Deserialize, Serialize};
+use serde_with::serde_as;
 use ssz_multiproofs::Multiproof;
 use std::collections::BTreeMap;
 
+#[serde_as]
 #[derive(Clone, Deserialize, Serialize)]
 pub struct StateInput<'a> {
     /// Used fields of the beacon block plus their inclusion proof against the block root.
@@ -43,9 +46,11 @@ pub struct StateInput<'a> {
     pub active_validators: Multiproof<'a>,
 
     /// Public keys of all active validators.
+    #[serde_as(as = "Vec<UncompressedPublicKey>")]
     pub public_keys: Vec<PublicKey>,
 
     /// State patches to "look ahead" to future states.
+    #[serde_as(as = "BTreeMap<U64, _>")]
     pub patches: BTreeMap<Epoch, StatePatch>,
 }
 
@@ -342,4 +347,33 @@ fn extract_validators_multiproof(
 fn u64_from_chunk(node: &[u8; 32]) -> u64 {
     assert!(node[8..].iter().all(|&b| b == 0));
     u64::from_le_bytes(node[..8].try_into().unwrap())
+}
+
+#[cfg(test)]
+mod tests {
+    mod state_input {
+        use crate::state_reader::ssz_state_reader::BTreeMap;
+        use crate::{Epoch, RandaoMixIndex, StateInput, StatePatch};
+        use alloy_primitives::B256;
+
+        #[test]
+        fn bincode() {
+            let input = StateInput {
+                beacon_block: Default::default(),
+                beacon_state: Default::default(),
+                active_validators: Default::default(),
+                public_keys: vec![],
+                patches: BTreeMap::from([(
+                    Epoch::new(1),
+                    StatePatch {
+                        randao_mixes: BTreeMap::from([(RandaoMixIndex::MAX, B256::ZERO)]),
+                    },
+                )]),
+            };
+
+            let bytes = bincode::serialize(&input).unwrap();
+            let de = bincode::deserialize::<StateInput>(&bytes).unwrap();
+            assert_eq!(de.patches, input.patches);
+        }
+    }
 }

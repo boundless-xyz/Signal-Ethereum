@@ -39,7 +39,7 @@ pub fn get_attesting_indices<E: EthSpec>(
             .enumerate()
             .filter_map(|(i, attester_index)| {
                 attn.aggregation_bits_electra()
-                    .expect("fail to get aggregation bits")
+                    .expect("fail to get electra aggregation bits")
                     .get(committee_offset + i)
                     .expect("aggregation_bits access out of bounds")
                     .then_some(*attester_index)
@@ -53,7 +53,7 @@ pub fn get_attesting_indices<E: EthSpec>(
     // Bitfield length matches total number of participants
     assert_eq!(
         attn.aggregation_bits_electra()
-            .expect("fauked ti get aggregation bits")
+            .expect("fail to get electra aggregation bits")
             .len(),
         committee_offset
     );

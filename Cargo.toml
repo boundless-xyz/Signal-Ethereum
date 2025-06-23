@@ -42,7 +42,11 @@ anyhow = "1.0.57"
 thiserror = "2.0"
 tokio = { version = "1.45", features = ["full"] }
 
+beacon_chain = { git = "https://github.com/ec2/lighthouse.git", rev = "68f38bd1bf06149579ec369116e509ecddabebec" }
+beacon_types = { package = "types", git = "https://github.com/ec2/lighthouse.git", rev = "68f38bd1bf06149579ec369116e509ecddabebec", default-features = false, features = ["legacy-arith"] }
+bls = { git = "https://github.com/ec2/lighthouse.git", rev = "68f38bd1bf06149579ec369116e509ecddabebec" }
 
+swap_or_not_shuffle = { git = "https://github.com/ec2/lighthouse.git", rev = "68f38bd1bf06149579ec369116e509ecddabebec" }
 [patch."https://github.com/ralexstokes/ssz-rs"]
 # Get the merkle tree empty node virtualization so non-trivial merkle trees actually fit in memory
 ssz_rs = { git = "https://github.com/ec2/ssz-rs", rev = "86be2a71c2bd4d5b454a8e86b83af1effd1e14d8" }

@@ -13,16 +13,14 @@
 // limitations under the License.
 
 use crate::{
-    AttestationData, BEACON_ATTESTER_DOMAIN, BlsError, CommitteeCache, Domain, Epoch, Input,
-    PublicKey, Root, ShuffleData, Signature, StateReader, StateTransitionError, ValidatorIndex,
-    ValidatorInfo, consensus_state::ConsensusState, ensure, fast_aggregate_verify_pre_aggregated,
-    threshold::threshold,
+    AttestationData, BEACON_ATTESTER_DOMAIN, CommitteeCache, Epoch, Input, ShuffleData,
+    StateReader, StateTransitionError, ValidatorIndex, ValidatorInfo,
+    consensus_state::ConsensusState, ensure, get_attesting_indices, threshold::threshold,
 };
-use alloc::collections::BTreeMap;
-use tracing::{debug, info};
-use tree_hash::TreeHash;
-use tree_hash_derive::TreeHash;
 
+use alloc::collections::BTreeMap;
+use beacon_types::{AggregateSignature, EthSpec, SignedRoot};
+use tracing::{debug, info};
 #[derive(thiserror::Error, Debug, PartialEq)]
 pub enum VerifyError {
     #[error("Invalid attestation: {0}")]
@@ -41,32 +39,26 @@ pub enum VerifyError {
     },
     #[error("Committee cache error: {0:?}")]
     CommitteeCacheError(#[from] crate::committee_cache::Error),
-    #[error("Bls error: {0}")]
-    BlsError(BlsError),
-    #[error("Bitfield error: {0:?}")]
-    BitfieldError(ssz::BitfieldError),
     #[error("State reader error: {0}")]
     StateReaderError(String),
     #[error("Missing validator info for index: {0}")]
     MissingValidatorInfo(ValidatorIndex),
+
+    #[error("Lighthouse types: {0:?}")]
+    LighthouseTypes(beacon_types::Error),
     #[error("Verify error: {0}")]
     Other(String),
 }
 
-impl From<ssz::BitfieldError> for VerifyError {
-    fn from(e: ssz::BitfieldError) -> Self {
-        VerifyError::BitfieldError(e)
-    }
-}
-impl From<BlsError> for VerifyError {
-    fn from(e: BlsError) -> Self {
-        VerifyError::BlsError(e)
+impl From<beacon_types::Error> for VerifyError {
+    fn from(e: beacon_types::Error) -> Self {
+        VerifyError::LighthouseTypes(e)
     }
 }
 
 pub fn verify<S: StateReader>(
     state_reader: &S,
-    input: Input,
+    input: Input<S::Spec>,
 ) -> Result<ConsensusState, VerifyError> {
     let Input {
         mut state,
@@ -78,19 +70,20 @@ pub fn verify<S: StateReader>(
         VerifyError::Other("Link and attestations must be the same length".to_string())
     );
 
-    let context = state_reader.context();
     let trusted_checkpoint = state.finalized_checkpoint;
 
     let mut validator_cache: BTreeMap<Epoch, BTreeMap<ValidatorIndex, &ValidatorInfo>> =
         BTreeMap::new();
 
-    let mut committee_caches: BTreeMap<Epoch, CommitteeCache> = BTreeMap::new();
+    let mut committee_caches: BTreeMap<Epoch, CommitteeCache<S::Spec>> = BTreeMap::new();
     for (link, attestations) in link.iter().zip(attestations.into_iter()) {
         let attesting_balance: u64 = attestations
             .into_iter()
-            .filter(|a| a.data.source == link.source && a.data.target == link.target)
+            .filter(|a| {
+                a.data().source == link.source.into() && a.data().target == link.target.into()
+            })
             .map(|attestation| {
-                let data = &attestation.data;
+                let data = &attestation.data();
                 debug!("Processing attestation: {:?}", data);
 
                 assert_eq!(data.index, 0);
@@ -104,8 +97,7 @@ pub fn verify<S: StateReader>(
                             get_shufflings_for_epoch(state_reader, attestation_epoch).unwrap()
                         });
 
-                let attesting_indices =
-                    attestation.get_attesting_indices(context, committee_cache)?;
+                let attesting_indices = get_attesting_indices(&attestation, committee_cache)?;
 
                 let state_validators =
                     validator_cache.entry(attestation_epoch).or_insert_with(|| {
@@ -134,7 +126,7 @@ pub fn verify<S: StateReader>(
                         state_reader,
                         attesting_validators.into_iter(),
                         data,
-                        attestation.signature,
+                        attestation.signature(),
                     )?,
                     VerifyError::InvalidAttestation("Invalid indexed attestation".to_string(),)
                 );
@@ -144,19 +136,19 @@ pub fn verify<S: StateReader>(
             .sum::<Result<u64, VerifyError>>()?;
 
         let total_active_balance = state_reader
-            .get_total_active_balance(link.target.epoch)
+            .get_total_active_balance(link.target.epoch())
             .map_err(|e| VerifyError::StateReaderError(e.to_string()))?;
 
         // In the worst case attestations can arrive one epoch after their target and because we don't have information about which epoch they belong to in the chain
         // (if any) we need to assume the worst case
         // TODO: Fix
-        let lookahead = link.target.epoch + 1 - trusted_checkpoint.epoch;
-        let threshold = threshold(lookahead, total_active_balance);
+        let lookahead = link.target.epoch() + 1 - trusted_checkpoint.epoch();
+        let threshold = threshold(lookahead.as_u64(), total_active_balance);
 
         ensure!(
             attesting_balance >= threshold,
             VerifyError::ThresholdNotMet {
-                lookahead,
+                lookahead: lookahead.as_u64(),
                 attesting_balance,
                 threshold,
             }
@@ -175,7 +167,7 @@ fn is_valid_indexed_attestation<'a, S: StateReader>(
     state_reader: &S,
     attesting_validators: impl IntoIterator<Item = &'a &'a ValidatorInfo>,
     data: &AttestationData,
-    signature: Signature,
+    signature: &AggregateSignature,
 ) -> Result<bool, VerifyError> {
     let pubkeys = attesting_validators
         .into_iter()
@@ -184,17 +176,19 @@ fn is_valid_indexed_attestation<'a, S: StateReader>(
     if pubkeys.is_empty() {
         return Ok(false);
     }
-    let domain = state_reader
-        .get_domain(BEACON_ATTESTER_DOMAIN, data.target.epoch)
-        .map_err(|e| VerifyError::StateReaderError(e.to_string()))?;
-    let signing_root = compute_signing_root(data, domain);
+    let domain = S::Spec::default_spec().get_domain(
+        data.target.epoch,
+        beacon_types::Domain::BeaconAttester,
+        &state_reader
+            .fork(data.target.epoch)
+            .map_err(|e| VerifyError::StateReaderError(e.to_string()))?,
+        state_reader
+            .genesis_validators_root()
+            .map_err(|e| VerifyError::StateReaderError(e.to_string()))?,
+    );
+    let signing_root = data.signing_root(domain);
 
-    Ok(fast_aggregate_verify_pre_aggregated(
-        &PublicKey::aggregate(&pubkeys)?,
-        signing_root.as_ref(),
-        &signature,
-    )
-    .is_ok())
+    Ok(signature.eth_fast_aggregate_verify(signing_root, &pubkeys))
 }
 
 // this can compute validators for up to
@@ -202,7 +196,7 @@ fn is_valid_indexed_attestation<'a, S: StateReader>(
 pub fn get_shufflings_for_epoch<S: StateReader>(
     state_reader: &S,
     epoch: Epoch,
-) -> Result<CommitteeCache, VerifyError> {
+) -> Result<CommitteeCache<S::Spec>, VerifyError> {
     info!("Getting shufflings for epoch: {}", epoch);
 
     let indices = state_reader
@@ -213,9 +207,13 @@ pub fn get_shufflings_for_epoch<S: StateReader>(
         .get_seed(epoch, BEACON_ATTESTER_DOMAIN.into())
         .map_err(|e| VerifyError::StateReaderError(e.to_string()))?;
 
-    let committees_per_slot = state_reader
-        .get_committee_count_per_slot(epoch)
-        .map_err(|e| VerifyError::StateReaderError(e.to_string()))?;
+    let committees_per_slot = S::Spec::get_committee_count_per_slot(
+        state_reader
+            .get_active_validator_indices(epoch)
+            .map_err(|e| VerifyError::StateReaderError(e.to_string()))?
+            .count(),
+        &S::Spec::default_spec(),
+    )? as u64;
 
     CommitteeCache::initialized(
         ShuffleData {
@@ -224,23 +222,6 @@ pub fn get_shufflings_for_epoch<S: StateReader>(
             committees_per_slot,
         },
         epoch,
-        state_reader.context(),
     )
     .map_err(Into::into)
-}
-
-fn compute_signing_root<T: TreeHash>(ssz_object: &T, domain: Domain) -> Root {
-    let object_root = ssz_object.tree_hash_root();
-
-    #[derive(TreeHash)]
-    pub struct SigningData {
-        pub object_root: Root,
-        pub domain: Domain,
-    }
-
-    let s = SigningData {
-        object_root,
-        domain,
-    };
-    s.tree_hash_root()
 }

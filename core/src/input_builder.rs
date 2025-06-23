@@ -12,9 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::{Attestation, Checkpoint, ConsensusState, Ctx, Epoch, Input, Link, ensure};
+use crate::{
+    Attestation, Checkpoint, ConsensusState, Epoch, Input, Link, conv_attestation, ensure,
+};
+
+use beacon_types::EthSpec;
 use ethereum_consensus::{electra::mainnet::SignedBeaconBlockHeader, types::mainnet::BeaconBlock};
-use std::collections::BTreeMap;
+use std::collections::HashMap;
 use std::fmt::Display;
 use tracing::debug;
 
@@ -48,16 +52,16 @@ pub enum InputBuilderError {
     ChainReader(#[from] anyhow::Error),
 }
 
-pub struct InputBuilder<CTX, CR> {
-    context: CTX,
+pub struct InputBuilder<E, CR> {
     chain_reader: CR,
+    _spec: std::marker::PhantomData<E>,
 }
 
-impl<CTX: Ctx, CR: ChainReader> InputBuilder<CTX, CR> {
-    pub fn new(context: CTX, chain_reader: CR) -> Self {
+impl<E: EthSpec, CR: ChainReader> InputBuilder<E, CR> {
+    pub fn new(chain_reader: CR) -> Self {
         Self {
-            context,
             chain_reader,
+            _spec: std::marker::PhantomData,
         }
     }
 
@@ -66,12 +70,11 @@ impl<CTX: Ctx, CR: ChainReader> InputBuilder<CTX, CR> {
     pub async fn build(
         &self,
         trusted_checkpoint: Checkpoint,
-    ) -> Result<(Input, ConsensusState), InputBuilderError> {
+    ) -> Result<(Input<E>, ConsensusState), InputBuilderError> {
         // Find the first consensus state that confirms the finality of the trusted_checkpoint
         let finalization_epoch = self.find_finalization_epoch(trusted_checkpoint).await?;
         debug!(
-            finalization_epoch,
-            "Found state confirming trusted checkpoint"
+            "finalization_epoch: {finalization_epoch} Found state confirming trusted checkpoint"
         );
 
         let (state, next_state, links) = self
@@ -109,16 +112,16 @@ impl<CTX: Ctx, CR: ChainReader> InputBuilder<CTX, CR> {
         );
         */
 
-        for epoch in trusted_checkpoint.epoch + 1.. {
-            let slot = self.context.compute_start_slot_at_epoch(epoch);
+        for epoch in trusted_checkpoint.epoch().as_u64() + 1.. {
+            let slot = Epoch::from(epoch).start_slot(E::slots_per_epoch());
             let state = self.chain_reader.get_consensus_state(slot).await?;
             if state.finalized_checkpoint == trusted_checkpoint {
-                return Ok(epoch);
+                return Ok(epoch.into());
             }
 
             // if the trusted checkpoint has been skipped, it is invalid
             ensure!(
-                state.finalized_checkpoint.epoch < trusted_checkpoint.epoch,
+                state.finalized_checkpoint.epoch() < trusted_checkpoint.epoch(),
                 InputBuilderError::InvalidTrustedCheckpoint
             );
         }
@@ -133,17 +136,17 @@ impl<CTX: Ctx, CR: ChainReader> InputBuilder<CTX, CR> {
     ) -> Result<(ConsensusState, ConsensusState, Vec<Link>), InputBuilderError> {
         let initial_state = self
             .chain_reader
-            .get_consensus_state(self.context.compute_start_slot_at_epoch(start_epoch))
+            .get_consensus_state(start_epoch.start_slot(E::slots_per_epoch()))
             .await?;
         let initial_finalized_checkpoint = initial_state.finalized_checkpoint;
 
         let mut links = Vec::new();
 
         let mut prev_state = initial_state.clone();
-        for epoch in (start_epoch + 1).. {
+        for epoch in (start_epoch.as_u64() + 1).. {
             let current_state = self
                 .chain_reader
-                .get_consensus_state(self.context.compute_start_slot_at_epoch(epoch))
+                .get_consensus_state(Epoch::from(epoch).start_slot(E::slots_per_epoch()))
                 .await?;
 
             // add potential justification
@@ -166,36 +169,37 @@ impl<CTX: Ctx, CR: ChainReader> InputBuilder<CTX, CR> {
     async fn collect_attestations_for_links(
         &self,
         links: &[Link],
-    ) -> Result<Vec<Vec<Attestation>>, InputBuilderError> {
+    ) -> Result<Vec<Vec<Attestation<E>>>, InputBuilderError> {
         if links.is_empty() {
             return Ok(vec![]);
         }
 
-        let min_epoch = links.iter().map(|l| l.target.epoch).min().unwrap();
-        let max_epoch = links.iter().map(|l| l.target.epoch).max().unwrap();
+        let min_epoch = links.iter().map(|l| l.target.epoch()).min().unwrap();
+        let max_epoch = links.iter().map(|l| l.target.epoch()).max().unwrap();
 
         // The attestation must be no newer than MIN_ATTESTATION_INCLUSION_DELAY slots.
         // It is safe to ignore this and assume MIN_ATTESTATION_INCLUSION_DELAY = 0
-        let start_slot = min_epoch * self.context.slots_per_epoch();
+        let start_slot = min_epoch * E::slots_per_epoch();
         // The attestation must be no older than SLOTS_PER_EPOCH slots.
-        let end_slot = (max_epoch + 1) * self.context.slots_per_epoch();
+        let end_slot = (max_epoch + 1) * E::slots_per_epoch();
 
         // 1. Fetch all blocks concurrently
-        let block_futs = (start_slot..=end_slot).map(|slot| self.chain_reader.get_block(slot));
+        let block_futs =
+            (start_slot.as_u64()..=end_slot.as_u64()).map(|slot| self.chain_reader.get_block(slot));
         let blocks = futures::future::try_join_all(block_futs).await?;
 
         // 2. Group attestations by link in a HashMap for efficient lookup
-        let mut attestations_by_link = BTreeMap::<Link, Vec<Attestation>>::new();
+        let mut attestations_by_link = HashMap::<Link, Vec<Attestation<E>>>::new();
         for block in blocks.into_iter().flatten() {
             let body = match block.body() {
                 ethereum_consensus::types::BeaconBlockBodyRef::Electra(body) => body,
                 _ => return Err(InputBuilderError::UnsupportedBlockVersion),
             };
             for attestation in body.attestations.iter() {
-                let attestation = Attestation::from(attestation.clone());
+                let attestation = conv_attestation(attestation.clone());
                 let link = Link {
-                    source: attestation.data.source,
-                    target: attestation.data.target,
+                    source: attestation.data().source.into(),
+                    target: attestation.data().target.into(),
                 };
                 attestations_by_link
                     .entry(link)

@@ -38,8 +38,9 @@ pub enum StateTransitionError {
 impl ConsensusState {
     /// Ensure a consensus state is internally consistent.
     pub fn is_consistent(&self) -> bool {
-        self.finalized_checkpoint.epoch < self.current_justified_checkpoint.epoch
-            && self.current_justified_checkpoint.epoch >= self.previous_justified_checkpoint.epoch
+        self.finalized_checkpoint.epoch() < self.current_justified_checkpoint.epoch()
+            && self.current_justified_checkpoint.epoch()
+                >= self.previous_justified_checkpoint.epoch()
     }
 
     /// Returns the justification link which lead to the transition self->other if any.
@@ -47,15 +48,16 @@ impl ConsensusState {
         assert!(self.is_consistent() && other.is_consistent());
         // other must be newer or equal
         assert!(
-            self.finalized_checkpoint.epoch < other.finalized_checkpoint.epoch
+            self.finalized_checkpoint.epoch() < other.finalized_checkpoint.epoch()
                 || self.finalized_checkpoint == other.finalized_checkpoint
         );
         assert!(
-            self.previous_justified_checkpoint.epoch < other.previous_justified_checkpoint.epoch
+            self.previous_justified_checkpoint.epoch()
+                < other.previous_justified_checkpoint.epoch()
                 || self.previous_justified_checkpoint == other.previous_justified_checkpoint
         );
         assert!(
-            self.current_justified_checkpoint.epoch < other.current_justified_checkpoint.epoch
+            self.current_justified_checkpoint.epoch() < other.current_justified_checkpoint.epoch()
                 || self.current_justified_checkpoint == other.current_justified_checkpoint
         );
 
@@ -87,7 +89,8 @@ impl ConsensusState {
             self.previous_justified_checkpoint
         );
         assert!(
-            other.current_justified_checkpoint.epoch - self.current_justified_checkpoint.epoch > 1
+            other.current_justified_checkpoint.epoch() - self.current_justified_checkpoint.epoch()
+                > 1
         );
 
         Some(Link {
@@ -105,11 +108,11 @@ impl ConsensusState {
     ///
     pub fn state_transition(&self, link: &Link) -> Result<ConsensusState, StateTransitionError> {
         ensure!(
-            link.target.epoch > link.source.epoch,
+            link.target.epoch() > link.source.epoch(),
             StateTransitionError::LinkNotValid
         );
         ensure!(
-            link.target.epoch >= self.current_justified_checkpoint.epoch,
+            link.target.epoch() >= self.current_justified_checkpoint.epoch(),
             StateTransitionError::LinkTargetTooLow
         );
 
@@ -118,7 +121,7 @@ impl ConsensusState {
             // where they are adjacent checkpoints.
             // This applies when the source checkpoint is the current justified checkpoint or the previous justified checkpoint
             Link { source, target }
-                if target.epoch == source.epoch + 1
+                if target.epoch() == source.epoch() + 1
                     && (*source == self.current_justified_checkpoint
                         || *source == self.previous_justified_checkpoint) =>
             {
@@ -139,9 +142,9 @@ impl ConsensusState {
             // Case 3: 2-finality. Finalizes the source checkpoint and justifies the target checkpoint
             // with a link that skips over an intermediate justified checkpoint
             Link { source, target }
-                if target.epoch == source.epoch + 2
+                if target.epoch() == source.epoch() + 2
                     && *source == self.previous_justified_checkpoint
-                    && self.current_justified_checkpoint.epoch == source.epoch + 1 =>
+                    && self.current_justified_checkpoint.epoch() == source.epoch() + 1 =>
             {
                 Ok(ConsensusState {
                     finalized_checkpoint: link.source,
@@ -153,7 +156,7 @@ impl ConsensusState {
             // This occurs when the source is justified but the link skips over one or more unjustified epochs when justifying the target
             // The result is that the target becomes justified but the source does not finalize.
             Link { source, target }
-                if target.epoch > source.epoch + 1
+                if target.epoch() > source.epoch() + 1
                     && (*source == self.current_justified_checkpoint
                         || *source == self.previous_justified_checkpoint) =>
             {
@@ -174,11 +177,8 @@ mod tests {
     use crate::{Checkpoint, Epoch};
     use alloy_primitives::B256;
 
-    const fn cp(epoch: Epoch) -> Checkpoint {
-        Checkpoint {
-            epoch,
-            root: B256::ZERO,
-        }
+    const fn cp(epoch: u64) -> Checkpoint {
+        Checkpoint::new(Epoch::new(epoch), B256::ZERO)
     }
 
     /// Test cases for the state transition function.

@@ -6,7 +6,7 @@ repository = { workspace = true }
 license = "Apache-2.0"
 
 [[bin]]
-name = "gen_context"
+name = "gen_gindices"
 test = false
 bench = false
 required-features = ["host"]
@@ -15,12 +15,12 @@ required-features = ["host"]
 alloy-primitives = { workspace = true, features = ["rlp"] }
 alloy-rlp = { version = "=0.3.11", features = ["derive"] }
 anyhow = { workspace = true }
-beacon_chain = { git = "https://github.com/sigp/lighthouse.git", rev = "7759cb8f91c01a7d335469d317b5787368656064", optional = true }
-beacon_types = { package = "types", git = "https://github.com/sigp/lighthouse.git", rev = "7759cb8f91c01a7d335469d317b5787368656064", optional = true }
-blst = { version = "0.3.14", default-features = false, features = ["serde"] }
+beacon_chain = { workspace = true, optional = true } 
+beacon_types = { workspace = true, default-features = false, features = ["legacy-arith"]} 
+bls = { workspace = true }
 elsa = { version = "1.11", optional = true }
 ethereum-consensus = { workspace = true, default-features = false, optional = true }
-ethereum_ssz = "0.8.3"
+ethereum_ssz = "0.7.1"
 futures = { version = "0.3", optional = true }
 prettyplease = { version = "0.2", optional = true }
 proc-macro2 = { version = "1.0", optional = true }
@@ -31,16 +31,17 @@ serde_json = "1.0.133"
 sha2 = { workspace = true, default-features = false }
 ssz-multiproofs = { path = "../ssz-multiproofs" }
 ssz_rs = { workspace = true, default-features = true, optional = true, features = ["serde"] }
-ssz_types = { version = "0.10.0" }
+ssz_types = { version = "0.8.0" }
+swap_or_not_shuffle = { workspace = true }
 syn = { version = "2.0", optional = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
-tree_hash = { version = "0.9" }
-tree_hash_derive = { version = "0.9.0" }
+tree_hash = { version = "0.8" }
+tree_hash_derive = { version = "0.8.0" }
+
 
 [dev-dependencies]
-bls = { git = "https://github.com/sigp/lighthouse.git", rev = "7759cb8f91c01a7d335469d317b5787368656064" }
-state_processing = { git = "https://github.com/sigp/lighthouse.git", rev = "7759cb8f91c01a7d335469d317b5787368656064" }
+state_processing = { git = "https://github.com/ec2/lighthouse.git", rev = "68f38bd1bf06149579ec369116e509ecddabebec" }
 test-log = { version = "0.2", features = ["trace"] }
 test_utils = { path = "test_utils" }
 tokio = { workspace = true }
@@ -48,5 +49,15 @@ tokio = { workspace = true }
 [features]
 default = ["host"]
 host = [
-    "dep:ethereum-consensus", "ssz-multiproofs/builder", "blst/default", "ssz-multiproofs/progress-bar", "dep:elsa", "dep:futures", "dep:quote", "dep:syn", "dep:prettyplease", "dep:proc-macro2", "dep:ssz_rs", "dep:beacon_chain", "dep:beacon_types"
+    "dep:ethereum-consensus",
+    "ssz-multiproofs/builder",
+    "ssz-multiproofs/progress-bar",
+    "dep:elsa",
+    "dep:futures",
+    "dep:quote",
+    "dep:syn",
+    "dep:prettyplease",
+    "dep:proc-macro2",
+    "dep:ssz_rs",
+    "dep:beacon_chain",
 ]

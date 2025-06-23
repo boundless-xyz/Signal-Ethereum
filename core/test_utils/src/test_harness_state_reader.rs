@@ -23,19 +23,14 @@ use beacon_chain::{
     BeaconChainTypes, StateSkipConfig, WhenSlotSkipped, test_utils::BeaconChainHarness,
 };
 use beacon_types::{EthSpec, Hash256};
-use ethereum_consensus::electra;
 use ethereum_consensus::phase0::SignedBeaconBlockHeader;
 use ethereum_consensus::types::mainnet::BeaconBlock;
 use std::ops::{Deref, DerefMut};
 use std::str::FromStr;
-use std::sync::LazyLock;
 use tracing::trace;
 use z_core::{
-    ChainReader, ConsensusState, HostContext, Root, Slot, StateProvider, StateProviderError,
-    StateRef,
+    ChainReader, ConsensusState, Root, Slot, StateProvider, StateProviderError, StateRef,
 };
-
-static CONTEXT: LazyLock<HostContext> = LazyLock::new(|| electra::Context::for_mainnet().into());
 
 pub struct TestHarness<T: BeaconChainTypes>(BeaconChainHarness<T>);
 
@@ -60,9 +55,7 @@ impl<T: BeaconChainTypes> From<BeaconChainHarness<T>> for TestHarness<T> {
 }
 
 impl<T: BeaconChainTypes> StateProvider for &TestHarness<T> {
-    fn context(&self) -> &HostContext {
-        &CONTEXT
-    }
+    type Spec = beacon_types::MainnetEthSpec;
 
     fn genesis_validators_root(&self) -> Result<Root, StateProviderError> {
         Ok(self.0.chain.genesis_validators_root)
@@ -201,17 +194,17 @@ pub fn consensus_state_from_state<T: EthSpec>(
     state: &beacon_types::BeaconState<T>,
 ) -> ConsensusState {
     ConsensusState {
-        finalized_checkpoint: z_core::Checkpoint {
-            epoch: state.finalized_checkpoint().epoch.into(),
-            root: state.finalized_checkpoint().root.clone(),
-        },
-        current_justified_checkpoint: z_core::Checkpoint {
-            epoch: state.current_justified_checkpoint().epoch.into(),
-            root: state.current_justified_checkpoint().root.clone(),
-        },
-        previous_justified_checkpoint: z_core::Checkpoint {
-            epoch: state.previous_justified_checkpoint().epoch.into(),
-            root: state.previous_justified_checkpoint().root.clone(),
-        },
+        finalized_checkpoint: z_core::Checkpoint::new(
+            state.finalized_checkpoint().epoch.into(),
+            state.finalized_checkpoint().root.clone(),
+        ),
+        current_justified_checkpoint: z_core::Checkpoint::new(
+            state.current_justified_checkpoint().epoch.into(),
+            state.current_justified_checkpoint().root.clone(),
+        ),
+        previous_justified_checkpoint: z_core::Checkpoint::new(
+            state.previous_justified_checkpoint().epoch.into(),
+            state.previous_justified_checkpoint().root.clone(),
+        ),
     }
 }

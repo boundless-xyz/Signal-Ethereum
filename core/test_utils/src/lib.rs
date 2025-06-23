@@ -113,17 +113,17 @@ pub fn consensus_state_from_state(
     state: &beacon_types::BeaconState<MainnetEthSpec>,
 ) -> ConsensusState {
     ConsensusState {
-        finalized_checkpoint: z_core::Checkpoint {
-            epoch: state.finalized_checkpoint().epoch.into(),
-            root: state.finalized_checkpoint().root.clone(),
-        },
-        current_justified_checkpoint: z_core::Checkpoint {
-            epoch: state.current_justified_checkpoint().epoch.into(),
-            root: state.current_justified_checkpoint().root.clone(),
-        },
-        previous_justified_checkpoint: z_core::Checkpoint {
-            epoch: state.previous_justified_checkpoint().epoch.into(),
-            root: state.previous_justified_checkpoint().root.clone(),
-        },
+        finalized_checkpoint: z_core::Checkpoint::new(
+            state.finalized_checkpoint().epoch.into(),
+            state.finalized_checkpoint().root.clone(),
+        ),
+        current_justified_checkpoint: z_core::Checkpoint::new(
+            state.current_justified_checkpoint().epoch.into(),
+            state.current_justified_checkpoint().root.clone(),
+        ),
+        previous_justified_checkpoint: z_core::Checkpoint::new(
+            state.previous_justified_checkpoint().epoch.into(),
+            state.previous_justified_checkpoint().root.clone(),
+        ),
     }
 }

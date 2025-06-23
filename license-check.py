@@ -5,13 +5,7 @@ import os
 from pathlib import Path
 import subprocess
 
-ALL_RIGHT_RESERVED_HEADER = """
-// Copyright (c) {YEAR} RISC Zero, Inc.
-//
-// All rights reserved.
-""".strip().splitlines()
-
-APACHE_HEADER = """
+PUBLIC_HEADER = """
 // Copyright {YEAR} RISC Zero, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -38,19 +32,8 @@ SKIP_PATHS = [
     str(Path.cwd()) + "/core/src/shuffle_list.rs",
 ]
 
-APACHE_PATHS = [
-    str(Path.cwd()) + "/core",
-    str(Path.cwd()) + "/ssz-multiproofs",
-    str(Path.cwd()) + "/host",
-]
-
 def check_header(file, expected_year, lines_actual):
-    if any(map(lambda path: file.is_relative_to(path), APACHE_PATHS)):
-        header = APACHE_HEADER
-    else:
-        header = ALL_RIGHT_RESERVED_HEADER
-
-    for expected, actual in zip(header, lines_actual):
+    for expected, actual in zip(PUBLIC_HEADER, lines_actual):
         expected = expected.replace("{YEAR}", expected_year)
         if expected != actual:
             return (expected, actual)

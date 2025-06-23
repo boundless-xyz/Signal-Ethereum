@@ -85,9 +85,10 @@ mod host {
 
         pub fn build(self) -> StatePatch {
             debug!(
-                "Created patch for epoch {}: #randao_mixes={}",
-                self.context.compute_epoch_at_slot(self.state.slot()),
-                self.patch.randao_mixes.len(),
+                epoch = self.context.compute_epoch_at_slot(self.state.slot()),
+                randao_mixes = self.patch.randao_mixes.len(),
+                validator_exits = self.patch.validator_exits.len(),
+                "Created state patch",
             );
             self.patch
         }

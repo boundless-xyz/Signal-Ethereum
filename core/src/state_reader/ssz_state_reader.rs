@@ -19,10 +19,11 @@ use crate::{
     VALIDATOR_LIST_TREE_DEPTH, VALIDATOR_TREE_DEPTH, ValidatorIndex, ValidatorInfo, Version,
 };
 use alloy_primitives::B256;
+use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 use ssz_multiproofs::Multiproof;
 use std::{collections::BTreeMap, mem};
-use tracing::debug;
+use tracing::{debug, trace};
 
 #[derive(Clone, Deserialize, Serialize)]
 pub struct StateInput<'a> {
@@ -192,8 +193,10 @@ impl StateInput<'_> {
             // state.consolidation_balance_to_consume to make this more exact
             let mut exit_balance_to_consume = churn;
 
-            // validate the patched exit epochs
-            for (idx, &exit_epoch) in &patch.validator_exits {
+            // validate the patched exit epochs, this needs to be sorted by epoch
+            for (idx, &exit_epoch) in patch.validator_exits.iter().sorted_unstable_by_key(|v| v.1) {
+                trace!("Validator {idx} exiting at: {exit_epoch}");
+
                 let validator = validators
                     .get(idx)
                     .expect("patched exit_epoch for missing validator");

@@ -12,6 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+// Beacon block indices
+pub const fn state_root_gindex() -> u64 {
+    11u64
+}
+
+// Beacon state indices
 pub const fn slot_gindex() -> u64 {
     66u64
 }
@@ -32,4 +38,10 @@ pub const fn validators_gindex() -> u64 {
 }
 pub const fn finalized_checkpoint_epoch_gindex() -> u64 {
     168u64
+}
+pub const fn earliest_exit_epoch_gindex() -> u64 {
+    95u64
+}
+pub const fn earliest_consolidation_epoch_gindex() -> u64 {
+    97u64
 }

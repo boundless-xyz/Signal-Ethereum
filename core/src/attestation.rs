@@ -24,7 +24,7 @@ use crate::committee_cache;
 /// See: https://github.com/ethereum/consensus-specs/blob/dev/specs/electra/beacon-chain.md#modified-get_attesting_indices
 pub fn get_attesting_indices<E: EthSpec>(
     attn: &Attestation<E>,
-    committee_cache: &committee_cache::CommitteeCache<E>,
+    committee_cache: &committee_cache::CommitteeCache,
 ) -> Result<BTreeSet<usize>, committee_cache::Error> {
     let attn = attn.as_electra().expect("attestation is not electra type");
     let committee_indices = attn.get_committee_indices();
@@ -33,12 +33,14 @@ pub fn get_attesting_indices<E: EthSpec>(
     let mut committee_offset = 0;
 
     for committee_index in committee_indices {
-        assert!(committee_index < committee_cache.get_committee_count_per_slot() as u64);
+        assert!(committee_index < committee_cache.committees_per_slot());
 
-        let committee =
-            committee_cache.get_beacon_committee(attn.data.slot, committee_index as usize)?;
+        let committee = committee_cache
+            .get_beacon_committee(attn.data.slot, committee_index)
+            .unwrap();
 
         let mut committee_attesters = committee
+            .committee
             .iter()
             .enumerate()
             .filter_map(|(i, attester_index)| {
@@ -51,7 +53,7 @@ pub fn get_attesting_indices<E: EthSpec>(
         assert!(committee_attesters.peek().is_some(), "empty committee");
         attesting_indices.extend(committee_attesters);
 
-        committee_offset += committee.len();
+        committee_offset += committee.committee.len();
     }
     // Bitfield length matches total number of participants
     assert_eq!(attn.aggregation_bits.len(), committee_offset);

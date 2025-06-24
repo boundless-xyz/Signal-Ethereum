@@ -75,7 +75,7 @@ pub fn verify<S: StateReader>(
     let mut validator_cache: BTreeMap<Epoch, BTreeMap<ValidatorIndex, &ValidatorInfo>> =
         BTreeMap::new();
 
-    let mut committee_caches: BTreeMap<Epoch, CommitteeCache<S::Spec>> = BTreeMap::new();
+    let mut committee_caches: BTreeMap<Epoch, CommitteeCache> = BTreeMap::new();
     for (link, attestations) in link.iter().zip(attestations.into_iter()) {
         let attesting_balance: u64 = attestations
             .into_iter()
@@ -196,7 +196,7 @@ fn is_valid_indexed_attestation<'a, S: StateReader>(
 pub fn get_shufflings_for_epoch<S: StateReader>(
     state_reader: &S,
     epoch: Epoch,
-) -> Result<CommitteeCache<S::Spec>, VerifyError> {
+) -> Result<CommitteeCache, VerifyError> {
     info!("Getting shufflings for epoch: {}", epoch);
 
     let indices = state_reader
@@ -215,7 +215,7 @@ pub fn get_shufflings_for_epoch<S: StateReader>(
         state_reader.chain_spec(),
     )? as u64;
 
-    CommitteeCache::initialized(
+    crate::committee_cache::initialized::<S::Spec>(
         state_reader.chain_spec(),
         ShuffleData {
             seed,

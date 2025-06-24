@@ -273,7 +273,7 @@ fn run_verify<E: EthSpec + Serialize, R: StateReader<Spec = E> + StateProvider<S
                 bincode::deserialize(&state_bytes).context("failed to deserialize state")?;
             state_input
                 .into_state_reader(&input.state)
-                .context("failed to create input")?
+                .context("failed to validate input")?
         };
 
         // use the AssertStateReader to detect input issues already on the host

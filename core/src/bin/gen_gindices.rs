@@ -29,9 +29,16 @@ fn main() {
         .open(dest_filepath)
         .unwrap();
 
-    let gindices = beacon_gindices::<z_core::mainnet::ElectraBeaconState>();
+    let state_gindices = beacon_gindices::<z_core::mainnet::ElectraBeaconState>();
+    let block_gindices = block_gindices::<ethereum_consensus::electra::BeaconBlockHeader>();
 
-    let tokens = gen_guest_gindices_impl(&gindices);
+    let state_fn = gen_guest_gindices_impl(&state_gindices);
+    let block_fn = gen_guest_gindices_impl(&block_gindices);
+
+    let tokens = quote! {
+        #state_fn
+        #block_fn
+    };
 
     let syntax_tree = syn::parse2(tokens).unwrap();
     let formatted = prettyplease::unparse(&syntax_tree);
@@ -60,6 +67,24 @@ fn gen_guest_gindices_impl(
     }
 }
 
+fn block_gindices<G>() -> Vec<(String, String, String, proc_macro2::TokenStream)>
+where
+    G: GeneralizedIndexable,
+{
+    // Static paths for the BeaconBlock
+    [("state_root", Path::from(&["state_root".into()]))]
+        .map(|(name, path)| gen_gindices::<G>(name.to_string(), path))
+        .map(|(name, ret_type, value)| {
+            (
+                format!("{name}"),
+                ret_type,
+                "BeaconBlock".to_string(),
+                value,
+            )
+        })
+        .to_vec()
+}
+
 // Returns name, return type, the root of the path, and value
 fn beacon_gindices<G>() -> Vec<(String, String, String, proc_macro2::TokenStream)>
 where
@@ -86,6 +111,14 @@ where
         ),
         ("fork_epoch", Path::from(&["fork".into(), "epoch".into()])),
         ("validators", Path::from(&["validators".into()])),
+        (
+            "earliest_exit_epoch",
+            Path::from(&["earliest_exit_epoch".into()]),
+        ),
+        (
+            "earliest_consolidation_epoch",
+            Path::from(&["earliest_consolidation_epoch".into()]),
+        ),
     ]
     .map(|(name, path)| gen_gindices::<G>(name.to_string(), path))
     .map(|(name, ret_type, value)| {

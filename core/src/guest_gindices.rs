@@ -12,13 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Beacon block indices
-pub const fn state_root_gindex() -> u64 {
-    11u64
-}
-
-// Beacon state indices
-pub const fn slot_gindex() -> u64 {
+/// Returns the gindex of slot from BeaconState
+#[inline(always)]
+pub(crate) const fn slot_gindex() -> u64 {
     66u64
 }
 /// Returns the gindex of finalized_checkpoint_epoch from BeaconState
@@ -51,9 +47,18 @@ pub(crate) const fn fork_epoch_gindex() -> u64 {
 pub(crate) const fn validators_gindex() -> u64 {
     75u64
 }
-pub const fn earliest_exit_epoch_gindex() -> u64 {
+/// Returns the gindex of earliest_exit_epoch from BeaconState
+#[inline(always)]
+pub(crate) const fn earliest_exit_epoch_gindex() -> u64 {
     95u64
 }
-pub const fn earliest_consolidation_epoch_gindex() -> u64 {
+/// Returns the gindex of earliest_consolidation_epoch from BeaconState
+#[inline(always)]
+pub(crate) const fn earliest_consolidation_epoch_gindex() -> u64 {
     97u64
+}
+/// Returns the gindex of state_root from BeaconBlock
+#[inline(always)]
+pub(crate) const fn state_root_gindex() -> u64 {
+    11u64
 }

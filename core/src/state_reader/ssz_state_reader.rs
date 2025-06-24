@@ -15,8 +15,7 @@
 use super::StateReader;
 use crate::{
     Checkpoint, ConsensusState, Epoch, PublicKey, RandaoMixIndex, Root, Slot, StatePatch,
-    VALIDATOR_LIST_TREE_DEPTH, VALIDATOR_TREE_DEPTH, ValidatorIndex, ValidatorInfo,
-    get_total_balance,
+    ValidatorIndex, ValidatorInfo, get_total_balance,
     guest_gindices::{
         activation_eligibility_epoch_gindex, activation_epoch_gindex,
         earliest_consolidation_epoch_gindex, earliest_exit_epoch_gindex, effective_balance_gindex,

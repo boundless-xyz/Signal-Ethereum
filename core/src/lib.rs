@@ -17,7 +17,6 @@ extern crate core;
 
 use crate::serde_utils::DiskAttestation;
 use alloy_primitives::B256;
-use alloy_rlp::{Decodable, Encodable, RlpDecodable, RlpEncodable};
 use beacon_types::{ChainSpec, EthSpec, PublicKey};
 use core::fmt;
 use core::fmt::Display;
@@ -86,19 +85,6 @@ pub struct Input<E: EthSpec> {
 
     #[serde_as(as = "Vec<Vec<DiskAttestation>>")]
     pub attestations: Vec<Vec<Attestation<E>>>,
-}
-
-#[derive(Clone, serde::Serialize, serde::Deserialize, RlpEncodable, RlpDecodable)]
-pub struct Output {
-    pub pre_state: ConsensusState,
-    pub post_state: ConsensusState,
-}
-
-impl Output {
-    #[inline]
-    pub fn abi_encode(&self) -> Vec<u8> {
-        alloy_rlp::encode(self)
-    }
 }
 
 impl<E: EthSpec> fmt::Debug for Input<E> {
@@ -198,69 +184,6 @@ impl TreeHash for Checkpoint {
     }
 }
 
-mod private {
-    use alloy_primitives::B256;
-
-    #[derive(serde::Serialize, alloy_rlp::RlpEncodable)]
-    pub struct EncCheckpoint<'a> {
-        epoch: u64,
-        root: &'a B256,
-    }
-
-    #[derive(serde::Deserialize, alloy_rlp::RlpDecodable)]
-    pub struct DecCheckpoint {
-        epoch: u64,
-        root: B256,
-    }
-
-    impl<'a> From<&'a super::Checkpoint> for EncCheckpoint<'a> {
-        #[inline]
-        fn from(c: &'a super::Checkpoint) -> Self {
-            Self {
-                epoch: c.0.epoch.as_u64(),
-                root: &c.0.root,
-            }
-        }
-    }
-
-    impl From<DecCheckpoint> for super::Checkpoint {
-        #[inline]
-        fn from(dec: DecCheckpoint) -> Self {
-            Self(beacon_types::Checkpoint {
-                epoch: dec.epoch.into(),
-                root: dec.root,
-            })
-        }
-    }
-}
-
-impl serde::Serialize for Checkpoint {
-    #[inline]
-    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        private::EncCheckpoint::from(self).serialize(serializer)
-    }
-}
-
-impl<'de> serde::Deserialize<'de> for Checkpoint {
-    #[inline]
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        Ok(private::DecCheckpoint::deserialize(deserializer)?.into())
-    }
-}
-
-impl Encodable for Checkpoint {
-    #[inline]
-    fn encode(&self, out: &mut dyn alloy_rlp::BufMut) {
-        private::EncCheckpoint::from(self).encode(out)
-    }
-}
-
-impl Decodable for Checkpoint {
-    #[inline]
-    fn decode(buf: &mut &[u8]) -> Result<Self, alloy_rlp::Error> {
-        Ok(private::DecCheckpoint::decode(buf)?.into())
-    }
-}
 impl Checkpoint {
     pub const fn new(epoch: Epoch, root: Root) -> Self {
         Self(beacon_types::Checkpoint { epoch, root })
@@ -278,6 +201,38 @@ impl Checkpoint {
 impl Display for Checkpoint {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "({},{})", self.root(), self.epoch())
+    }
+}
+
+impl serde::Serialize for Checkpoint {
+    #[inline]
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        #[derive(serde::Serialize)]
+        struct EncCheckpoint<'a> {
+            epoch: u64,
+            root: &'a B256,
+        }
+        EncCheckpoint {
+            epoch: self.0.epoch.as_u64(),
+            root: &self.0.root,
+        }
+        .serialize(serializer)
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for Checkpoint {
+    #[inline]
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        #[derive(serde::Deserialize)]
+        struct DecCheckpoint {
+            epoch: u64,
+            root: B256,
+        }
+        let dec = DecCheckpoint::deserialize(deserializer)?;
+        Ok(Self(beacon_types::Checkpoint {
+            epoch: dec.epoch.into(),
+            root: dec.root,
+        }))
     }
 }
 

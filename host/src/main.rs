@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use anyhow::{Context, ensure};
 use beacon_types::EthSpec;
 use clap::{Parser, ValueEnum};
 use methods::BEACON_GUEST_ELF;
@@ -24,7 +25,7 @@ use std::{
     io::Write,
     path::PathBuf,
 };
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 use url::Url;
 use z_core::{
     CacheStateProvider, ChainReader, Checkpoint, ConsensusState, Epoch, HostStateReader, Input,
@@ -173,9 +174,9 @@ async fn main() -> anyhow::Result<()> {
             let builder = InputBuilder::<Spec, _>::new(beacon_client.clone());
 
             for i in 0..iterations {
-                tracing::info!("Iteration: {}", i);
+                info!("Iteration: {}", i);
                 let (input, _) = builder.build(trusted_checkpoint).await?;
-                tracing::debug!("Input: {:?}", input);
+                debug!("Input: {:?}", input);
 
                 let consensus_state = run_verify(mode, &reader, input.clone())?; // will panic if verification fails
                 trusted_checkpoint = consensus_state.finalized_checkpoint;
@@ -219,7 +220,7 @@ async fn run_sync<E: EthSpec + Serialize>(
         let (input, expected_state) = input_builder
             .build(consensus_state.finalized_checkpoint)
             .await?;
-        tracing::debug!("Input: {:?}", input);
+        debug!("Input: {:?}", input);
         let msg = match run_verify(mode, &sr, input.clone()) {
             Ok(state) => {
                 info!("Verification successful. New state: {:#?}", &state);
@@ -249,55 +250,71 @@ fn run_verify<E: EthSpec + Serialize, R: StateReader<Spec = E> + StateProvider<S
     host_reader: &R,
     input: Input<E>,
 ) -> anyhow::Result<ConsensusState> {
-    info!("Running Verification in mode: {mode}");
+    info!("Verification mode: {mode}");
 
+    info!("Running preflight");
     let reader = PreflightStateReader::new(host_reader, input.state.finalized_checkpoint);
-    let consensus_state = verify(&reader, input.clone()).unwrap(); // will panic if verification fails
-    info!("Native Verification Success!");
+    let consensus_state = verify(&reader, input.clone()).context("preflight failed")?;
+    info!("Preflight succeeded");
 
     if mode == ExecMode::Ssz || mode == ExecMode::R0vm {
+        info!("Running host verification");
         let state_input = reader.to_input();
-        let ssz_reader = state_input.clone().into_state_reader(&input.state)?;
-        let ssz_consensus_state =
-            verify(&AssertStateReader::new(&ssz_reader, &reader), input.clone()).unwrap(); // will panic if verification fails
-        info!("Ssz Verification Success!");
-        assert_eq!(
-            ssz_consensus_state, consensus_state,
-            "Native and Ssz output mismatch"
-        );
+
+        let state_bytes = bincode::serialize(&state_input).context("failed to serialize state")?;
+        debug!(len = state_bytes.len(), "State serialized");
+        let input_bytes = bincode::serialize(&input).context("failed to serialize input")?;
+        debug!(len = input_bytes.len(), "Input serialized");
+
+        let guest_input: Input<E> =
+            bincode::deserialize(&input_bytes).context("failed to deserialize input")?;
+        let guest_reader = {
+            let state_input: StateInput =
+                bincode::deserialize(&state_bytes).context("failed to deserialize state")?;
+            state_input
+                .into_state_reader(&input.state)
+                .context("failed to create input")?
+        };
+
+        // use the AssertStateReader to detect input issues already on the host
+        let host_consensus_state =
+            verify(&AssertStateReader::new(&guest_reader, &reader), guest_input)
+                .context("host verification failed")?;
+        ensure!(host_consensus_state == consensus_state);
+        info!("Host verification succeeded");
 
         if mode == ExecMode::R0vm {
-            let journal = execute_guest_program(state_input, input);
-            info!("Journal: {:?}", journal);
+            info!("Executing guest verification");
+            let journal = execute_guest_program(state_bytes, input_bytes)
+                .context("guest verification failed")?;
+            // decode the journal
+            let (pre_state, post_state) = journal.split_at(ConsensusState::abi_encoded_size());
+            let pre_state = ConsensusState::abi_decode(pre_state).context("invalid journal")?;
+            let post_state = ConsensusState::abi_decode(post_state).context("invalid journal")?;
+            ensure!(pre_state == input.state);
+            ensure!(post_state == consensus_state);
+            info!("Guest verification succeeded");
         }
     }
 
-    tracing::info!("Consensus state: {:#?}", consensus_state);
+    info!("New consensus state: {:#?}", consensus_state);
 
     Ok(consensus_state)
 }
 
-fn execute_guest_program<E: EthSpec + Serialize>(
-    state_input: StateInput,
-    input: Input<E>,
-) -> Vec<u8> {
-    info!("Executing guest program");
-    let state_input = bincode::serialize(&state_input).unwrap();
-    info!("Serialized SszStateReader: {} bytes", state_input.len());
-    let input = bincode::serialize(&input).unwrap();
-    info!("Serialized Input: {} bytes", input.len());
-    info!("Total Input: {} bytes", state_input.len() + input.len());
+fn execute_guest_program(
+    state: impl AsRef<[u8]>,
+    input: impl AsRef<[u8]>,
+) -> anyhow::Result<Vec<u8>> {
     let env = ExecutorEnv::builder()
-        .write_frame(&state_input)
-        .write_frame(&input)
-        .build()
-        .unwrap();
+        .write_frame(state.as_ref())
+        .write_frame(input.as_ref())
+        .build()?;
     let executor = default_executor();
-    let session_info = executor
-        .execute(env, BEACON_GUEST_ELF)
-        .expect("failed to execute guest program");
-    info!("{} user cycles executed.", session_info.cycles());
-    session_info.journal.bytes
+    let session_info = executor.execute(env, BEACON_GUEST_ELF)?;
+    debug!(cycles = session_info.cycles(), "Session info");
+
+    Ok(session_info.journal.bytes)
 }
 
 fn log_sync(file: &File, from: &ConsensusState, to: &ConsensusState, message: &str) {

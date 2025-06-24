@@ -15,7 +15,7 @@
 use super::StateReader;
 use crate::{
     Checkpoint, ConsensusState, Epoch, PublicKey, RandaoMixIndex, Root, Slot, StatePatch,
-    VALIDATOR_LIST_TREE_DEPTH, VALIDATOR_TREE_DEPTH, ValidatorIndex, ValidatorInfo,
+    ValidatorIndex, ValidatorInfo,
     guest_gindices::{
         activation_eligibility_epoch_gindex, activation_epoch_gindex,
         earliest_consolidation_epoch_gindex, earliest_exit_epoch_gindex, effective_balance_gindex,
@@ -391,7 +391,7 @@ fn extract_validators_multiproof(
                 let (gindex, part_1) = values.next().ok_or(ssz_multiproofs::Error::MissingValue)?;
                 assert_eq!(gindex, public_key_0_gindex(validator_index));
                 let (gindex, part_2) = values.next().ok_or(ssz_multiproofs::Error::MissingValue)?;
-                // assert_eq!(gindex, public_key_1_gindex(validator_index));
+                assert_eq!(gindex, public_key_1_gindex(validator_index));
                 (part_1, part_2)
             };
 

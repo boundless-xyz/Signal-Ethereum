@@ -75,8 +75,6 @@ pub type MaxValidatorsPerSlot = U131072; // 2**11
 pub type MaxCommitteesPerSlot = U64; // 2**6
 pub const BEACON_ATTESTER_DOMAIN: DomainType = 1u32.to_le_bytes();
 pub const VALIDATOR_REGISTRY_LIMIT: u64 = 2u64.pow(40);
-pub const VALIDATOR_LIST_TREE_DEPTH: u32 = VALIDATOR_REGISTRY_LIMIT.ilog2() + 1; // 41
-pub const VALIDATOR_TREE_DEPTH: u32 = 3;
 
 #[serde_as]
 #[derive(Clone, PartialEq, serde::Serialize, serde::Deserialize)]

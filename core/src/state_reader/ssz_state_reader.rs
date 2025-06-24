@@ -15,12 +15,14 @@
 use super::StateReader;
 use crate::{
     Checkpoint, ConsensusState, Epoch, PublicKey, RandaoMixIndex, Root, Slot, StatePatch,
-    VALIDATOR_LIST_TREE_DEPTH, VALIDATOR_TREE_DEPTH, ValidatorIndex, ValidatorInfo,
+    ValidatorIndex, ValidatorInfo,
     guest_gindices::{
-        earliest_consolidation_epoch_gindex, earliest_exit_epoch_gindex,
-        finalized_checkpoint_epoch_gindex, fork_current_version_gindex, fork_epoch_gindex,
-        fork_previous_version_gindex, genesis_validators_root_gindex, slot_gindex,
-        state_root_gindex, validators_gindex,
+        activation_eligibility_epoch_gindex, activation_epoch_gindex,
+        earliest_consolidation_epoch_gindex, earliest_exit_epoch_gindex, effective_balance_gindex,
+        exit_epoch_gindex, finalized_checkpoint_epoch_gindex, fork_current_version_gindex,
+        fork_epoch_gindex, fork_previous_version_gindex, genesis_validators_root_gindex,
+        public_key_0_gindex, public_key_1_gindex, slot_gindex, state_root_gindex,
+        validators_gindex,
     },
     has_compressed_chunks, serde_utils,
 };
@@ -377,12 +379,7 @@ fn extract_validators_multiproof(
             break;
         }
 
-        let validator_base_index: u64 = ((1 << VALIDATOR_LIST_TREE_DEPTH)
-            + (validator_index as u64))
-            * (1 << VALIDATOR_TREE_DEPTH);
-        let exit_epoch_gindex: u64 = validator_base_index + 6;
-
-        if gindex == &exit_epoch_gindex {
+        if gindex == &exit_epoch_gindex(validator_index) {
             let (_, exit_epoch) = values.next().unwrap();
             let exit_epoch = u64_from_chunk(exit_epoch);
 
@@ -391,8 +388,10 @@ fn extract_validators_multiproof(
             let pubkey = pubkeys.next().unwrap();
 
             let pk_compressed = {
-                let (_, part_1) = values.next().ok_or(ssz_multiproofs::Error::MissingValue)?;
-                let (_, part_2) = values.next().ok_or(ssz_multiproofs::Error::MissingValue)?;
+                let (gindex, part_1) = values.next().ok_or(ssz_multiproofs::Error::MissingValue)?;
+                assert_eq!(gindex, public_key_0_gindex(validator_index));
+                let (gindex, part_2) = values.next().ok_or(ssz_multiproofs::Error::MissingValue)?;
+                assert_eq!(gindex, public_key_1_gindex(validator_index));
                 (part_1, part_2)
             };
 
@@ -403,19 +402,23 @@ fn extract_validators_multiproof(
                 pk_compressed.1
             ));
 
-            let (_, effective_balance) =
+            let (gindex, effective_balance) =
                 values.next().ok_or(ssz_multiproofs::Error::MissingValue)?;
+            assert_eq!(gindex, effective_balance_gindex(validator_index));
             let effective_balance = u64_from_chunk(effective_balance);
 
-            let (_, activation_eligibility_epoch) =
+            let (gindex, activation_eligibility_epoch) =
                 values.next().ok_or(ssz_multiproofs::Error::MissingValue)?;
+            assert_eq!(gindex, activation_eligibility_epoch_gindex(validator_index));
             let activation_eligibility_epoch = u64_from_chunk(activation_eligibility_epoch);
 
-            let (_, activation_epoch) =
+            let (gindex, activation_epoch) =
                 values.next().ok_or(ssz_multiproofs::Error::MissingValue)?;
+            assert_eq!(gindex, activation_epoch_gindex(validator_index));
             let activation_epoch = u64_from_chunk(activation_epoch);
 
-            let (_, exit_epoch) = values.next().ok_or(ssz_multiproofs::Error::MissingValue)?;
+            let (gindex, exit_epoch) = values.next().ok_or(ssz_multiproofs::Error::MissingValue)?;
+            assert_eq!(gindex, exit_epoch_gindex(validator_index));
             let exit_epoch = u64_from_chunk(exit_epoch);
 
             let validator_info = ValidatorInfo {

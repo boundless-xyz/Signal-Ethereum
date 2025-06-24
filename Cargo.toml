@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["core", "host", "methods", "ssz-multiproofs", "core/test_utils"]
+members = ["core", "core/test_utils", "host", "methods", "ssz-multiproofs"]
 
 [workspace.package]
 version = "0.1.0"
@@ -24,6 +24,7 @@ overflow-checks = false # Skip overflow checks for better performance
 methods = { path = "./methods" }
 
 alloy-primitives = { version = "0.8.25" }
+alloy-sol-types = { version = "0.8.25" }
 bincode = { version = "1.3" }
 hex = { version = "0.4" }
 bytemuck = { version = "1.14" }

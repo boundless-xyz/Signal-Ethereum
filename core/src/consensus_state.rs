@@ -13,12 +13,10 @@
 // limitations under the License.
 
 use crate::{Checkpoint, Link, ensure};
-use alloy_rlp::{RlpDecodable, RlpEncodable};
+use alloy_sol_types::{SolType, SolValue};
 use thiserror::Error;
 
-#[derive(
-    Debug, Clone, Eq, PartialEq, serde::Serialize, serde::Deserialize, RlpEncodable, RlpDecodable,
-)]
+#[derive(Debug, Clone, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct ConsensusState {
     pub previous_justified_checkpoint: Checkpoint,
     pub current_justified_checkpoint: Checkpoint,
@@ -33,6 +31,65 @@ pub enum StateTransitionError {
     LinkTargetTooLow,
     #[error("Invalid state transition")]
     CannotEvolveState,
+}
+
+mod abi {
+    use alloy_primitives::U256;
+
+    alloy_sol_types::sol! {
+        struct Checkpoint {
+            uint256 epoch;
+            bytes32 root;
+        }
+
+        struct State {
+            Checkpoint previous_justified;
+            Checkpoint current_justified;
+            Checkpoint finalized;
+        }
+    }
+
+    impl From<crate::Checkpoint> for Checkpoint {
+        fn from(value: crate::Checkpoint) -> Self {
+            Self {
+                epoch: U256::from(value.0.epoch.as_u64()),
+                root: value.0.root.into(),
+            }
+        }
+    }
+
+    impl TryFrom<Checkpoint> for crate::Checkpoint {
+        type Error = alloy_primitives::ruint::FromUintError<u64>;
+
+        fn try_from(checkpoint: Checkpoint) -> Result<Self, Self::Error> {
+            Ok(Self(beacon_types::Checkpoint {
+                epoch: crate::Epoch::new(checkpoint.epoch.try_into()?),
+                root: checkpoint.root.into(),
+            }))
+        }
+    }
+
+    impl From<crate::ConsensusState> for State {
+        fn from(value: crate::ConsensusState) -> Self {
+            Self {
+                previous_justified: value.previous_justified_checkpoint.into(),
+                current_justified: value.current_justified_checkpoint.into(),
+                finalized: value.finalized_checkpoint.into(),
+            }
+        }
+    }
+
+    impl TryFrom<State> for crate::ConsensusState {
+        type Error = alloy_primitives::ruint::FromUintError<u64>;
+
+        fn try_from(state: State) -> Result<Self, Self::Error> {
+            Ok(Self {
+                previous_justified_checkpoint: state.previous_justified.try_into()?,
+                current_justified_checkpoint: state.current_justified.try_into()?,
+                finalized_checkpoint: state.finalized.try_into()?,
+            })
+        }
+    }
 }
 
 impl ConsensusState {
@@ -168,6 +225,27 @@ impl ConsensusState {
             }
             _ => Err(StateTransitionError::CannotEvolveState),
         }
+    }
+
+    #[inline]
+    pub const fn abi_encoded_size() -> usize {
+        abi::State::ENCODED_SIZE.unwrap()
+    }
+
+    #[inline]
+    pub fn abi_encode(&self) -> Vec<u8> {
+        abi::State::from(self.clone()).abi_encode()
+    }
+
+    #[inline]
+    pub fn abi_decode(data: &[u8]) -> Result<Self, alloy_sol_types::Error> {
+        let state = <abi::State as SolType>::abi_decode(data, true)?;
+
+        state
+            .try_into()
+            .map_err(|err: alloy_primitives::ruint::FromUintError<_>| {
+                alloy_sol_types::Error::Other(err.to_string().into())
+            })
     }
 }
 

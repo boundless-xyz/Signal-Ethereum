@@ -1,17 +1,3 @@
-// Copyright 2025 RISC Zero, Inc.
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
-
 /// Returns the gindex of slot from BeaconState
 #[inline(always)]
 pub(crate) const fn slot_gindex() -> u64 {
@@ -61,4 +47,41 @@ pub(crate) const fn earliest_consolidation_epoch_gindex() -> u64 {
 #[inline(always)]
 pub(crate) const fn state_root_gindex() -> u64 {
     11u64
+}
+/// Returns the gindex of public_key_0 from Validator i
+#[inline(always)]
+pub(crate) const fn public_key_0_gindex(i: crate::ValidatorIndex) -> u64 {
+    (2199023255552u64 + (i as u64)) * (8u64) * (16u64 / 8u64) + (16u64 % 8u64)
+}
+/// Returns the gindex of public_key_1 from Validator i
+#[inline(always)]
+pub(crate) const fn public_key_1_gindex(i: crate::ValidatorIndex) -> u64 {
+    (2199023255552u64 + (i as u64)) * (8u64) * (17u64 / 8u64) + (17u64 % 8u64)
+}
+/// Returns the gindex of effective_balance from Validator i
+#[inline(always)]
+pub(crate) const fn effective_balance_gindex(i: crate::ValidatorIndex) -> u64 {
+    (2199023255552u64 + (i as u64)) * (8u64) * (10u64 / 8u64) + (10u64 % 8u64)
+}
+/// Returns the gindex of activation_eligibility_epoch from Validator i
+#[inline(always)]
+pub(crate) const fn activation_eligibility_epoch_gindex(
+    i: crate::ValidatorIndex,
+) -> u64 {
+    (2199023255552u64 + (i as u64)) * (8u64) * (12u64 / 8u64) + (12u64 % 8u64)
+}
+/// Returns the gindex of activation_epoch from Validator i
+#[inline(always)]
+pub(crate) const fn activation_epoch_gindex(i: crate::ValidatorIndex) -> u64 {
+    (2199023255552u64 + (i as u64)) * (8u64) * (13u64 / 8u64) + (13u64 % 8u64)
+}
+/// Returns the gindex of exit_epoch from Validator i
+#[inline(always)]
+pub(crate) const fn exit_epoch_gindex(i: crate::ValidatorIndex) -> u64 {
+    (2199023255552u64 + (i as u64)) * (8u64) * (14u64 / 8u64) + (14u64 % 8u64)
+}
+/// Returns the gindex of withdrawable_epoch from Validator i
+#[inline(always)]
+pub(crate) const fn withdrawable_epoch_gindex(i: crate::ValidatorIndex) -> u64 {
+    (2199023255552u64 + (i as u64)) * (8u64) * (15u64 / 8u64) + (15u64 % 8u64)
 }

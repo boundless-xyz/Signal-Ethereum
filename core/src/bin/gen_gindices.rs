@@ -12,9 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use ethereum_consensus::electra::Validator;
+use ethereum_consensus::electra::mainnet::VALIDATOR_REGISTRY_LIMIT;
 use quote::format_ident;
 use quote::quote;
 use ssz_rs::GeneralizedIndexable;
+use ssz_rs::List;
 use ssz_rs::Path;
 use ssz_rs::PathElement;
 use std::fs;
@@ -29,15 +32,17 @@ fn main() {
         .open(dest_filepath)
         .unwrap();
 
-    let state_gindices = beacon_gindices::<z_core::mainnet::ElectraBeaconState>();
-    let block_gindices = block_gindices::<ethereum_consensus::electra::BeaconBlockHeader>();
-
-    let state_fn = gen_guest_gindices_impl(&state_gindices);
-    let block_fn = gen_guest_gindices_impl(&block_gindices);
+    let state_fns =
+        gen_guest_gindices_impl(&beacon_gindices::<z_core::mainnet::ElectraBeaconState>());
+    let block_fns = gen_guest_gindices_impl(&block_gindices::<
+        ethereum_consensus::electra::BeaconBlockHeader,
+    >());
+    let validators_fns = validators_gindices();
 
     let tokens = quote! {
-        #state_fn
-        #block_fn
+        #state_fns
+        #block_fns
+        #validators_fns
     };
 
     let syntax_tree = syn::parse2(tokens).unwrap();
@@ -64,6 +69,62 @@ fn gen_guest_gindices_impl(
 
     quote! {
         #(#gindex_impls)*
+    }
+}
+
+fn validators_gindices() -> proc_macro2::TokenStream {
+    let base_gindex =
+        <List<Validator, VALIDATOR_REGISTRY_LIMIT>>::generalized_index(Path::from(&[0.into()]))
+            .unwrap() as u64;
+    let validators_list_chunk_count =
+        List::<Validator, VALIDATOR_REGISTRY_LIMIT>::chunk_count() as u64;
+    let validator_chunk_count = Validator::chunk_count() as u64;
+
+    // static paths for the Validator
+    let g = [
+        ("public_key_0", Path::from(&["public_key".into(), 0.into()])),
+        (
+            "public_key_1",
+            Path::from(&["public_key".into(), 47.into()]),
+        ),
+        (
+            "effective_balance",
+            Path::from(&["effective_balance".into()]),
+        ),
+        (
+            "activation_eligibility_epoch",
+            Path::from(&["activation_eligibility_epoch".into()]),
+        ),
+        ("activation_epoch", Path::from(&["activation_epoch".into()])),
+        ("exit_epoch", Path::from(&["exit_epoch".into()])),
+        (
+            "withdrawable_epoch",
+            Path::from(&["withdrawable_epoch".into()]),
+        ),
+    ]
+    .map(|(name, path)| gen_gindices::<Validator>(name.to_string(), path))
+    .map(|(name, ret_type, value)| (format!("{name}"), ret_type, quote!(#value)))
+    .to_vec();
+
+    let v: proc_macro2::TokenStream = g
+        .into_iter()
+        .map(|(name, ret_type, value)| {
+            let method_name = format_ident!("{}_gindex", name);
+            let return_type = syn::parse_str::<syn::Type>(&ret_type).unwrap();
+            let comment = format!(" Returns the gindex of {} from Validator i", name);
+            quote! {
+                #[doc = #comment]
+                #[inline(always)]
+                pub(crate) const fn #method_name(i: crate::ValidatorIndex) -> #return_type {
+                   (#base_gindex + (i as u64)) * (#validator_chunk_count) * (#value/#validator_chunk_count) + (#value % #validator_chunk_count)
+                }
+            }
+        })
+        .collect();
+
+    quote! {
+
+        #v
     }
 }
 

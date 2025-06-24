@@ -76,8 +76,7 @@ fn validators_gindices() -> proc_macro2::TokenStream {
     let base_gindex =
         <List<Validator, VALIDATOR_REGISTRY_LIMIT>>::generalized_index(Path::from(&[0.into()]))
             .unwrap() as u64;
-    let validators_list_chunk_count =
-        List::<Validator, VALIDATOR_REGISTRY_LIMIT>::chunk_count() as u64;
+
     let validator_chunk_count = Validator::chunk_count() as u64;
 
     // static paths for the Validator
@@ -109,12 +108,14 @@ fn validators_gindices() -> proc_macro2::TokenStream {
             let return_type = syn::parse_str::<syn::Type>(&ret_type).unwrap();
             let comment = format!(" Returns the gindex of {} from Validator i", name);
             quote! {
-                #[doc = #comment]
-                #[inline(always)]
-                pub(crate) const fn #method_name(i: crate::ValidatorIndex) -> #return_type {
-                   (#base_gindex + (i as u64)) * (#validator_chunk_count) * (#value/#validator_chunk_count) + (#value % #validator_chunk_count)
+                    #[doc = #comment]
+                    #[inline(always)]
+                    pub(crate) const fn #method_name(i: crate::ValidatorIndex) -> #return_type {
+                        const CHUNK_OFFSET: u64 = #value / #validator_chunk_count;
+                        const WITHIN_CHUNK: u64 = #value % #validator_chunk_count;
+                        (#base_gindex + (i as u64)) * #validator_chunk_count * CHUNK_OFFSET + WITHIN_CHUNK
+                    }
                 }
-            }
         })
         .collect();
 

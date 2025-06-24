@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use risc0_zkvm::guest::env;
-use z_core::{Input, MainnetEthSpec, Output, StateInput, verify};
+use z_core::{Input, MainnetEthSpec, StateInput, verify};
 
 type Spec = MainnetEthSpec;
 fn main() {
@@ -52,9 +52,6 @@ fn main() {
     let post_state = verify(&state_reader, input).unwrap();
 
     // write public output to the journal
-    let output = Output {
-        pre_state,
-        post_state,
-    };
-    env::commit_slice(&output.abi_encode())
+    env::commit_slice(&pre_state.abi_encode());
+    env::commit_slice(&post_state.abi_encode());
 }

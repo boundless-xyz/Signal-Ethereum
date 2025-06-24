@@ -722,6 +722,45 @@ async fn finalize_with_validator_activation_and_delayed_finality() {
     test_zkasper_sync(&harness, consensus_state).await.unwrap();
 }
 
+/// This test builds a chain that is just long enough to finalize an epoch
+/// given 100% validator participation
+#[tokio::test]
+async fn handle_skipped_first_slot_of_epoch() {
+    let spec = get_spec();
+    let harness = get_harness(KEYPAIRS[..].to_vec(), spec, Slot::new(224)).await;
+
+    // Grab our bootstrap consensus state from there
+    let head_state = harness.chain.head_beacon_state_cloned();
+    let consensus_state = consensus_state_from_state(&head_state);
+    println!("Current slot: {}", head_state.slot());
+    println!("Pre consensus state: {:?}", consensus_state);
+
+    let target_chain_length = harness.get_current_slot().as_u64() + harness.slots_per_epoch() * 3;
+
+    let skipped_slots = [256];
+
+    // Build a chain with some skip slots.
+    while harness.get_current_slot().as_u64() < target_chain_length {
+        let slot = harness.chain.slot().unwrap().as_u64();
+
+        if !skipped_slots.contains(&slot) {
+            harness
+                .extend_chain(
+                    1,
+                    BlockStrategy::OnCanonicalHead,
+                    AttestationStrategy::AllValidators,
+                )
+                .await;
+        } else {
+            println!("Skipping slot: {}", slot);
+        }
+
+        harness.advance_slot();
+    }
+
+    test_zkasper_sync(&harness, consensus_state).await.unwrap();
+}
+
 async fn process_block(
     harness: &TestHarness,
     mut block: SignedBlockContentsTuple<MainnetEthSpec>,

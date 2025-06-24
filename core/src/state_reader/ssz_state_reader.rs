@@ -17,9 +17,10 @@ use crate::{
     Checkpoint, ConsensusState, Epoch, PublicKey, RandaoMixIndex, Root, Slot, StatePatch,
     VALIDATOR_LIST_TREE_DEPTH, VALIDATOR_TREE_DEPTH, ValidatorIndex, ValidatorInfo,
     guest_gindices::{
+        earliest_consolidation_epoch_gindex, earliest_exit_epoch_gindex,
         finalized_checkpoint_epoch_gindex, fork_current_version_gindex, fork_epoch_gindex,
         fork_previous_version_gindex, genesis_validators_root_gindex, slot_gindex,
-        validators_gindex,
+        state_root_gindex, validators_gindex,
     },
     has_compressed_chunks, serde_utils,
 };
@@ -59,7 +60,7 @@ pub struct StateInput<'a> {
 pub struct SszStateReader<E: EthSpec> {
     spec: ChainSpec,
 
-    // beacon state fields
+    // verified beacon state fields
     genesis_validators_root: B256,
     fork: Fork,
     validators: BTreeMap<ValidatorIndex, ValidatorInfo>,
@@ -68,6 +69,18 @@ pub struct SszStateReader<E: EthSpec> {
     patches: BTreeMap<Epoch, StatePatch>,
 
     _phantom: PhantomData<E>,
+}
+
+/// Subset of the beacon state that is relevant for the verification.
+#[derive(Clone, Debug)]
+struct StateInfo {
+    genesis_validators_root: B256,
+    slot: Slot,
+    fork: Fork,
+    validators_root: B256,
+    finalized_checkpoint_epoch: Epoch,
+    earliest_exit_epoch: Epoch,
+    earliest_consolidation_epoch: Epoch,
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -100,35 +113,37 @@ impl StateInput<'_> {
         // always use the default spec
         let spec = E::default_spec();
 
+        // the finalized checkpoint is the only state we can trust
+        let trusted_checkpoint = consensus_state.finalized_checkpoint;
+
         // check that the beacon block proofs correspond to the finalized epoch boundary
         self.beacon_block
-            .verify(&consensus_state.finalized_checkpoint.root())
+            .verify(&trusted_checkpoint.root())
             .context("Beacon block root mismatch")?;
         // extract the proven state root from the beacon block
         let state_root = extract_beacon_block_multiproof(&self.beacon_block)
-            .context("Failed to extract beacon block multiproof")?;
+            .context("Failed to extract beacon block proof")?;
 
         // check that the beacon state proofs correspond to the state of the beacon block
         self.beacon_state
             .verify(&state_root)
             .context("Beacon state root mismatch")?;
-        let (genesis_validators_root, slot, fork, validators_root, finalized_checkpoint_epoch) =
-            extract_beacon_state_multiproof(&self.beacon_state)
-                .context("Failed to extract beacon block multiproof")?;
+        let state = extract_beacon_state_multiproof(&self.beacon_state)
+            .context("Failed to extract beacon block proof")?;
 
         // check that the validator proofs correspond to the validators root of the beacon state
         self.active_validators
-            .verify(&validators_root)
+            .verify(&state.validators_root)
             .context("Validators root mismatch")?;
         // validator list inclusion proofs
         let mut validators = extract_validators_multiproof(
             &self.active_validators,
             mem::take(&mut self.public_keys),
-            consensus_state.finalized_checkpoint.epoch(),
+            trusted_checkpoint.epoch(),
         )
-        .context("Failed to extract validators multiproof")?;
+        .context("Failed to extract validators proof")?;
 
-        let state_epoch = slot.epoch(E::slots_per_epoch());
+        let state_epoch = state.slot.epoch(E::slots_per_epoch());
         let current_justified_epoch = consensus_state.current_justified_checkpoint.epoch();
 
         // Our trusted state is from `slot`, but our consensus state is at
@@ -139,22 +154,21 @@ impl StateInput<'_> {
             let epoch = Epoch::from(epoch);
             // By definition, we know that the next finalization will happen at the
             // `current_justified_checkpoint`.
-            let finalized_checkpoint_epoch =
-                if epoch < consensus_state.current_justified_checkpoint.epoch() {
-                    finalized_checkpoint_epoch
-                } else {
-                    consensus_state.finalized_checkpoint.epoch()
-                };
+            let finalized_checkpoint_epoch = if epoch < current_justified_epoch {
+                state.finalized_checkpoint_epoch
+            } else {
+                trusted_checkpoint.epoch()
+            };
 
             process_registry_updates(&spec, &mut validators, finalized_checkpoint_epoch, epoch);
         }
 
-        self.validate_state_patches(&spec, consensus_state.finalized_checkpoint, &validators);
+        self.validate_state_patches(&spec, &trusted_checkpoint, &state, &validators);
 
         Ok(SszStateReader {
             spec,
-            genesis_validators_root,
-            fork,
+            genesis_validators_root: state.genesis_validators_root,
+            fork: state.fork,
             validators,
             patches: self.patches,
             _phantom: PhantomData,
@@ -164,7 +178,8 @@ impl StateInput<'_> {
     fn validate_state_patches(
         &self,
         spec: &ChainSpec,
-        trusted_checkpoint: Checkpoint,
+        trusted_checkpoint: &Checkpoint,
+        state: &StateInfo,
         validators: &BTreeMap<ValidatorIndex, ValidatorInfo>,
     ) {
         // get the total active balance at the trusted checkpoint
@@ -178,16 +193,16 @@ impl StateInput<'_> {
         // twice the churn limit seams reasonable ¯\_(ツ)_/¯
         let churn = 2 * get_balance_churn_limit(spec, total_active_balance);
 
-        // find the maximum exit_epoch at the trust checkpoint
-        // this should be equal to state.earliest_exit_epoch + state.earliest_consolidation_epoch
-        let max_exit_epoch = validators
-            .iter()
-            .filter_map(|(_, v)| (v.exit_epoch != spec.far_future_epoch).then_some(v.exit_epoch))
-            .max()
-            .unwrap_or_default();
+        // we cannot distinguish between exits and consolidations, so we have to take the minimum
+        let earliest_exit_epoch = std::cmp::min(
+            state.earliest_exit_epoch,
+            state.earliest_consolidation_epoch,
+        );
+
         // New exits (consolidations) can only occur with a new block. The earliest this can happen
         // is during the trusted epoch after the boundary block of the epoch.
-        let mut earliest_exit_epoch = max_exit_epoch.max(
+        let mut earliest_exit_epoch = std::cmp::max(
+            earliest_exit_epoch,
             spec.compute_activation_exit_epoch(trusted_checkpoint.epoch())
                 .unwrap(),
         );
@@ -287,7 +302,7 @@ impl<E: EthSpec> StateReader for SszStateReader<E> {
     }
 }
 
-/// Extracts the relevant fields from the inclusion proof of the beacon block.
+/// Extracts the relevant fields from the beacon block [Multiproof].
 ///
 /// Currently, includes:
 /// - state_root
@@ -295,25 +310,20 @@ fn extract_beacon_block_multiproof(
     beacon_block: &Multiproof<'_>,
 ) -> Result<B256, ssz_multiproofs::Error> {
     let mut values = beacon_block.values();
-    // TODO: Make index constant
-    let state_root: &[u8; 32] = values.next_assert_gindex(11)?;
+
+    let state_root: &[u8; 32] = values.next_assert_gindex(state_root_gindex())?;
 
     assert!(values.next().is_none());
 
     Ok(state_root.into())
 }
 
-/// Extracts the relevant fields from the multiproof of the BeaconState.
-///
-/// Currently, includes:
-/// - genesis_validators_root
-/// - fork
-/// - validators_root
-/// - finalized_checkpoint.epoch
+/// Extracts the [StateInfo] from the beacon state [Multiproof].
 fn extract_beacon_state_multiproof(
     beacon_state: &Multiproof<'_>,
-) -> Result<(B256, Slot, Fork, B256, Epoch), ssz_multiproofs::Error> {
+) -> Result<StateInfo, ssz_multiproofs::Error> {
     let mut values = beacon_state.values();
+
     let genesis_validators_root = values.next_assert_gindex(genesis_validators_root_gindex())?;
     let slot = values.next_assert_gindex(slot_gindex())?;
     let fork_previous_version = values.next_assert_gindex(fork_previous_version_gindex())?;
@@ -327,23 +337,28 @@ fn extract_beacon_state_multiproof(
     let validators_root = values.next_assert_gindex(validators_gindex())?;
     let finalized_checkpoint_epoch =
         values.next_assert_gindex(finalized_checkpoint_epoch_gindex())?;
+    let earliest_exit_epoch = values.next_assert_gindex(earliest_exit_epoch_gindex())?;
+    let earliest_consolidation_epoch =
+        values.next_assert_gindex(earliest_consolidation_epoch_gindex())?;
 
     assert!(values.next().is_none());
 
-    Ok((
-        genesis_validators_root.into(),
-        u64_from_chunk(slot).into(),
+    Ok(StateInfo {
+        genesis_validators_root: genesis_validators_root.into(),
+        slot: u64_from_chunk(slot).into(),
         fork,
-        validators_root.into(),
-        u64_from_chunk(finalized_checkpoint_epoch).into(),
-    ))
+        validators_root: validators_root.into(),
+        finalized_checkpoint_epoch: u64_from_chunk(finalized_checkpoint_epoch).into(),
+        earliest_exit_epoch: u64_from_chunk(earliest_exit_epoch).into(),
+        earliest_consolidation_epoch: u64_from_chunk(earliest_consolidation_epoch).into(),
+    })
 }
 
-/// Extracts the not-exited validators from the multiproof of the Validators.
+/// Extracts the not-exited validators from the validators [Multiproof].
 ///
-/// The multiproof contains the compressed public key which is checked against the public key in the
+/// The proof contains the compressed public key which is checked against the public key in the
 /// `public_keys` vector which is in the uncompressed form.
-/// It contains the `ValidatorInfo` of non-exited validators and only the exit_epoch for exited.
+/// It contains the `ValidatorInfo` of non-exited validators and only the `exit_epoch` for exited.
 fn extract_validators_multiproof(
     validators: &Multiproof<'_>,
     public_keys: Vec<PublicKey>,

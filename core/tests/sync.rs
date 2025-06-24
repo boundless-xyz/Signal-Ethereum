@@ -83,23 +83,7 @@ async fn test_zkasper_sync(
         let builder = InputBuilder::new(harness);
         match builder.build(consensus_state.finalized_checkpoint).await {
             Ok((input, _)) => {
-                println!(
-                    "Attestors per link: {:?}",
-                    input
-                        .links
-                        .iter()
-                        .zip(input.attestations.iter())
-                        .map(|(link, attestations)| {
-                            (
-                                link,
-                                attestations
-                                    .iter()
-                                    .map(|a| a.aggregation_bits_electra().iter().count())
-                                    .sum::<usize>(),
-                            )
-                        })
-                        .collect::<Vec<_>>()
-                );
+                dbg!(&input);
 
                 // Perform a preflight verification to record the state reads
                 _ = verify(&preflight_state_reader, input.clone())?;

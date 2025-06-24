@@ -251,13 +251,15 @@ fn run_verify<E: EthSpec + Serialize, R: StateReader<Spec = E> + StateProvider<S
 ) -> anyhow::Result<ConsensusState> {
     info!("Running Verification in mode: {mode}");
 
-    let reader = PreflightStateReader::new(host_reader, input.state.finalized_checkpoint);
+    let reader = PreflightStateReader::new(host_reader, input.consensus_state.finalized_checkpoint);
     let consensus_state = verify(&reader, input.clone()).unwrap(); // will panic if verification fails
     info!("Native Verification Success!");
 
     if mode == ExecMode::Ssz || mode == ExecMode::R0vm {
         let state_input = reader.to_input();
-        let ssz_reader = state_input.clone().into_state_reader(&input.state)?;
+        let ssz_reader = state_input
+            .clone()
+            .into_state_reader(&input.consensus_state)?;
         let ssz_consensus_state =
             verify(&AssertStateReader::new(&ssz_reader, &reader), input.clone()).unwrap(); // will panic if verification fails
         info!("Ssz Verification Success!");

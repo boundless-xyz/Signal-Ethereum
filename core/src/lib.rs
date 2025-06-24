@@ -20,7 +20,7 @@ use alloy_primitives::B256;
 use alloy_rlp::{Decodable, Encodable, RlpDecodable, RlpEncodable};
 use beacon_types::{ChainSpec, EthSpec, PublicKey};
 use core::fmt;
-use core::fmt::Display;
+use core::fmt::{Display, Formatter};
 use serde::{Deserializer, Serializer};
 use serde_with::serde_as;
 use std::collections::HashMap;
@@ -49,7 +49,6 @@ pub use committee_cache::*;
 pub use consensus_state::*;
 #[cfg(feature = "host")]
 pub use input_builder::*;
-use ssz_types::typenum::{U64, U131072};
 pub use state_patch::*;
 pub use state_reader::*;
 pub use threshold::*;
@@ -67,13 +66,8 @@ pub type RandaoMixIndex = u64;
 pub type Root = B256;
 pub type Version = [u8; 4];
 pub type ForkDigest = [u8; 4];
-pub type Domain = B256;
-pub type DomainType = [u8; 4];
 
 // Mainnet constants
-pub type MaxValidatorsPerSlot = U131072; // 2**11
-pub type MaxCommitteesPerSlot = U64; // 2**6
-pub const BEACON_ATTESTER_DOMAIN: DomainType = 1u32.to_le_bytes();
 pub const VALIDATOR_REGISTRY_LIMIT: u64 = 2u64.pow(40);
 pub const VALIDATOR_LIST_TREE_DEPTH: u32 = VALIDATOR_REGISTRY_LIMIT.ilog2() + 1; // 41
 pub const VALIDATOR_TREE_DEPTH: u32 = 3;
@@ -81,11 +75,9 @@ pub const VALIDATOR_TREE_DEPTH: u32 = 3;
 #[serde_as]
 #[derive(Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Input<E: EthSpec> {
-    pub state: ConsensusState,
-    pub links: Vec<Link>,
-
-    #[serde_as(as = "Vec<Vec<DiskAttestation>>")]
-    pub attestations: Vec<Vec<Attestation<E>>>,
+    pub consensus_state: ConsensusState,
+    #[serde_as(as = "Vec<DiskAttestation>")]
+    pub attestations: Vec<Attestation<E>>,
 }
 
 #[derive(Clone, serde::Serialize, serde::Deserialize, RlpEncodable, RlpDecodable)]
@@ -103,16 +95,14 @@ impl Output {
 
 impl<E: EthSpec> fmt::Debug for Input<E> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let mut by_source: HashMap<Checkpoint, usize> = HashMap::new();
-        for attestation in self.attestations.iter().flatten() {
-            *by_source
-                .entry(attestation.data().source.into())
-                .or_default() += 1;
+        let mut by_target: HashMap<_, usize> = HashMap::new();
+        for attestation in self.attestations.iter() {
+            *by_target.entry(&attestation.data().target).or_default() += 1;
         }
 
         f.debug_struct("Input")
-            .field("state", &self.state)
-            .field("attestations", &by_source)
+            .field("consensus_state", &self.consensus_state)
+            .field("attestations", &by_target)
             .finish()
     }
 }
@@ -124,6 +114,13 @@ pub struct ValidatorInfo {
     pub activation_eligibility_epoch: Epoch,
     pub activation_epoch: Epoch,
     pub exit_epoch: Epoch,
+}
+
+impl AsRef<ValidatorInfo> for ValidatorInfo {
+    #[inline]
+    fn as_ref(&self) -> &ValidatorInfo {
+        self
+    }
 }
 
 impl ValidatorInfo {
@@ -293,10 +290,16 @@ impl From<Checkpoint> for beacon_types::Checkpoint {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Link {
     pub source: Checkpoint,
     pub target: Checkpoint,
+}
+
+impl Display for Link {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "{}->{}", self.source, self.target)
+    }
 }
 
 #[cfg(feature = "host")]
@@ -343,16 +346,12 @@ mod tests {
         .unwrap();
 
         let input = Input::<MainnetEthSpec> {
-            state: ConsensusState {
+            consensus_state: ConsensusState {
                 previous_justified_checkpoint: Checkpoint(checkpoint(&mut unstructured)),
                 current_justified_checkpoint: Checkpoint(checkpoint(&mut unstructured)),
                 finalized_checkpoint: Checkpoint(checkpoint(&mut unstructured)),
             },
-            links: vec![Link {
-                source: Checkpoint(checkpoint(&mut unstructured)),
-                target: Checkpoint(checkpoint(&mut unstructured)),
-            }],
-            attestations: vec![vec![attestation]],
+            attestations: vec![attestation],
         };
 
         let bytes = bincode::serialize(&input).unwrap();

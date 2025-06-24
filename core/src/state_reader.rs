@@ -17,8 +17,6 @@ use alloy_primitives::B256;
 use alloy_primitives::aliases::B32;
 use beacon_types::{ChainSpec, EthSpec};
 use sha2::Digest;
-use std::cmp::max;
-use thiserror::Error;
 
 #[cfg(feature = "host")]
 mod host_state_reader;
@@ -31,12 +29,6 @@ mod state_provider;
 #[cfg(feature = "host")]
 pub use self::{host_state_reader::*, preflight_state_reader::*, state_provider::*};
 pub use ssz_state_reader::*;
-
-#[derive(Error, Debug)]
-pub enum StateReaderError {
-    #[error("any")]
-    Any,
-}
 
 pub trait StateReader {
     type Error: std::error::Error;
@@ -74,14 +66,6 @@ pub trait StateReader {
             .expect("randao_mix should be present"))
     }
 
-    /// Return the sequence of active validator indices at `epoch`.
-    fn get_active_validator_indices(
-        &self,
-        epoch: Epoch,
-    ) -> Result<impl Iterator<Item = ValidatorIndex>, Self::Error> {
-        Ok(self.active_validators(epoch)?.map(|(index, _)| index))
-    }
-
     /// Return the seed at `epoch`.
     fn get_seed(&self, epoch: Epoch, domain_type: B32) -> Result<B256, Self::Error> {
         // the seed for epoch is based on the RANDAO from the epoch MIN_SEED_LOOKAHEAD + 1 ago
@@ -105,19 +89,25 @@ pub trait StateReader {
 
         Ok(<[u8; 32]>::from(h.finalize()).into())
     }
-
-    /// Return the combined effective balance of the active validators.
-    fn get_total_active_balance(&self, epoch: Epoch) -> Result<u64, Self::Error> {
-        Ok(max(
-            self.chain_spec().effective_balance_increment,
-            self.active_validators(epoch)?
-                .map(|(_, validator)| validator.effective_balance)
-                .sum(),
-        ))
-    }
 }
 
-#[inline]
-pub fn uint64_to_bytes(n: u64) -> [u8; 8] {
+/// Returns the combined effective balance of the `validators`.
+///
+/// See: https://github.com/ethereum/consensus-specs/blob/dev/specs/phase0/beacon-chain.md#get_total_balance
+pub fn get_total_balance<I>(spec: &ChainSpec, validators: I) -> u64
+where
+    I: IntoIterator,
+    I::Item: AsRef<ValidatorInfo>,
+{
+    // math safe up to ~10B ETH
+    let sum = validators
+        .into_iter()
+        .map(|v| v.as_ref().effective_balance)
+        .sum();
+
+    std::cmp::max(spec.effective_balance_increment, sum)
+}
+
+fn uint64_to_bytes(n: u64) -> [u8; 8] {
     n.to_le_bytes()
 }

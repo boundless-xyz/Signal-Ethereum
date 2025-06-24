@@ -86,6 +86,8 @@ where
                 .with_path::<ElectraBeaconState>(&["fork".into(), "epoch".into()])
                 .with_path::<ElectraBeaconState>(&["validators".into()])
                 .with_path::<ElectraBeaconState>(&["finalized_checkpoint".into(), "epoch".into()])
+                .with_path::<ElectraBeaconState>(&["earliest_exit_epoch".into()])
+                .with_path::<ElectraBeaconState>(&["earliest_consolidation_epoch".into()])
                 .build(state)
                 .unwrap(),
             _ => {
@@ -105,6 +107,7 @@ where
         proof_builder = proof_builder.with_path::<Validators>(&[PathElement::Length]);
 
         for (idx, validator) in trusted_state.validators().iter().enumerate() {
+            // if the validator is no longer active only include its exit_epoch field
             if self.trusted_checkpoint.epoch().as_u64() >= validator.exit_epoch {
                 proof_builder =
                     proof_builder.with_path::<Validators>(&[idx.into(), "exit_epoch".into()]);

@@ -407,6 +407,9 @@ fn extract_validators_multiproof(
             assert_eq!(gindex, effective_balance_gindex(validator_index));
             let effective_balance = u64_from_chunk(effective_balance);
 
+            let (_, slashed) = values.next().ok_or(ssz_multiproofs::Error::MissingValue)?;
+            let slashed = slashed != &[0; 32];
+
             let (gindex, activation_eligibility_epoch) =
                 values.next().ok_or(ssz_multiproofs::Error::MissingValue)?;
             assert_eq!(gindex, activation_eligibility_epoch_gindex(validator_index));
@@ -424,6 +427,7 @@ fn extract_validators_multiproof(
             let validator_info = ValidatorInfo {
                 pubkey,
                 effective_balance,
+                slashed,
                 activation_eligibility_epoch: activation_eligibility_epoch.into(),
                 activation_epoch: activation_epoch.into(),
                 exit_epoch: exit_epoch.into(),

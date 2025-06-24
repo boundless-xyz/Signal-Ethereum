@@ -108,23 +108,24 @@ pub fn verify<S: StateReader>(
                             .collect()
                     });
 
-                let attesting_validators = attesting_indices
+                let unslashed_attesting_validators = attesting_indices
                     .iter()
                     .map(|i| {
                         state_validators
                             .get(i)
                             .ok_or(VerifyError::MissingValidatorInfo(*i))
                     })
+                    .filter(|v| v.as_ref().is_ok_and(|v| !v.slashed))
                     .collect::<Result<Vec<_>, _>>()?;
 
-                let attesting_balance = attesting_validators
+                let attesting_balance = unslashed_attesting_validators
                     .iter()
                     .fold(0u64, |acc, e| acc + e.effective_balance);
 
                 ensure!(
                     is_valid_indexed_attestation(
                         state_reader,
-                        attesting_validators.into_iter(),
+                        unslashed_attesting_validators.into_iter(),
                         data,
                         attestation.signature(),
                     )?,

@@ -1,3 +1,17 @@
+// Copyright 2025 RISC Zero, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /// Returns the gindex of slot from BeaconState
 #[inline(always)]
 pub(crate) const fn slot_gindex() -> u64 {
@@ -71,9 +85,7 @@ pub(crate) const fn effective_balance_gindex(i: crate::ValidatorIndex) -> u64 {
 }
 /// Returns the gindex of activation_eligibility_epoch from Validator i
 #[inline(always)]
-pub(crate) const fn activation_eligibility_epoch_gindex(
-    i: crate::ValidatorIndex,
-) -> u64 {
+pub(crate) const fn activation_eligibility_epoch_gindex(i: crate::ValidatorIndex) -> u64 {
     const CHUNK_OFFSET: u64 = 12u64 / 8u64;
     const WITHIN_CHUNK: u64 = 12u64 % 8u64;
     (2199023255552u64 + (i as u64)) * 8u64 * CHUNK_OFFSET + WITHIN_CHUNK

@@ -176,7 +176,7 @@ fn is_valid_indexed_attestation<'a, S: StateReader>(
     if pubkeys.is_empty() {
         return Ok(false);
     }
-    let domain = S::Spec::default_spec().get_domain(
+    let domain = state_reader.chain_spec().get_domain(
         data.target.epoch,
         beacon_types::Domain::BeaconAttester,
         &state_reader
@@ -212,10 +212,11 @@ pub fn get_shufflings_for_epoch<S: StateReader>(
             .get_active_validator_indices(epoch)
             .map_err(|e| VerifyError::StateReaderError(e.to_string()))?
             .count(),
-        &S::Spec::default_spec(),
+        state_reader.chain_spec(),
     )? as u64;
 
     CommitteeCache::initialized(
+        state_reader.chain_spec(),
         ShuffleData {
             seed,
             indices,

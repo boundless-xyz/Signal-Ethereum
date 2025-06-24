@@ -114,16 +114,16 @@ pub fn consensus_state_from_state(
 ) -> ConsensusState {
     ConsensusState {
         finalized_checkpoint: z_core::Checkpoint::new(
-            state.finalized_checkpoint().epoch.into(),
-            state.finalized_checkpoint().root.clone(),
+            state.finalized_checkpoint().epoch,
+            state.finalized_checkpoint().root,
         ),
         current_justified_checkpoint: z_core::Checkpoint::new(
-            state.current_justified_checkpoint().epoch.into(),
-            state.current_justified_checkpoint().root.clone(),
+            state.current_justified_checkpoint().epoch,
+            state.current_justified_checkpoint().root,
         ),
         previous_justified_checkpoint: z_core::Checkpoint::new(
-            state.previous_justified_checkpoint().epoch.into(),
-            state.previous_justified_checkpoint().root.clone(),
+            state.previous_justified_checkpoint().epoch,
+            state.previous_justified_checkpoint().root,
         ),
     }
 }

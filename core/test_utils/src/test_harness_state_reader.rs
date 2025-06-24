@@ -65,7 +65,7 @@ impl<T: BeaconChainTypes> StateProvider for &TestHarness<T> {
         let state = self
             .0
             .chain
-            .state_at_slot(slot.into(), StateSkipConfig::WithStateRoots)
+            .state_at_slot(slot, StateSkipConfig::WithStateRoots)
             .map_err(|e| anyhow!("Failed to get state: {:?}", e))?;
         Ok(convert_via_json(state).unwrap())
     }
@@ -87,7 +87,7 @@ impl<T: BeaconChainTypes> ChainReader for &TestHarness<T> {
         .map_err(|err| anyhow::anyhow!("Failed to get block: {:?}", err))?;
 
         match block {
-            Some(block) => Ok(convert_via_json(&block.signed_block_header())?),
+            Some(block) => Ok(convert_via_json(block.signed_block_header())?),
             None => Ok(None),
         }
     }
@@ -178,7 +178,7 @@ impl FromStr for SlotOrRoot {
     type Err = anyhow::Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        if let Ok(slot) = u64::from_str_radix(s, 10) {
+        if let Ok(slot) = s.parse::<u64>() {
             Ok(SlotOrRoot::Slot(slot))
         } else if let Ok(root) = Hash256::from_str(s) {
             Ok(SlotOrRoot::Root(root))
@@ -195,16 +195,16 @@ pub fn consensus_state_from_state<T: EthSpec>(
 ) -> ConsensusState {
     ConsensusState {
         finalized_checkpoint: z_core::Checkpoint::new(
-            state.finalized_checkpoint().epoch.into(),
-            state.finalized_checkpoint().root.clone(),
+            state.finalized_checkpoint().epoch,
+            state.finalized_checkpoint().root,
         ),
         current_justified_checkpoint: z_core::Checkpoint::new(
-            state.current_justified_checkpoint().epoch.into(),
-            state.current_justified_checkpoint().root.clone(),
+            state.current_justified_checkpoint().epoch,
+            state.current_justified_checkpoint().root,
         ),
         previous_justified_checkpoint: z_core::Checkpoint::new(
-            state.previous_justified_checkpoint().epoch.into(),
-            state.previous_justified_checkpoint().root.clone(),
+            state.previous_justified_checkpoint().epoch,
+            state.previous_justified_checkpoint().root,
         ),
     }
 }

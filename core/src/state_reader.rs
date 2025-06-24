@@ -15,7 +15,7 @@
 use crate::{Epoch, RandaoMixIndex, Root, ValidatorIndex, ValidatorInfo};
 use alloy_primitives::B256;
 use alloy_primitives::aliases::B32;
-use beacon_types::EthSpec;
+use beacon_types::{ChainSpec, EthSpec};
 use sha2::Digest;
 use std::cmp::max;
 use thiserror::Error;
@@ -41,6 +41,8 @@ pub enum StateReaderError {
 pub trait StateReader {
     type Error: std::error::Error;
     type Spec: EthSpec;
+
+    fn chain_spec(&self) -> &ChainSpec;
 
     /// Return `state.genesis_validators_root`.
     fn genesis_validators_root(&self) -> Result<Root, Self::Error>;
@@ -89,7 +91,7 @@ pub trait StateReader {
                 .as_u64()
                 .checked_add(
                     Self::Spec::epochs_per_historical_vector() as u64
-                        - Self::Spec::default_spec().min_seed_lookahead.as_u64()
+                        - self.chain_spec().min_seed_lookahead.as_u64()
                         - 1,
                 )
                 .unwrap()
@@ -107,7 +109,7 @@ pub trait StateReader {
     /// Return the combined effective balance of the active validators.
     fn get_total_active_balance(&self, epoch: Epoch) -> Result<u64, Self::Error> {
         Ok(max(
-            Self::Spec::default_spec().effective_balance_increment,
+            self.chain_spec().effective_balance_increment,
             self.active_validators(epoch)?
                 .map(|(_, validator)| validator.effective_balance)
                 .sum(),

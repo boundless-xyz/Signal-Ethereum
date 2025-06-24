@@ -18,7 +18,7 @@ use crate::{
     state_reader::state_provider::FileProvider,
 };
 use alloy_primitives::B256;
-use beacon_types::{EthSpec, Fork};
+use beacon_types::{ChainSpec, EthSpec, Fork};
 use elsa::FrozenMap;
 use ethereum_consensus::phase0::Validator;
 use ssz_rs::prelude::*;
@@ -45,6 +45,7 @@ pub enum HostReaderError {
 }
 
 pub struct HostStateReader<P> {
+    spec: ChainSpec,
     provider: P,
     validator_cache: FrozenMap<Epoch, Vec<(ValidatorIndex, ValidatorInfo)>>,
 }
@@ -52,6 +53,7 @@ pub struct HostStateReader<P> {
 impl<P: StateProvider> HostStateReader<P> {
     pub fn new(provider: P) -> Self {
         Self {
+            spec: P::Spec::default_spec(),
             provider,
             validator_cache: Default::default(),
         }
@@ -80,6 +82,10 @@ impl<P: StateProvider> StateProvider for HostStateReader<P> {
 impl<P: StateProvider> StateReader for HostStateReader<P> {
     type Error = HostReaderError;
     type Spec = P::Spec;
+
+    fn chain_spec(&self) -> &ChainSpec {
+        &self.spec
+    }
 
     fn genesis_validators_root(&self) -> Result<Root, HostReaderError> {
         Ok(self.provider.genesis_validators_root()?)

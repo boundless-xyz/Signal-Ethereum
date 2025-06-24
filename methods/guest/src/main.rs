@@ -39,7 +39,7 @@ fn main() {
         ));
 
         env::log("Verify and Cache SszStateReader");
-        state_input.into_state_reader(input.state.finalized_checkpoint)
+        state_input.into_state_reader(&input.state)
     }
     .unwrap();
 

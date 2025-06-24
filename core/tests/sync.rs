@@ -79,11 +79,9 @@ async fn test_zkasper_sync(
                 .count()
         );
 
-        let trusted_checkpoint = consensus_state.finalized_checkpoint;
-
         // Build the input and verify it
         let builder = InputBuilder::new(harness);
-        match builder.build(trusted_checkpoint).await {
+        match builder.build(consensus_state.finalized_checkpoint).await {
             Ok((input, _)) => {
                 println!(
                     "Attestors per link: {:?}",
@@ -109,7 +107,7 @@ async fn test_zkasper_sync(
                 // build a self-contained SSZ reader
                 let ssz_state_reader = preflight_state_reader
                     .to_input()
-                    .into_state_reader(trusted_checkpoint)
+                    .into_state_reader(&consensus_state)
                     .expect("Failed to convert to SSZ state reader");
                 // Merge into a single AssertStateReader that ensures identical data returned for each read
                 let assert_sr = AssertStateReader::new(&state_reader, &ssz_state_reader);
@@ -329,7 +327,7 @@ async fn finalize_after_one_empty_epoch() {
 #[test(tokio::test)]
 async fn finalize_after_inactivity_leak() {
     let spec = get_spec();
-    let mut harness = get_harness(KEYPAIRS[..].to_vec(), spec.clone(), Slot::new(224)).await;
+    let harness = get_harness(KEYPAIRS[..].to_vec(), spec.clone(), Slot::new(224)).await;
 
     // Grab our bootstrap consensus state from there
     let head_state = harness.chain.head_beacon_state_cloned();
@@ -348,7 +346,7 @@ async fn finalize_after_inactivity_leak() {
     // progress the chain with less than 2/3rds participation
     // this should result in an inactivity leak
     advance_non_finalizing(
-        &mut harness,
+        &harness,
         Epochs(target_epoch.as_u64() - current_epoch.as_u64()),
     )
     .await
@@ -357,7 +355,7 @@ async fn finalize_after_inactivity_leak() {
     assert!(
         harness
             .get_current_state()
-            .is_in_inactivity_leak((target_epoch).into(), &spec)
+            .is_in_inactivity_leak(target_epoch, &spec)
             .unwrap(),
         "we should be in an inactivity leak"
     );
@@ -385,7 +383,7 @@ async fn finalize_after_inactivity_leak() {
     assert!(
         !harness
             .get_current_state()
-            .is_in_inactivity_leak((target_epoch).into(), &spec)
+            .is_in_inactivity_leak(target_epoch, &spec)
             .unwrap(),
         "we be should out of inactivity leak after finalization"
     );
@@ -716,9 +714,7 @@ async fn finalize_with_validator_activation_and_delayed_finality() {
     harness.validator_keypairs.push(new_keypair.clone());
 
     // From here we want to experience a number of epochs without finalization
-    advance_non_finalizing(&mut harness, Epochs(8))
-        .await
-        .unwrap();
+    advance_non_finalizing(&harness, Epochs(8)).await.unwrap();
 
     // Then start finalizing again
     advance_finalizing(&mut harness, Epochs(3)).await.unwrap();

@@ -15,7 +15,7 @@
 use crate::{CommitteeIndex, Epoch, Slot, ValidatorIndex, ensure};
 use alloc::{vec, vec::Vec};
 use alloy_primitives::B256;
-use beacon_types::EthSpec;
+use beacon_types::{ChainSpec, EthSpec};
 use core::num::NonZeroUsize;
 use core::ops::Range;
 use swap_or_not_shuffle::shuffle_list;
@@ -30,7 +30,7 @@ pub struct CommitteeCache<E: EthSpec> {
     shuffling_positions: Vec<Option<NonZeroUsize>>,
     committees_per_slot: usize,
     slots_per_epoch: usize,
-    _spec: core::marker::PhantomData<E>,
+    _phantom: core::marker::PhantomData<E>,
 }
 
 #[derive(thiserror::Error, Debug, PartialEq)]
@@ -61,6 +61,7 @@ pub struct ShuffleData {
 impl<E: EthSpec> CommitteeCache<E> {
     /// Return a new, fully initialized cache.
     pub fn initialized(
+        spec: &ChainSpec,
         ShuffleData {
             seed,
             indices: active_validator_indices,
@@ -83,7 +84,7 @@ impl<E: EthSpec> CommitteeCache<E> {
         );
         let shuffling = shuffle_list(
             active_validator_indices,
-            E::default_spec().shuffle_round_count,
+            spec.shuffle_round_count,
             &seed[..],
             false,
         )
@@ -105,7 +106,7 @@ impl<E: EthSpec> CommitteeCache<E> {
             shuffling_positions,
             committees_per_slot: committees_per_slot.try_into().unwrap(),
             slots_per_epoch: E::slots_per_epoch() as usize,
-            _spec: core::marker::PhantomData,
+            _phantom: core::marker::PhantomData,
         })
     }
 

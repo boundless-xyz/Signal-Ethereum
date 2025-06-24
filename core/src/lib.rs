@@ -18,7 +18,7 @@ extern crate core;
 use crate::serde_utils::DiskAttestation;
 use alloy_primitives::B256;
 use alloy_rlp::{Decodable, Encodable, RlpDecodable, RlpEncodable};
-use beacon_types::{EthSpec, PublicKey};
+use beacon_types::{ChainSpec, EthSpec, PublicKey};
 use core::fmt;
 use core::fmt::Display;
 use serde::{Deserializer, Serializer};
@@ -121,31 +121,33 @@ impl<E: EthSpec> fmt::Debug for Input<E> {
 pub struct ValidatorInfo {
     pub pubkey: PublicKey,
     pub effective_balance: u64,
-    pub activation_eligibility_epoch: u64,
-    pub activation_epoch: u64,
-    pub exit_epoch: u64,
+    pub activation_eligibility_epoch: Epoch,
+    pub activation_epoch: Epoch,
+    pub exit_epoch: Epoch,
 }
 
-// TODO(willem): Move these to the context once we have decided how we want to do that
-const FAR_FUTURE_EPOCH: u64 = u64::MAX;
-const MAX_SEED_LOOKAHEAD: u64 = 4;
-
 impl ValidatorInfo {
-    /// Checks if the validator is active at the given epoch given knowledge of the most recently finalized epoch
-    pub fn is_active_at(&self, latest_finalized: Epoch, epoch: Epoch) -> bool {
-        // Account for the case where the validator eligibility epoch has been finalized
-        let activation_epoch = if self.activation_epoch == FAR_FUTURE_EPOCH
-            && self.activation_eligibility_epoch <= latest_finalized.as_u64()
-        {
-            // Activation_epoch will be set to current_epoch + 1 + MAX_SEED_LOOKAHEAD
-            // while processing the epoch immediately after the activation eligibility epoch
-            // was finalized. That is where the extra 1 epoch comes from.
-            self.activation_eligibility_epoch + 2 + MAX_SEED_LOOKAHEAD
-        } else {
-            self.activation_epoch
-        };
+    /// Check if ``validator`` is eligible to be placed into the activation queue.
+    pub fn is_eligible_for_activation_queue(&self, spec: &ChainSpec) -> bool {
+        self.activation_eligibility_epoch == spec.far_future_epoch
+            && self.effective_balance >= spec.min_activation_balance
+    }
 
-        activation_epoch <= epoch.into() && epoch < self.exit_epoch
+    /// Check if the validator is eligible for activation with respect to the given state.
+    pub fn is_eligible_for_activation(
+        &self,
+        spec: &ChainSpec,
+        finalized_checkpoint_epoch: Epoch,
+    ) -> bool {
+        // placement in queue if finalized
+        self.activation_eligibility_epoch <= finalized_checkpoint_epoch
+            // has not yet been activated
+            && self.activation_epoch == spec.far_future_epoch
+    }
+
+    /// Checks if the validator is active at the given epoch given knowledge of the most recently finalized epoch
+    pub fn is_active_at(&self, epoch: Epoch) -> bool {
+        self.activation_epoch <= epoch && epoch < self.exit_epoch
     }
 }
 
@@ -155,9 +157,9 @@ impl From<&ethereum_consensus::phase0::Validator> for ValidatorInfo {
         Self {
             pubkey: PublicKey::deserialize(&v.public_key).unwrap(),
             effective_balance: v.effective_balance,
-            activation_epoch: v.activation_epoch,
-            activation_eligibility_epoch: v.activation_eligibility_epoch,
-            exit_epoch: v.exit_epoch,
+            activation_epoch: v.activation_epoch.into(),
+            activation_eligibility_epoch: v.activation_eligibility_epoch.into(),
+            exit_epoch: v.exit_epoch.into(),
         }
     }
 }
@@ -168,9 +170,9 @@ impl From<&beacon_types::Validator> for ValidatorInfo {
         Self {
             pubkey: v.pubkey.decompress().expect("fail to decompress pub key"),
             effective_balance: v.effective_balance,
-            activation_epoch: v.activation_epoch.into(),
-            activation_eligibility_epoch: v.activation_eligibility_epoch.into(),
-            exit_epoch: v.exit_epoch.into(),
+            activation_epoch: v.activation_epoch,
+            activation_eligibility_epoch: v.activation_eligibility_epoch,
+            exit_epoch: v.exit_epoch,
         }
     }
 }

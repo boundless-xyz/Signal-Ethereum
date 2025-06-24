@@ -12,24 +12,45 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::serde_utils;
 use alloy_primitives::B256;
-use serde::{Deserialize, Serialize};
+use serde_with::serde_as;
 use std::collections::BTreeMap;
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde_as]
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct StatePatch {
     pub randao_mixes: BTreeMap<RandaoMixIndex, B256>,
+    #[serde_as(as = "BTreeMap<_, serde_utils::U64>")]
+    pub validator_exits: BTreeMap<ValidatorIndex, Epoch>,
 }
 
-use crate::RandaoMixIndex;
+impl StatePatch {
+    /// Checks if the validator is active at the given epoch.
+    #[inline]
+    pub fn is_active_validator(
+        &self,
+        idx: &ValidatorIndex,
+        validator: &ValidatorInfo,
+        epoch: Epoch,
+    ) -> bool {
+        match self.validator_exits.get(idx) {
+            Some(exit_epoch) => epoch < *exit_epoch && validator.is_active_at(epoch),
+            None => validator.is_active_at(epoch),
+        }
+    }
+}
+
+use crate::{Epoch, RandaoMixIndex, ValidatorIndex, ValidatorInfo};
 #[cfg(feature = "host")]
 pub use host::StatePatchBuilder;
 
 #[cfg(feature = "host")]
 mod host {
     use super::*;
-    use crate::{RandaoMixIndex, Slot, StateRef};
+    use crate::{RandaoMixIndex, StateRef};
     use beacon_types::EthSpec;
+    use ethereum_consensus::phase0::Validator;
     use tracing::debug;
 
     pub struct StatePatchBuilder {
@@ -52,11 +73,21 @@ mod host {
                 .insert(idx, B256::from_slice(randao.as_slice()));
         }
 
+        pub fn validator_diff<'a>(&mut self, validators: impl IntoIterator<Item = &'a Validator>) {
+            for (idx, (a, b)) in self.state.validators().iter().zip(validators).enumerate() {
+                // store validator exits
+                if a.exit_epoch != b.exit_epoch {
+                    self.patch.validator_exits.insert(idx, a.exit_epoch.into());
+                }
+            }
+        }
+
         pub fn build<E: EthSpec>(self) -> StatePatch {
             debug!(
-                "Created patch for epoch {}: #randao_mixes={}",
-                Slot::from(self.state.slot()).epoch(E::slots_per_epoch()),
-                self.patch.randao_mixes.len(),
+                epoch = self.state.slot() * E::slots_per_epoch(),
+                randao_mixes = self.patch.randao_mixes.len(),
+                validator_exits = self.patch.validator_exits.len(),
+                "Created state patch",
             );
             self.patch
         }

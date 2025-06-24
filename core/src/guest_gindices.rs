@@ -30,6 +30,6 @@ pub const fn fork_epoch_gindex() -> u64 {
 pub const fn validators_gindex() -> u64 {
     75u64
 }
-pub const fn randao_mixes_0_gindex() -> u64 {
-    5046272u64
+pub const fn finalized_checkpoint_epoch_gindex() -> u64 {
+    168u64
 }

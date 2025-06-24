@@ -26,7 +26,7 @@ fn main() {
         .write(true)
         .create(true)
         .truncate(true)
-        .open(&dest_filepath)
+        .open(dest_filepath)
         .unwrap();
 
     let gindices = beacon_gindices::<z_core::mainnet::ElectraBeaconState>();
@@ -36,7 +36,7 @@ fn main() {
     let syntax_tree = syn::parse2(tokens).unwrap();
     let formatted = prettyplease::unparse(&syntax_tree);
 
-    f.write(&formatted.into_bytes()).unwrap();
+    let _ = f.write(&formatted.into_bytes()).unwrap();
 }
 
 fn gen_guest_gindices_impl(

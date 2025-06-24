@@ -54,14 +54,14 @@ pub enum InputBuilderError {
 
 pub struct InputBuilder<E, CR> {
     chain_reader: CR,
-    _spec: std::marker::PhantomData<E>,
+    _phantom: std::marker::PhantomData<E>,
 }
 
 impl<E: EthSpec, CR: ChainReader> InputBuilder<E, CR> {
     pub fn new(chain_reader: CR) -> Self {
         Self {
             chain_reader,
-            _spec: std::marker::PhantomData,
+            _phantom: std::marker::PhantomData,
         }
     }
 

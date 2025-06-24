@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use alloy_primitives::B256;
-use beacon_types::EthSpec;
+use beacon_types::{ChainSpec, EthSpec};
 use std::iter;
 use z_core::{Epoch, RandaoMixIndex, Root, StateReader, ValidatorIndex, ValidatorInfo};
 
@@ -35,8 +35,15 @@ impl<'a, S: StateReader, R: StateReader> AssertStateReader<'a, S, R> {
 impl<E: EthSpec, S: StateReader<Spec = E>, R: StateReader<Spec = E>> StateReader
     for AssertStateReader<'_, S, R>
 {
-    type Spec = E;
     type Error = S::Error;
+    type Spec = E;
+
+    fn chain_spec(&self) -> &ChainSpec {
+        let a = self.reader_a.chain_spec();
+        let b = self.reader_b.chain_spec();
+        assert_eq!(a, b);
+        a
+    }
 
     fn genesis_validators_root(&self) -> Result<Root, Self::Error> {
         let a = self.reader_a.genesis_validators_root()?;
@@ -63,8 +70,13 @@ impl<E: EthSpec, S: StateReader<Spec = E>, R: StateReader<Spec = E>> StateReader
                 (None, None) => None,
                 (Some(a), Some(b)) => {
                     assert_eq!(a.0, b.0);
-                    // only compare the public key
-                    assert_eq!(a.1.pubkey, b.1.pubkey);
+                    // do not compare the effective_balance as it is allowed to be incorrect
+                    let mut validator = a.1.clone();
+                    validator.effective_balance = b.1.effective_balance;
+                    // currently the exit_epoch is not overridden, but still considered for activity
+                    validator.exit_epoch = b.1.exit_epoch;
+                    assert_eq!(&validator, b.1);
+
                     Some(a)
                 }
                 (a, b) => panic!(

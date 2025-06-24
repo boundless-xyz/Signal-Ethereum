@@ -116,14 +116,14 @@ impl<P: StateProvider> StateProvider for CacheStateProvider<P> {
 #[derive(Clone)]
 pub struct FileProvider<E: EthSpec> {
     directory: PathBuf,
-    _spec: PhantomData<E>,
+    _phantom: PhantomData<E>,
 }
 
 impl<E: EthSpec> FileProvider<E> {
     pub fn new(directory: impl Into<PathBuf>) -> Result<Self, anyhow::Error> {
         let provider = Self {
             directory: directory.into(),
-            _spec: PhantomData,
+            _phantom: PhantomData,
         };
         ensure!(provider.directory.is_dir(), "not a directory");
 

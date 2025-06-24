@@ -203,7 +203,7 @@ async fn run_sync<E: EthSpec + Serialize>(
     info!("Running Sync in mode: {mode}");
 
     let logfile = log_path.map(|path| {
-        fs::create_dir_all(&path.parent().unwrap()).expect("Failed to create log directory");
+        fs::create_dir_all(path.parent().unwrap()).expect("Failed to create log directory");
         let file = File::create(&path).expect("Failed to create log file");
         info!("Logging sync progress to: {}", path.display());
         file
@@ -211,13 +211,13 @@ async fn run_sync<E: EthSpec + Serialize>(
 
     let mut consensus_state = beacon_client.get_consensus_state(start_slot).await?;
     info!("Initial Consensus State: {:#?}", consensus_state);
-    let sr = HostStateReader::<PersistentApiStateProvider<E>>::new(provider.clone().into());
+    let sr = HostStateReader::<PersistentApiStateProvider<E>>::new(provider.clone());
 
     let input_builder = InputBuilder::new(beacon_client.clone());
 
     loop {
         let (input, expected_state) = input_builder
-            .build(consensus_state.finalized_checkpoint.clone())
+            .build(consensus_state.finalized_checkpoint)
             .await?;
         tracing::debug!("Input: {:?}", input);
         let msg = match run_verify(mode, &sr, input.clone()) {
@@ -257,9 +257,7 @@ fn run_verify<E: EthSpec + Serialize, R: StateReader<Spec = E> + StateProvider<S
 
     if mode == ExecMode::Ssz || mode == ExecMode::R0vm {
         let state_input = reader.to_input();
-        let ssz_reader = state_input
-            .clone()
-            .into_state_reader(input.state.finalized_checkpoint)?;
+        let ssz_reader = state_input.clone().into_state_reader(&input.state)?;
         let ssz_consensus_state =
             verify(&AssertStateReader::new(&ssz_reader, &reader), input.clone()).unwrap(); // will panic if verification fails
         info!("Ssz Verification Success!");
@@ -284,13 +282,13 @@ fn execute_guest_program<E: EthSpec + Serialize>(
     input: Input<E>,
 ) -> Vec<u8> {
     info!("Executing guest program");
-    let ssz_reader = bincode::serialize(&state_input).unwrap();
-    info!("Serialized SszStateReader: {} bytes", ssz_reader.len());
+    let state_input = bincode::serialize(&state_input).unwrap();
+    info!("Serialized SszStateReader: {} bytes", state_input.len());
     let input = bincode::serialize(&input).unwrap();
     info!("Serialized Input: {} bytes", input.len());
-    info!("Total Input: {} bytes", ssz_reader.len() + input.len());
+    info!("Total Input: {} bytes", state_input.len() + input.len());
     let env = ExecutorEnv::builder()
-        .write_frame(&ssz_reader)
+        .write_frame(&state_input)
         .write_frame(&input)
         .build()
         .unwrap();

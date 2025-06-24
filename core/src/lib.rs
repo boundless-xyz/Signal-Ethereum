@@ -18,11 +18,12 @@ extern crate core;
 use crate::serde_utils::DiskAttestation;
 use alloy_primitives::B256;
 use beacon_types::{ChainSpec, EthSpec, PublicKey};
-use core::fmt;
-use core::fmt::{Display, Formatter};
 use serde::{Deserializer, Serializer};
 use serde_with::serde_as;
-use std::collections::HashMap;
+use std::{
+    collections::HashMap,
+    fmt::{self, Display, Formatter},
+};
 use tree_hash::TreeHash;
 
 mod attestation;
@@ -61,7 +62,7 @@ pub type Epoch = beacon_types::Epoch;
 pub type Slot = beacon_types::Slot;
 pub type CommitteeIndex = usize;
 pub type ValidatorIndex = usize;
-pub type RandaoMixIndex = u64;
+pub type RandaoMixIndex = u32;
 pub type Root = B256;
 pub type Version = [u8; 4];
 pub type ForkDigest = [u8; 4];

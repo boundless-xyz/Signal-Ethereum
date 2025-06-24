@@ -20,6 +20,7 @@ use crate::{
 };
 use beacon_types::{AggregateSignature, Attestation, Domain, EthSpec, SignedRoot};
 use itertools::Itertools;
+use safe_arith::ArithError;
 use std::collections::BTreeMap;
 use tracing::{debug, info};
 
@@ -47,6 +48,14 @@ pub enum VerifyError {
     MissingValidatorInfo(ValidatorIndex),
     #[error("{0:?}")]
     LighthouseTypes(beacon_types::Error),
+    #[error("Arithmetic error: {0:?}")]
+    ArithError(ArithError),
+}
+
+impl From<ArithError> for VerifyError {
+    fn from(e: ArithError) -> Self {
+        VerifyError::ArithError(e)
+    }
 }
 
 pub fn verify<S: StateReader>(
@@ -90,7 +99,7 @@ pub fn verify<S: StateReader>(
         }
 
         let total_active_balance =
-            get_total_balance(state_reader.chain_spec(), active_validators.values());
+            get_total_balance(state_reader.chain_spec(), active_validators.values())?;
         debug!(
             attesting_balance,
             total_active_balance, "Attestations processed"
@@ -141,7 +150,7 @@ fn process_attestation<S: StateReader, E: EthSpec>(
         })
         .collect::<Result<Vec<_>, _>>()?;
 
-    let attesting_balance = get_total_balance(state.chain_spec(), &attesting_validators);
+    let attesting_balance = get_total_balance(state.chain_spec(), &attesting_validators)?;
 
     // verify signature
     ensure!(

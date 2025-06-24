@@ -20,9 +20,9 @@ use crate::{
 };
 use beacon_types::{AggregateSignature, Attestation, Domain, EthSpec, SignedRoot};
 use itertools::Itertools;
-use safe_arith::ArithError;
+use safe_arith::{ArithError, SafeArith};
 use std::collections::BTreeMap;
-use tracing::{debug, info};
+use tracing::{debug, info, trace};
 
 #[derive(thiserror::Error, Debug, PartialEq)]
 pub enum VerifyError {
@@ -94,13 +94,14 @@ pub fn verify<S: StateReader>(
 
         let mut attesting_balance = 0u64;
         for attestation in attestations {
-            attesting_balance +=
+            let balance =
                 process_attestation(state_reader, &active_validators, &committees, attestation)?;
+            attesting_balance.safe_add_assign(balance)?;
         }
 
         let total_active_balance =
             get_total_balance(state_reader.chain_spec(), active_validators.values())?;
-        debug!(
+        trace!(
             attesting_balance,
             total_active_balance, "Attestations processed"
         );

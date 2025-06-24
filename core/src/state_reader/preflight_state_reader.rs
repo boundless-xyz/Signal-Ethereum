@@ -11,7 +11,7 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-
+use beacon_types::{ChainSpec, EthSpec};
 use ethereum_consensus::electra::{Validator, mainnet::VALIDATOR_REGISTRY_LIMIT};
 use ssz_multiproofs::MultiproofBuilder;
 use ssz_rs::prelude::*;
@@ -19,9 +19,8 @@ use thiserror::Error;
 
 use super::{StateInput, host_state_reader::HostReaderError};
 use crate::{
-    Checkpoint, Ctx, Epoch, RandaoMixIndex, Root, StatePatchBuilder, StateProvider, StateReader,
-    ValidatorIndex, ValidatorInfo, Version, beacon_state::mainnet::BeaconState,
-    mainnet::ElectraBeaconState,
+    Checkpoint, Epoch, RandaoMixIndex, Root, StatePatchBuilder, StateProvider, StateReader,
+    ValidatorIndex, ValidatorInfo, beacon_state::mainnet::BeaconState, mainnet::ElectraBeaconState,
 };
 use alloy_primitives::B256;
 use ethereum_consensus::phase0::BeaconBlockHeader;
@@ -45,9 +44,9 @@ pub struct PreflightStateReader<'a, SR> {
     mix_epochs: RefCell<BTreeMap<Epoch, BTreeSet<RandaoMixIndex>>>,
 }
 
-impl<'a, S> PreflightStateReader<'a, S>
+impl<'a, S, E: EthSpec> PreflightStateReader<'a, S>
 where
-    S: StateReader + StateProvider,
+    S: StateReader<Spec = E> + StateProvider<Spec = E>,
 {
     pub fn new(reader: &'a S, trusted_checkpoint: Checkpoint) -> Self {
         Self {
@@ -65,44 +64,28 @@ where
             .unwrap();
         let beacon_state_root = trusted_state.hash_tree_root().unwrap();
 
-        info!("Building beacon block multiproof");
+        info!("Building beacon block proof");
         let mut epoch_boundary_block = trusted_state.latest_block_header().clone();
         epoch_boundary_block.state_root = beacon_state_root;
         let block_multiproof = MultiproofBuilder::new()
-            .with_path::<BeaconBlockHeader>(&["slot".into()])
             .with_path::<BeaconBlockHeader>(&["state_root".into()])
             .build(&epoch_boundary_block)
             .unwrap();
         block_multiproof
-            .verify(&self.trusted_checkpoint.root)
+            .verify(&self.trusted_checkpoint.root())
             .unwrap();
-        info!("Beacon block multiproof finished");
+        info!("Beacon block proof finished");
 
-        let mut patch_builder: BTreeMap<Epoch, StatePatchBuilder<S::Context>> = BTreeMap::new();
-        let mut proof_builder: MultiproofBuilder = MultiproofBuilder::new();
-
-        for (epoch, indices) in self.mix_epochs.take() {
-            if epoch == self.trusted_checkpoint.epoch {
-                for idx in indices {
-                    let path = ["randao_mixes".into(), (idx as usize).into()];
-                    proof_builder = proof_builder.with_path::<ElectraBeaconState>(&path);
-                }
-            } else {
-                let patch = patch_builder
-                    .entry(epoch)
-                    .or_insert(self.patch_builder(epoch).unwrap());
-                for idx in indices {
-                    patch.randao_mix(idx);
-                }
-            }
-        }
-
+        info!("Building beacon state proof");
         let state_multiproof = match trusted_state.deref() {
-            BeaconState::Electra(state) => proof_builder
+            BeaconState::Electra(state) => MultiproofBuilder::new()
                 .with_path::<ElectraBeaconState>(&["genesis_validators_root".into()])
                 .with_path::<ElectraBeaconState>(&["slot".into()])
+                .with_path::<ElectraBeaconState>(&["fork".into(), "previous_version".into()])
                 .with_path::<ElectraBeaconState>(&["fork".into(), "current_version".into()])
+                .with_path::<ElectraBeaconState>(&["fork".into(), "epoch".into()])
                 .with_path::<ElectraBeaconState>(&["validators".into()])
+                .with_path::<ElectraBeaconState>(&["finalized_checkpoint".into(), "epoch".into()])
                 .build(state)
                 .unwrap(),
             _ => {
@@ -110,19 +93,19 @@ where
             }
         };
         state_multiproof.verify(&beacon_state_root).unwrap();
-        info!("State multiproof finished");
+        info!("Beacon state proof finished");
 
         let validators_root = trusted_state.validators().hash_tree_root().unwrap();
         type Validators = List<Validator, VALIDATOR_REGISTRY_LIMIT>;
 
         let mut public_keys = Vec::with_capacity(trusted_state.validators().len());
 
-        info!("Building validator proof");
+        info!("Building validators proof");
         let mut proof_builder = MultiproofBuilder::new();
         proof_builder = proof_builder.with_path::<Validators>(&[PathElement::Length]);
 
         for (idx, validator) in trusted_state.validators().iter().enumerate() {
-            if self.trusted_checkpoint.epoch >= validator.exit_epoch {
+            if self.trusted_checkpoint.epoch().as_u64() >= validator.exit_epoch {
                 proof_builder =
                     proof_builder.with_path::<Validators>(&[idx.into(), "exit_epoch".into()]);
             } else {
@@ -139,16 +122,34 @@ where
         }
         let validator_multiproof = proof_builder.build(trusted_state.validators()).unwrap();
         validator_multiproof.verify(&validators_root).unwrap();
-        info!("Validator multiproof finished");
+        info!("Validators proof finished");
         debug!(
             num = public_keys.len(),
             num_total = trusted_state.validators().len(),
             "Included validators",
         );
 
+        info!("Building state patches");
+        let mut patch_builder: BTreeMap<Epoch, StatePatchBuilder> = BTreeMap::new();
+        for (epoch, indices) in self.mix_epochs.take() {
+            let patch = patch_builder
+                .entry(epoch)
+                .or_insert(self.patch_builder(epoch).unwrap());
+            for idx in indices {
+                patch.randao_mix(idx);
+            }
+        }
+        for epoch in self.validator_epochs.take() {
+            if epoch != self.trusted_checkpoint.epoch() {
+                let patch = patch_builder
+                    .entry(epoch)
+                    .or_insert(self.patch_builder(epoch).unwrap());
+                patch.validator_diff(trusted_state.validators().iter());
+            }
+        }
         let patches = patch_builder
             .into_iter()
-            .map(|(k, v)| (k, v.build()))
+            .map(|(k, v)| (k, v.build::<E>()))
             .collect();
 
         StateInput {
@@ -160,16 +161,12 @@ where
         }
     }
 
-    fn patch_builder(
-        &self,
-        epoch: Epoch,
-    ) -> Result<StatePatchBuilder<S::Context>, HostReaderError> {
-        let context = StateReader::context(self.inner);
+    fn patch_builder(&self, epoch: Epoch) -> Result<StatePatchBuilder, HostReaderError> {
         let state = self
             .inner
-            .state_at_slot(context.compute_start_slot_at_epoch(epoch))?;
+            .state_at_slot(epoch.start_slot(E::slots_per_epoch()))?;
 
-        Ok(StatePatchBuilder::new(state, context))
+        Ok(StatePatchBuilder::new(state))
     }
 }
 
@@ -178,25 +175,25 @@ where
     SR: StateReader,
 {
     type Error = SR::Error;
-    type Context = SR::Context;
+    type Spec = SR::Spec;
 
-    fn context(&self) -> &Self::Context {
-        self.inner.context()
+    fn chain_spec(&self) -> &ChainSpec {
+        self.inner.chain_spec()
     }
 
     fn genesis_validators_root(&self) -> Result<Root, Self::Error> {
         self.inner.genesis_validators_root()
     }
 
-    fn fork_current_version(&self, epoch: Epoch) -> Result<Version, Self::Error> {
-        self.inner.fork_current_version(epoch)
+    fn fork(&self, epoch: Epoch) -> Result<beacon_types::Fork, Self::Error> {
+        self.inner.fork(epoch)
     }
 
     fn active_validators(
         &self,
         epoch: Epoch,
     ) -> Result<impl Iterator<Item = (ValidatorIndex, &ValidatorInfo)>, Self::Error> {
-        assert!(epoch >= self.trusted_checkpoint.epoch);
+        assert!(epoch >= self.trusted_checkpoint.epoch());
 
         let iter = self.inner.active_validators(epoch)?;
         self.validator_epochs.borrow_mut().insert(epoch);

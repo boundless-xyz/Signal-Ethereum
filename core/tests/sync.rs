@@ -36,8 +36,8 @@ use test_utils::{
     AssertStateReader, TestHarness, consensus_state_from_state, get_harness, get_spec,
 };
 use z_core::{
-    ConsensusState, GuestContext, HostStateReader, InputBuilder, PreflightStateReader,
-    StateProvider, StateReader, VerifyError, threshold, verify,
+    ConsensusState, HostStateReader, InputBuilder, PreflightStateReader, StateReader, VerifyError,
+    threshold, verify,
 };
 
 pub const VALIDATOR_COUNT: u64 = 48;
@@ -74,16 +74,14 @@ async fn test_zkasper_sync(
         println!(
             "n validators: {}",
             state_reader
-                .active_validators(consensus_state.finalized_checkpoint.epoch)
+                .active_validators(consensus_state.finalized_checkpoint.epoch())
                 .unwrap()
                 .count()
         );
 
-        let trusted_checkpoint = consensus_state.finalized_checkpoint;
-
         // Build the input and verify it
-        let builder = InputBuilder::new(harness.context().clone(), harness);
-        match builder.build(trusted_checkpoint).await {
+        let builder = InputBuilder::new(harness);
+        match builder.build(consensus_state.finalized_checkpoint).await {
             Ok((input, _)) => {
                 println!(
                     "Attestors per link: {:?}",
@@ -96,7 +94,7 @@ async fn test_zkasper_sync(
                                 link,
                                 attestations
                                     .iter()
-                                    .map(|a| a.aggregation_bits.iter().count())
+                                    .map(|a| a.aggregation_bits_electra().iter().count())
                                     .sum::<usize>(),
                             )
                         })
@@ -109,7 +107,7 @@ async fn test_zkasper_sync(
                 // build a self-contained SSZ reader
                 let ssz_state_reader = preflight_state_reader
                     .to_input()
-                    .into_state_reader(&GuestContext, trusted_checkpoint)
+                    .into_state_reader(&consensus_state)
                     .expect("Failed to convert to SSZ state reader");
                 // Merge into a single AssertStateReader that ensures identical data returned for each read
                 let assert_sr = AssertStateReader::new(&state_reader, &ssz_state_reader);
@@ -127,13 +125,13 @@ async fn test_zkasper_sync(
     }
 
     assert_eq!(
-        consensus_state.finalized_checkpoint.epoch,
+        consensus_state.finalized_checkpoint.epoch(),
         head_state.finalized_checkpoint().epoch.as_u64(),
         "finalized checkpoint should match"
     );
 
     assert_eq!(
-        consensus_state.current_justified_checkpoint.epoch,
+        consensus_state.current_justified_checkpoint.epoch(),
         head_state.current_justified_checkpoint().epoch.as_u64(),
         "current justified checkpoint should match"
     );
@@ -309,17 +307,18 @@ async fn finalize_after_one_empty_epoch() {
         .await;
     let new_consensus_state = consensus_state_from_state(&harness.get_current_state());
     assert!(
-        consensus_state.finalized_checkpoint.epoch < new_consensus_state.finalized_checkpoint.epoch,
+        consensus_state.finalized_checkpoint.epoch()
+            < new_consensus_state.finalized_checkpoint.epoch(),
         "Consensus state should have finalized after extending the chain with attestations"
     );
     assert!(
-        consensus_state.previous_justified_checkpoint.epoch
-            < new_consensus_state.previous_justified_checkpoint.epoch,
+        consensus_state.previous_justified_checkpoint.epoch()
+            < new_consensus_state.previous_justified_checkpoint.epoch(),
         "Consensus state should have new previous justified after extending the chain with attestations"
     );
     assert!(
-        consensus_state.current_justified_checkpoint.epoch
-            < new_consensus_state.current_justified_checkpoint.epoch,
+        consensus_state.current_justified_checkpoint.epoch()
+            < new_consensus_state.current_justified_checkpoint.epoch(),
         "Consensus state should have new current justified after extending the chain with attestations"
     );
     test_zkasper_sync(&harness, consensus_state).await.unwrap();
@@ -328,7 +327,7 @@ async fn finalize_after_one_empty_epoch() {
 #[test(tokio::test)]
 async fn finalize_after_inactivity_leak() {
     let spec = get_spec();
-    let mut harness = get_harness(KEYPAIRS[..].to_vec(), spec.clone(), Slot::new(224)).await;
+    let harness = get_harness(KEYPAIRS[..].to_vec(), spec.clone(), Slot::new(224)).await;
 
     // Grab our bootstrap consensus state from there
     let head_state = harness.chain.head_beacon_state_cloned();
@@ -347,7 +346,7 @@ async fn finalize_after_inactivity_leak() {
     // progress the chain with less than 2/3rds participation
     // this should result in an inactivity leak
     advance_non_finalizing(
-        &mut harness,
+        &harness,
         Epochs(target_epoch.as_u64() - current_epoch.as_u64()),
     )
     .await
@@ -356,7 +355,7 @@ async fn finalize_after_inactivity_leak() {
     assert!(
         harness
             .get_current_state()
-            .is_in_inactivity_leak((target_epoch).into(), &spec)
+            .is_in_inactivity_leak(target_epoch, &spec)
             .unwrap(),
         "we should be in an inactivity leak"
     );
@@ -384,7 +383,7 @@ async fn finalize_after_inactivity_leak() {
     assert!(
         !harness
             .get_current_state()
-            .is_in_inactivity_leak((target_epoch).into(), &spec)
+            .is_in_inactivity_leak(target_epoch, &spec)
             .unwrap(),
         "we be should out of inactivity leak after finalization"
     );
@@ -715,9 +714,7 @@ async fn finalize_with_validator_activation_and_delayed_finality() {
     harness.validator_keypairs.push(new_keypair.clone());
 
     // From here we want to experience a number of epochs without finalization
-    advance_non_finalizing(&mut harness, Epochs(8))
-        .await
-        .unwrap();
+    advance_non_finalizing(&harness, Epochs(8)).await.unwrap();
 
     // Then start finalizing again
     advance_finalizing(&mut harness, Epochs(3)).await.unwrap();

@@ -15,11 +15,16 @@
 extern crate alloc;
 extern crate core;
 
+use crate::serde_utils::DiskAttestation;
 use alloy_primitives::B256;
-use alloy_rlp::{RlpDecodable, RlpEncodable};
+use alloy_rlp::{Decodable, Encodable, RlpDecodable, RlpEncodable};
+use beacon_types::{ChainSpec, EthSpec, PublicKey};
 use core::fmt;
 use core::fmt::Display;
-use std::collections::BTreeMap;
+use serde::{Deserializer, Serializer};
+use serde_with::serde_as;
+use std::collections::HashMap;
+use tree_hash::TreeHash;
 
 mod attestation;
 #[cfg(feature = "host")]
@@ -27,11 +32,10 @@ mod beacon_state;
 mod bls;
 mod committee_cache;
 mod consensus_state;
-mod context;
-mod guest_context;
+mod guest_gindices;
 #[cfg(feature = "host")]
 mod input_builder;
-mod shuffle_list;
+mod serde_utils;
 mod state_patch;
 mod state_reader;
 mod threshold;
@@ -43,20 +47,20 @@ pub use beacon_state::*;
 pub use bls::*;
 pub use committee_cache::*;
 pub use consensus_state::*;
-pub use context::*;
 #[cfg(feature = "host")]
 pub use input_builder::*;
 use ssz_types::typenum::{U64, U131072};
 pub use state_patch::*;
 pub use state_reader::*;
 pub use threshold::*;
-use tree_hash_derive::TreeHash;
 pub use verify::*;
 
+pub type MainnetEthSpec = beacon_types::MainnetEthSpec;
+pub type MinimalEthSpec = beacon_types::MinimalEthSpec;
 // Need to redefine/redeclare a bunch of types and constants because we can't use ssz-rs and ethereum-consensus in the guest
 
-pub type Epoch = u64;
-pub type Slot = u64;
+pub type Epoch = beacon_types::Epoch;
+pub type Slot = beacon_types::Slot;
 pub type CommitteeIndex = usize;
 pub type ValidatorIndex = usize;
 pub type RandaoMixIndex = u64;
@@ -74,11 +78,14 @@ pub const VALIDATOR_REGISTRY_LIMIT: u64 = 2u64.pow(40);
 pub const VALIDATOR_LIST_TREE_DEPTH: u32 = VALIDATOR_REGISTRY_LIMIT.ilog2() + 1; // 41
 pub const VALIDATOR_TREE_DEPTH: u32 = 3;
 
-#[derive(Clone, serde::Serialize, serde::Deserialize)]
-pub struct Input {
+#[serde_as]
+#[derive(Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct Input<E: EthSpec> {
     pub state: ConsensusState,
     pub links: Vec<Link>,
-    pub attestations: Vec<Vec<Attestation>>,
+
+    #[serde_as(as = "Vec<Vec<DiskAttestation>>")]
+    pub attestations: Vec<Vec<Attestation<E>>>,
 }
 
 #[derive(Clone, serde::Serialize, serde::Deserialize, RlpEncodable, RlpDecodable)]
@@ -94,11 +101,13 @@ impl Output {
     }
 }
 
-impl fmt::Debug for Input {
+impl<E: EthSpec> fmt::Debug for Input<E> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let mut by_source: BTreeMap<Checkpoint, usize> = BTreeMap::new();
+        let mut by_source: HashMap<Checkpoint, usize> = HashMap::new();
         for attestation in self.attestations.iter().flatten() {
-            *by_source.entry(attestation.data.source).or_default() += 1;
+            *by_source
+                .entry(attestation.data().source.into())
+                .or_default() += 1;
         }
 
         f.debug_struct("Input")
@@ -108,35 +117,37 @@ impl fmt::Debug for Input {
     }
 }
 
-#[derive(Eq, PartialEq, Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ValidatorInfo {
     pub pubkey: PublicKey,
     pub effective_balance: u64,
-    pub activation_eligibility_epoch: u64,
-    pub activation_epoch: u64,
-    pub exit_epoch: u64,
+    pub activation_eligibility_epoch: Epoch,
+    pub activation_epoch: Epoch,
+    pub exit_epoch: Epoch,
 }
 
-// TODO(willem): Move these to the context once we have decided how we want to do that
-const FAR_FUTURE_EPOCH: u64 = Epoch::MAX;
-const MAX_SEED_LOOKAHEAD: u64 = 4;
-
 impl ValidatorInfo {
-    /// Checks if the validator is active at the given epoch given knowledge of the most recently finalized epoch
-    pub fn is_active_at(&self, latest_finalized: Epoch, epoch: Epoch) -> bool {
-        // Account for the case where the validator eligibility epoch has been finalized
-        let activation_epoch = if self.activation_epoch == FAR_FUTURE_EPOCH
-            && self.activation_eligibility_epoch <= latest_finalized
-        {
-            // Activation_epoch will be set to current_epoch + 1 + MAX_SEED_LOOKAHEAD
-            // while processing the epoch immediately after the activation eligibility epoch
-            // was finalized. That is where the extra 1 epoch comes from.
-            self.activation_eligibility_epoch + 2 + MAX_SEED_LOOKAHEAD
-        } else {
-            self.activation_epoch
-        };
+    /// Check if ``validator`` is eligible to be placed into the activation queue.
+    pub fn is_eligible_for_activation_queue(&self, spec: &ChainSpec) -> bool {
+        self.activation_eligibility_epoch == spec.far_future_epoch
+            && self.effective_balance >= spec.min_activation_balance
+    }
 
-        activation_epoch <= epoch && epoch < self.exit_epoch
+    /// Check if the validator is eligible for activation with respect to the given state.
+    pub fn is_eligible_for_activation(
+        &self,
+        spec: &ChainSpec,
+        finalized_checkpoint_epoch: Epoch,
+    ) -> bool {
+        // placement in queue if finalized
+        self.activation_eligibility_epoch <= finalized_checkpoint_epoch
+            // has not yet been activated
+            && self.activation_epoch == spec.far_future_epoch
+    }
+
+    /// Checks if the validator is active at the given epoch given knowledge of the most recently finalized epoch
+    pub fn is_active_at(&self, epoch: Epoch) -> bool {
+        self.activation_epoch <= epoch && epoch < self.exit_epoch
     }
 }
 
@@ -144,20 +155,7 @@ impl ValidatorInfo {
 impl From<&ethereum_consensus::phase0::Validator> for ValidatorInfo {
     fn from(v: &ethereum_consensus::phase0::Validator) -> Self {
         Self {
-            pubkey: PublicKey::uncompress(&v.public_key).unwrap(),
-            effective_balance: v.effective_balance,
-            activation_epoch: v.activation_epoch,
-            activation_eligibility_epoch: v.activation_eligibility_epoch,
-            exit_epoch: v.exit_epoch,
-        }
-    }
-}
-
-#[cfg(feature = "host")]
-impl From<&beacon_types::Validator> for ValidatorInfo {
-    fn from(v: &beacon_types::Validator) -> Self {
-        Self {
-            pubkey: PublicKey::uncompress(&v.pubkey.serialize()).unwrap(),
+            pubkey: PublicKey::deserialize(&v.public_key).unwrap(),
             effective_balance: v.effective_balance,
             activation_epoch: v.activation_epoch.into(),
             activation_eligibility_epoch: v.activation_eligibility_epoch.into(),
@@ -166,35 +164,136 @@ impl From<&beacon_types::Validator> for ValidatorInfo {
     }
 }
 
-#[derive(
-    Clone,
-    Copy,
-    Debug,
-    PartialEq,
-    Eq,
-    PartialOrd,
-    Ord,
-    Hash,
-    TreeHash,
-    serde::Serialize,
-    serde::Deserialize,
-    RlpEncodable,
-    RlpDecodable,
-)]
-pub struct Checkpoint {
-    pub epoch: Epoch,
-    pub root: Root,
+#[cfg(feature = "host")]
+impl From<&beacon_types::Validator> for ValidatorInfo {
+    fn from(v: &beacon_types::Validator) -> Self {
+        Self {
+            pubkey: v.pubkey.decompress().expect("fail to decompress pub key"),
+            effective_balance: v.effective_balance,
+            activation_epoch: v.activation_epoch,
+            activation_eligibility_epoch: v.activation_eligibility_epoch,
+            exit_epoch: v.exit_epoch,
+        }
+    }
+}
+#[derive(Clone, Copy, Debug, PartialEq, Hash, Eq)]
+#[repr(transparent)]
+pub struct Checkpoint(beacon_types::Checkpoint);
+
+impl TreeHash for Checkpoint {
+    fn tree_hash_type() -> tree_hash::TreeHashType {
+        beacon_types::Checkpoint::tree_hash_type()
+    }
+
+    fn tree_hash_packed_encoding(&self) -> tree_hash::PackedEncoding {
+        self.0.tree_hash_packed_encoding()
+    }
+
+    fn tree_hash_packing_factor() -> usize {
+        beacon_types::Checkpoint::tree_hash_packing_factor()
+    }
+
+    fn tree_hash_root(&self) -> tree_hash::Hash256 {
+        self.0.tree_hash_root()
+    }
+}
+
+mod private {
+    use alloy_primitives::B256;
+
+    #[derive(serde::Serialize, alloy_rlp::RlpEncodable)]
+    pub struct EncCheckpoint<'a> {
+        epoch: u64,
+        root: &'a B256,
+    }
+
+    #[derive(serde::Deserialize, alloy_rlp::RlpDecodable)]
+    pub struct DecCheckpoint {
+        epoch: u64,
+        root: B256,
+    }
+
+    impl<'a> From<&'a super::Checkpoint> for EncCheckpoint<'a> {
+        #[inline]
+        fn from(c: &'a super::Checkpoint) -> Self {
+            Self {
+                epoch: c.0.epoch.as_u64(),
+                root: &c.0.root,
+            }
+        }
+    }
+
+    impl From<DecCheckpoint> for super::Checkpoint {
+        #[inline]
+        fn from(dec: DecCheckpoint) -> Self {
+            Self(beacon_types::Checkpoint {
+                epoch: dec.epoch.into(),
+                root: dec.root,
+            })
+        }
+    }
+}
+
+impl serde::Serialize for Checkpoint {
+    #[inline]
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        private::EncCheckpoint::from(self).serialize(serializer)
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for Checkpoint {
+    #[inline]
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        Ok(private::DecCheckpoint::deserialize(deserializer)?.into())
+    }
+}
+
+impl Encodable for Checkpoint {
+    #[inline]
+    fn encode(&self, out: &mut dyn alloy_rlp::BufMut) {
+        private::EncCheckpoint::from(self).encode(out)
+    }
+}
+
+impl Decodable for Checkpoint {
+    #[inline]
+    fn decode(buf: &mut &[u8]) -> Result<Self, alloy_rlp::Error> {
+        Ok(private::DecCheckpoint::decode(buf)?.into())
+    }
+}
+impl Checkpoint {
+    pub const fn new(epoch: Epoch, root: Root) -> Self {
+        Self(beacon_types::Checkpoint { epoch, root })
+    }
+
+    pub fn epoch(&self) -> Epoch {
+        self.0.epoch
+    }
+
+    pub fn root(&self) -> Root {
+        self.0.root
+    }
 }
 
 impl Display for Checkpoint {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "({},{})", self.root, self.epoch)
+        write!(f, "({},{})", self.root(), self.epoch())
     }
 }
 
-#[derive(
-    Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
-)]
+impl From<beacon_types::Checkpoint> for Checkpoint {
+    fn from(checkpoint: beacon_types::Checkpoint) -> Self {
+        Self::new(checkpoint.epoch, checkpoint.root)
+    }
+}
+
+impl From<Checkpoint> for beacon_types::Checkpoint {
+    fn from(checkpoint: Checkpoint) -> Self {
+        checkpoint.0
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct Link {
     pub source: Checkpoint,
     pub target: Checkpoint,
@@ -203,10 +302,7 @@ pub struct Link {
 #[cfg(feature = "host")]
 impl From<ethereum_consensus::electra::Checkpoint> for Checkpoint {
     fn from(checkpoint: ethereum_consensus::electra::Checkpoint) -> Self {
-        Self {
-            epoch: checkpoint.epoch,
-            root: checkpoint.root,
-        }
+        Self::new(checkpoint.epoch.into(), checkpoint.root)
     }
 }
 
@@ -217,4 +313,50 @@ macro_rules! ensure {
             return Err($err);
         }
     };
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use arbitrary::{Arbitrary, Unstructured};
+    use rand::{Rng, rng};
+
+    #[test]
+    fn bincode_input() {
+        let mut raw_data = vec![0u8; 512];
+        rng().fill(raw_data.as_mut_slice());
+        let mut unstructured = Unstructured::new(&raw_data[..]);
+
+        fn checkpoint(u: &mut Unstructured<'_>) -> beacon_types::Checkpoint {
+            beacon_types::Checkpoint::arbitrary(u).unwrap()
+        }
+
+        let attestation = Attestation::<MainnetEthSpec>::empty_for_signing(
+            1,
+            1,
+            Slot::arbitrary(&mut unstructured).unwrap(),
+            Default::default(),
+            checkpoint(&mut unstructured),
+            checkpoint(&mut unstructured),
+            &MainnetEthSpec::default_spec(),
+        )
+        .unwrap();
+
+        let input = Input::<MainnetEthSpec> {
+            state: ConsensusState {
+                previous_justified_checkpoint: Checkpoint(checkpoint(&mut unstructured)),
+                current_justified_checkpoint: Checkpoint(checkpoint(&mut unstructured)),
+                finalized_checkpoint: Checkpoint(checkpoint(&mut unstructured)),
+            },
+            links: vec![Link {
+                source: Checkpoint(checkpoint(&mut unstructured)),
+                target: Checkpoint(checkpoint(&mut unstructured)),
+            }],
+            attestations: vec![vec![attestation]],
+        };
+
+        let bytes = bincode::serialize(&input).unwrap();
+        let de = bincode::deserialize::<Input<MainnetEthSpec>>(&bytes).unwrap();
+        assert_eq!(input, de);
+    }
 }

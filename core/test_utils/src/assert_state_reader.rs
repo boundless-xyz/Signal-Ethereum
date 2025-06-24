@@ -13,8 +13,9 @@
 // limitations under the License.
 
 use alloy_primitives::B256;
+use beacon_types::{ChainSpec, EthSpec};
 use std::iter;
-use z_core::{Epoch, RandaoMixIndex, Root, StateReader, ValidatorIndex, ValidatorInfo, Version};
+use z_core::{Epoch, RandaoMixIndex, Root, StateReader, ValidatorIndex, ValidatorInfo};
 
 /// A simple state reader used for debugging and testing.
 pub struct AssertStateReader<'a, S, R> {
@@ -31,12 +32,17 @@ impl<'a, S: StateReader, R: StateReader> AssertStateReader<'a, S, R> {
     }
 }
 
-impl<S: StateReader, R: StateReader> StateReader for AssertStateReader<'_, S, R> {
+impl<E: EthSpec, S: StateReader<Spec = E>, R: StateReader<Spec = E>> StateReader
+    for AssertStateReader<'_, S, R>
+{
     type Error = S::Error;
-    type Context = S::Context;
+    type Spec = E;
 
-    fn context(&self) -> &S::Context {
-        self.reader_a.context()
+    fn chain_spec(&self) -> &ChainSpec {
+        let a = self.reader_a.chain_spec();
+        let b = self.reader_b.chain_spec();
+        assert_eq!(a, b);
+        a
     }
 
     fn genesis_validators_root(&self) -> Result<Root, Self::Error> {
@@ -46,9 +52,9 @@ impl<S: StateReader, R: StateReader> StateReader for AssertStateReader<'_, S, R>
         Ok(a)
     }
 
-    fn fork_current_version(&self, epoch: Epoch) -> Result<Version, Self::Error> {
-        let a = self.reader_a.fork_current_version(epoch)?;
-        let b = self.reader_b.fork_current_version(epoch).unwrap();
+    fn fork(&self, epoch: Epoch) -> Result<beacon_types::Fork, Self::Error> {
+        let a = self.reader_a.fork(epoch)?;
+        let b = self.reader_b.fork(epoch).unwrap();
         assert_eq!(a, b);
         Ok(a)
     }
@@ -64,8 +70,13 @@ impl<S: StateReader, R: StateReader> StateReader for AssertStateReader<'_, S, R>
                 (None, None) => None,
                 (Some(a), Some(b)) => {
                     assert_eq!(a.0, b.0);
-                    // only compare the public key
-                    assert_eq!(a.1.pubkey, b.1.pubkey);
+                    // do not compare the effective_balance as it is allowed to be incorrect
+                    let mut validator = a.1.clone();
+                    validator.effective_balance = b.1.effective_balance;
+                    // currently the exit_epoch is not overridden, but still considered for activity
+                    validator.exit_epoch = b.1.exit_epoch;
+                    assert_eq!(&validator, b.1);
+
                     Some(a)
                 }
                 (a, b) => panic!(

@@ -87,7 +87,7 @@ pub fn initialized<E: EthSpec>(
             .ok_or(Error::ShuffleIndexOutOfBounds(v))? = NonZeroUsize::new(i + 1);
     }
 
-    #[derive(Debug, Default, Clone, serde::Serialize)]
+    #[derive(serde::Serialize)]
     struct CommitteeCacheWrapper {
         initialized_epoch: Option<Epoch>,
         shuffling: Vec<usize>,

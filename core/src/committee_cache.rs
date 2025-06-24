@@ -100,6 +100,7 @@ impl<E: EthSpec> CommitteeCache<E> {
                 .ok_or(Error::ShuffleIndexOutOfBounds(v))? = NonZeroUsize::new(i + 1);
         }
 
+        tracing::info!("Committee cache initialized!");
         Ok(CommitteeCache {
             initialized_epoch: Some(epoch),
             shuffling,

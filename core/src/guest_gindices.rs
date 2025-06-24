@@ -12,36 +12,95 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Beacon block indices
-pub const fn state_root_gindex() -> u64 {
-    11u64
-}
-
-// Beacon state indices
-pub const fn slot_gindex() -> u64 {
+/// Returns the gindex of slot from BeaconState
+#[inline(always)]
+pub(crate) const fn slot_gindex() -> u64 {
     66u64
 }
-pub const fn genesis_validators_root_gindex() -> u64 {
-    65u64
-}
-pub const fn fork_previous_version_gindex() -> u64 {
-    268u64
-}
-pub const fn fork_current_version_gindex() -> u64 {
-    269u64
-}
-pub const fn fork_epoch_gindex() -> u64 {
-    270u64
-}
-pub const fn validators_gindex() -> u64 {
-    75u64
-}
-pub const fn finalized_checkpoint_epoch_gindex() -> u64 {
+/// Returns the gindex of finalized_checkpoint_epoch from BeaconState
+#[inline(always)]
+pub(crate) const fn finalized_checkpoint_epoch_gindex() -> u64 {
     168u64
 }
-pub const fn earliest_exit_epoch_gindex() -> u64 {
+/// Returns the gindex of genesis_validators_root from BeaconState
+#[inline(always)]
+pub(crate) const fn genesis_validators_root_gindex() -> u64 {
+    65u64
+}
+/// Returns the gindex of fork_previous_version from BeaconState
+#[inline(always)]
+pub(crate) const fn fork_previous_version_gindex() -> u64 {
+    268u64
+}
+/// Returns the gindex of fork_current_version from BeaconState
+#[inline(always)]
+pub(crate) const fn fork_current_version_gindex() -> u64 {
+    269u64
+}
+/// Returns the gindex of fork_epoch from BeaconState
+#[inline(always)]
+pub(crate) const fn fork_epoch_gindex() -> u64 {
+    270u64
+}
+/// Returns the gindex of validators from BeaconState
+#[inline(always)]
+pub(crate) const fn validators_gindex() -> u64 {
+    75u64
+}
+/// Returns the gindex of earliest_exit_epoch from BeaconState
+#[inline(always)]
+pub(crate) const fn earliest_exit_epoch_gindex() -> u64 {
     95u64
 }
-pub const fn earliest_consolidation_epoch_gindex() -> u64 {
+/// Returns the gindex of earliest_consolidation_epoch from BeaconState
+#[inline(always)]
+pub(crate) const fn earliest_consolidation_epoch_gindex() -> u64 {
     97u64
+}
+/// Returns the gindex of state_root from BeaconBlock
+#[inline(always)]
+pub(crate) const fn state_root_gindex() -> u64 {
+    11u64
+}
+/// Returns the gindex of public_key_0 from Validator i
+#[inline(always)]
+pub(crate) const fn public_key_0_gindex(i: crate::ValidatorIndex) -> u64 {
+    const CHUNK_OFFSET: u64 = 16u64 / 8u64;
+    const WITHIN_CHUNK: u64 = 16u64 % 8u64;
+    (2199023255552u64 + (i as u64)) * 8u64 * CHUNK_OFFSET + WITHIN_CHUNK
+}
+/// Returns the gindex of public_key_1 from Validator i
+#[inline(always)]
+pub(crate) const fn public_key_1_gindex(i: crate::ValidatorIndex) -> u64 {
+    const CHUNK_OFFSET: u64 = 17u64 / 8u64;
+    const WITHIN_CHUNK: u64 = 17u64 % 8u64;
+    (2199023255552u64 + (i as u64)) * 8u64 * CHUNK_OFFSET + WITHIN_CHUNK
+}
+/// Returns the gindex of effective_balance from Validator i
+#[inline(always)]
+pub(crate) const fn effective_balance_gindex(i: crate::ValidatorIndex) -> u64 {
+    const CHUNK_OFFSET: u64 = 10u64 / 8u64;
+    const WITHIN_CHUNK: u64 = 10u64 % 8u64;
+    (2199023255552u64 + (i as u64)) * 8u64 * CHUNK_OFFSET + WITHIN_CHUNK
+}
+/// Returns the gindex of activation_eligibility_epoch from Validator i
+#[inline(always)]
+pub(crate) const fn activation_eligibility_epoch_gindex(i: crate::ValidatorIndex) -> u64 {
+    const CHUNK_OFFSET: u64 = 12u64 / 8u64;
+    const WITHIN_CHUNK: u64 = 12u64 % 8u64;
+    (2199023255552u64 + (i as u64)) * 8u64 * CHUNK_OFFSET + WITHIN_CHUNK
+}
+/// Returns the gindex of activation_epoch from Validator i
+#[inline(always)]
+pub(crate) const fn activation_epoch_gindex(i: crate::ValidatorIndex) -> u64 {
+    const CHUNK_OFFSET: u64 = 13u64 / 8u64;
+    const WITHIN_CHUNK: u64 = 13u64 % 8u64;
+    (2199023255552u64 + (i as u64)) * 8u64 * CHUNK_OFFSET + WITHIN_CHUNK
+}
+/// Returns the gindex of exit_epoch from Validator i
+#[inline(always)]
+pub(crate) const fn exit_epoch_gindex(i: crate::ValidatorIndex) -> u64 {
+    const CHUNK_OFFSET: u64 = 14u64 / 8u64;
+    const WITHIN_CHUNK: u64 = 14u64 % 8u64;
+    (2199023255552u64 + (i as u64)) * 8u64 * CHUNK_OFFSET + WITHIN_CHUNK
 }

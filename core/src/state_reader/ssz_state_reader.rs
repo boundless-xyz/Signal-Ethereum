@@ -307,6 +307,7 @@ fn extract_beacon_block_multiproof(
 ///
 /// Currently, includes:
 /// - genesis_validators_root
+/// - slot
 /// - fork
 /// - validators_root
 /// - finalized_checkpoint.epoch

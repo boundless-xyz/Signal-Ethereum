@@ -40,14 +40,16 @@ fn main() {
 }
 
 fn gen_guest_gindices_impl(
-    gindices: &[(String, String, proc_macro2::TokenStream)],
+    gindices: &[(String, String, String, proc_macro2::TokenStream)],
 ) -> proc_macro2::TokenStream {
-    let gindex_impls = gindices.iter().map(|(name, ret_type, value)| {
-        let method_name = format_ident!("{}", name);
+    let gindex_impls = gindices.iter().map(|(name, ret_type, root, value)| {
+        let method_name = format_ident!("{}_gindex", name);
         let return_type = syn::parse_str::<syn::Type>(ret_type).unwrap();
-
+        let comment = format!(" Returns the gindex of {} from {}", name, root);
         quote! {
-            pub const fn #method_name() -> #return_type {
+            #[doc = #comment]
+            #[inline(always)]
+            pub(crate) const fn #method_name() -> #return_type {
                 #value
             }
         }
@@ -58,13 +60,18 @@ fn gen_guest_gindices_impl(
     }
 }
 
-fn beacon_gindices<G>() -> Vec<(String, String, proc_macro2::TokenStream)>
+// Returns name, return type, the root of the path, and value
+fn beacon_gindices<G>() -> Vec<(String, String, String, proc_macro2::TokenStream)>
 where
     G: GeneralizedIndexable,
 {
     // Static paths for the BeaconState
     [
         ("slot", Path::from(&["slot".into()])),
+        (
+            "finalized_checkpoint_epoch",
+            Path::from(&["finalized_checkpoint".into(), "epoch".into()]),
+        ),
         (
             "genesis_validators_root",
             Path::from(&["genesis_validators_root".into()]),
@@ -79,13 +86,16 @@ where
         ),
         ("fork_epoch", Path::from(&["fork".into(), "epoch".into()])),
         ("validators", Path::from(&["validators".into()])),
-        (
-            "randao_mixes_0",
-            Path::from(&["randao_mixes".into(), 0.into()]),
-        ),
     ]
     .map(|(name, path)| gen_gindices::<G>(name.to_string(), path))
-    .map(|(name, ret_type, value)| (format!("{name}_gindex"), ret_type, value))
+    .map(|(name, ret_type, value)| {
+        (
+            format!("{name}"),
+            ret_type,
+            "BeaconState".to_string(),
+            value,
+        )
+    })
     .to_vec()
 }
 

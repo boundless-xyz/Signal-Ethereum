@@ -36,6 +36,7 @@ mod guest_gindices;
 #[cfg(feature = "host")]
 mod input_builder;
 mod serde_utils;
+mod spec;
 mod state_patch;
 mod state_reader;
 mod threshold;
@@ -49,6 +50,7 @@ pub use committee_cache::*;
 pub use consensus_state::*;
 #[cfg(feature = "host")]
 pub use input_builder::*;
+pub use spec::*;
 pub use state_patch::*;
 pub use state_reader::*;
 pub use threshold::*;

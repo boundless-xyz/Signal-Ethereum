@@ -33,9 +33,8 @@ use z_core::{
 };
 use z_core_test_utils::AssertStateReader;
 
-pub mod beacon_client;
-
-pub mod state_provider;
+mod beacon_client;
+mod state_provider;
 
 use crate::{beacon_client::BeaconClient, state_provider::PersistentApiStateProvider};
 
@@ -92,9 +91,6 @@ enum Command {
         /// Trusted epoch
         #[clap(long)]
         trusted_epoch: Epoch,
-        /// Number of iterations to run
-        #[clap(short('i'), long, default_value_t = 1)]
-        iterations: u64,
     },
     /// Attempts to sync a trusted block root to the latest state available on the Beacon API
     /// Optionally can log any places the resulting consensus state diverges from the chain for debugging
@@ -138,7 +134,7 @@ async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::filter::EnvFilter::from_default_env())
         .init();
-    let args = Args::parse();
+    let args = Args::try_parse()?;
 
     let beacon_client = BeaconClient::builder(args.beacon_api)
         .with_cache(args.data_dir.join("http"))
@@ -149,37 +145,36 @@ async fn main() -> anyhow::Result<()> {
     fs::create_dir_all(&state_dir)?;
 
     let provider = PersistentApiStateProvider::<Spec>::new(&state_dir, beacon_client.clone())?;
-
     let reader = HostStateReader::new(CacheStateProvider::new(provider.clone()));
 
     match args.command {
         Command::Verify {
             mode,
-            iterations,
             trusted_epoch,
         } => {
             let trusted_state =
                 reader.state_at_slot(trusted_epoch.start_slot(Spec::slots_per_epoch()))?;
             let epoch_boundary_slot = trusted_state.latest_block_header().slot;
-            let trusted_beacon_block = beacon_client.get_block(epoch_boundary_slot).await?.unwrap();
+            let trusted_beacon_block = beacon_client
+                .get_block(epoch_boundary_slot)
+                .await?
+                .with_context(|| format!("block {} not found", epoch_boundary_slot))?;
             assert_eq!(
                 trusted_beacon_block.state_root(),
-                trusted_state.hash_tree_root().unwrap()
+                trusted_state.hash_tree_root()?
             );
-            let mut trusted_checkpoint =
+            let trusted_checkpoint =
                 Checkpoint::new(trusted_epoch, trusted_beacon_block.hash_tree_root()?);
             info!("Trusted checkpoint: {}", trusted_checkpoint);
 
             let builder = InputBuilder::<Spec, _>::new(beacon_client.clone());
 
-            for i in 0..iterations {
-                info!("Iteration: {}", i);
-                let (input, _) = builder.build(trusted_checkpoint).await?;
-                debug!("Input: {:?}", input);
+            let (input, _) = builder.build(trusted_checkpoint).await?;
+            info!("Pre-state: {:#?}", input.consensus_state);
+            debug!("Input: {:?}", input);
 
-                let consensus_state = run_verify::<DefaultSpec, _>(mode, &reader, input.clone())?; // will panic if verification fails
-                trusted_checkpoint = consensus_state.finalized_checkpoint;
-            }
+            let post_state = run_verify::<DefaultSpec, _>(mode, &reader, input.clone())?;
+            info!("Post-state: {:#?}", post_state);
         }
         Command::Sync {
             mode,
@@ -202,12 +197,17 @@ async fn run_sync<E: ZkasperSpec>(
 ) -> anyhow::Result<()> {
     info!("Running Sync in mode: {mode}");
 
-    let logfile = log_path.map(|path| {
-        fs::create_dir_all(path.parent().unwrap()).expect("Failed to create log directory");
-        let file = File::create(&path).expect("Failed to create log file");
-        info!("Logging sync progress to: {}", path.display());
-        file
-    });
+    let logfile = match log_path {
+        Some(path) => {
+            if let Some(path) = path.parent() {
+                fs::create_dir_all(path).context("Failed to create log directory")?;
+            };
+            let file = File::create(&path).context("Failed to create log file")?;
+            info!("Logging sync progress to: {}", path.display());
+            Some(file)
+        }
+        None => None,
+    };
 
     let mut consensus_state = beacon_client.get_consensus_state(start_slot).await?;
     info!("Initial Consensus State: {:#?}", consensus_state);

@@ -91,10 +91,9 @@ where
     I: IntoIterator,
     I::Item: AsRef<ValidatorInfo>,
 {
-    let mut total_balance = 0;
-    for validator in validators {
-        total_balance.safe_add_assign(validator.as_ref().effective_balance)?;
-    }
+    let total_balance = validators.into_iter().try_fold(0u64, |acc, validator| {
+        acc.safe_add(validator.as_ref().effective_balance)
+    })?;
 
     Ok(std::cmp::max(
         total_balance,

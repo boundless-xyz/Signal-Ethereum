@@ -58,6 +58,14 @@ impl From<ArithError> for VerifyError {
     }
 }
 
+/// Verifies a batch of attestations to advance the consensus state.
+///
+/// This function processes the given attestations. For each corresponding superiority link it
+/// updates the consensus state until a new finalization is reached.
+///
+/// # Preconditions
+///
+/// The `input.attestations` are expected to be sorted by `(attestation.data.source, attestation.data.target)`.
 pub fn verify<S: StateReader>(
     state_reader: &S,
     input: Input<S::Spec>,

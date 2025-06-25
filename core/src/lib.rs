@@ -70,10 +70,28 @@ pub type ForkDigest = [u8; 4];
 // Mainnet constants
 pub const VALIDATOR_REGISTRY_LIMIT: u64 = 2u64.pow(40);
 
+/// Represents the complete set of inputs required for the consensus verification process.
+///
+/// This struct bundles a trusted [ConsensusState] with a collection of [Attestation]s.
+/// The attestations are treated as evidence that may justify advancing the finalized checkpoint of
+/// the consensus state. It is typically serialized and passed over an API for stateless verification.
 #[serde_as]
 #[derive(Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Input<E: EthSpec> {
+    /// The trusted consensus state that serves as the starting point.
+    ///
+    /// Any state transitions resulting from the verification of the `attestations` will be applied
+    /// relative to this state.
     pub consensus_state: ConsensusState,
+
+    /// A list of attestations to be processed.
+    ///
+    /// This contains only the required attestations to advance the consensus state, i.e., they
+    /// each correspond to a superiority link leading to a new justification.
+    ///
+    /// This vector is expected to be pre-sorted by
+    /// `(attestation.data.source, attestation.data.target)` so that all attestations
+    /// for the same link are grouped together.
     #[serde_as(as = "Vec<DiskAttestation>")]
     pub attestations: Vec<Attestation<E>>,
 }

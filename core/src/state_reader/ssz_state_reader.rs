@@ -14,17 +14,9 @@
 
 use super::StateReader;
 use crate::{
-    Checkpoint, ConsensusState, Epoch, PublicKey, RandaoMixIndex, Root, Slot, StatePatch,
-    ValidatorIndex, ValidatorInfo,
     guest_gindices::{
-        activation_eligibility_epoch_gindex, activation_epoch_gindex,
-        earliest_consolidation_epoch_gindex, earliest_exit_epoch_gindex, effective_balance_gindex,
-        exit_epoch_gindex, finalized_checkpoint_epoch_gindex, fork_current_version_gindex,
-        fork_epoch_gindex, fork_previous_version_gindex, genesis_validators_root_gindex,
-        public_key_0_gindex, public_key_1_gindex, slot_gindex, state_root_gindex,
-        validators_gindex,
-    },
-    has_compressed_chunks, serde_utils,
+        activation_eligibility_epoch_gindex, activation_epoch_gindex, earliest_consolidation_epoch_gindex, earliest_exit_epoch_gindex, effective_balance_gindex, exit_epoch_gindex, finalized_checkpoint_epoch_gindex, fork_current_version_gindex, fork_epoch_gindex, fork_previous_version_gindex, genesis_validators_root_gindex, public_key_0_gindex, public_key_1_gindex, slashed_gindex, slot_gindex, state_root_gindex, validators_gindex
+    }, has_compressed_chunks, serde_utils, Checkpoint, ConsensusState, Epoch, PublicKey, RandaoMixIndex, Root, Slot, StatePatch, ValidatorIndex, ValidatorInfo
 };
 use alloy_primitives::B256;
 use beacon_types::{ChainSpec, EthSpec, Fork};
@@ -407,7 +399,8 @@ fn extract_validators_multiproof(
             assert_eq!(gindex, effective_balance_gindex(validator_index));
             let effective_balance = u64_from_chunk(effective_balance);
 
-            let (_, slashed) = values.next().ok_or(ssz_multiproofs::Error::MissingValue)?;
+            let (gindex, slashed) = values.next().ok_or(ssz_multiproofs::Error::MissingValue)?;
+            assert_eq!(gindex, slashed_gindex(validator_index));
             let slashed = slashed != &[0; 32];
 
             let (gindex, activation_eligibility_epoch) =

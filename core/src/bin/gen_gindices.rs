@@ -96,6 +96,7 @@ fn validators_gindices() -> proc_macro2::TokenStream {
         ),
         ("activation_epoch", Path::from(&["activation_epoch".into()])),
         ("exit_epoch", Path::from(&["exit_epoch".into()])),
+        ("slashed", Path::from(&["slashed".into()])),
     ]
     .map(|(name, path)| gen_gindices::<Validator>(name.to_string(), path))
     .map(|(name, ret_type, value)| (format!("{name}"), ret_type, quote!(#value)))

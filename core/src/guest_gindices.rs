@@ -104,3 +104,10 @@ pub(crate) const fn exit_epoch_gindex(i: crate::ValidatorIndex) -> u64 {
     const WITHIN_CHUNK: u64 = 14u64 % 8u64;
     (2199023255552u64 + (i as u64)) * 8u64 * CHUNK_OFFSET + WITHIN_CHUNK
 }
+/// Returns the gindex of slashed from Validator i
+#[inline(always)]
+pub(crate) const fn slashed_gindex(i: crate::ValidatorIndex) -> u64 {
+    const CHUNK_OFFSET: u64 = 11u64 / 8u64;
+    const WITHIN_CHUNK: u64 = 11u64 % 8u64;
+    (2199023255552u64 + (i as u64)) * 8u64 * CHUNK_OFFSET + WITHIN_CHUNK
+}

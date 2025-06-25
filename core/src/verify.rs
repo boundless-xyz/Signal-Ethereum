@@ -14,7 +14,7 @@
 
 use crate::{
     AttestationData, BEACON_ATTESTER_DOMAIN, CommitteeCache, Epoch, Input, ShuffleData,
-    StateReader, StateTransitionError, ValidatorIndex, ValidatorInfo,
+    StateReader, StateTransitionError, ValidatorIndex, ValidatorInfo, ZkasperSpec,
     consensus_state::ConsensusState, ensure, get_attesting_indices, threshold::threshold,
 };
 
@@ -43,7 +43,8 @@ pub enum VerifyError {
     StateReaderError(String),
     #[error("Missing validator info for index: {0}")]
     MissingValidatorInfo(ValidatorIndex),
-
+    #[error("Unsupported fork")]
+    UnsupportedFork([u8; 4]),
     #[error("Lighthouse types: {0:?}")]
     LighthouseTypes(beacon_types::Error),
     #[error("Verify error: {0}")]
@@ -56,7 +57,7 @@ impl From<beacon_types::Error> for VerifyError {
     }
 }
 
-pub fn verify<S: StateReader>(
+pub fn verify<S: StateReader, ZS: ZkasperSpec>(
     state_reader: &S,
     input: Input<S::Spec>,
 ) -> Result<ConsensusState, VerifyError> {
@@ -65,6 +66,14 @@ pub fn verify<S: StateReader>(
         links: link,
         attestations,
     } = input;
+
+    let fork = state_reader
+        .fork(state.finalized_checkpoint.epoch())
+        .map_err(|e| VerifyError::StateReaderError(e.to_string()))?;
+    ensure!(
+        ZS::is_supported_fork(&fork.current_version),
+        VerifyError::UnsupportedFork(fork.current_version)
+    );
     ensure!(
         link.len() == attestations.len(),
         VerifyError::Other("Link and attestations must be the same length".to_string())
@@ -143,7 +152,7 @@ pub fn verify<S: StateReader>(
         // (if any) we need to assume the worst case
         // TODO: Fix
         let lookahead = link.target.epoch() + 1 - trusted_checkpoint.epoch();
-        let threshold = threshold(lookahead.as_u64(), total_active_balance);
+        let threshold = threshold::<S::Spec>(lookahead.as_u64(), total_active_balance);
 
         ensure!(
             attesting_balance >= threshold,

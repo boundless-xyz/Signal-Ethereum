@@ -36,8 +36,8 @@ use test_utils::{
     AssertStateReader, TestHarness, consensus_state_from_state, get_harness, get_spec,
 };
 use z_core::{
-    ConsensusState, HostStateReader, InputBuilder, PreflightStateReader, StateReader, VerifyError,
-    threshold, verify,
+    ConsensusState, DefaultSpec, HostStateReader, InputBuilder, PreflightStateReader, StateReader,
+    VerifyError, threshold, verify,
 };
 
 pub const VALIDATOR_COUNT: u64 = 48;
@@ -102,7 +102,7 @@ async fn test_zkasper_sync(
                 );
 
                 // Perform a preflight verification to record the state reads
-                _ = verify(&preflight_state_reader, input.clone())?;
+                _ = verify::<_, DefaultSpec>(&preflight_state_reader, input.clone())?;
 
                 // build a self-contained SSZ reader
                 let ssz_state_reader = preflight_state_reader
@@ -112,7 +112,7 @@ async fn test_zkasper_sync(
                 // Merge into a single AssertStateReader that ensures identical data returned for each read
                 let assert_sr = AssertStateReader::new(&state_reader, &ssz_state_reader);
                 // Verify again
-                consensus_state = verify(&assert_sr, input)?;
+                consensus_state = verify::<_, DefaultSpec>(&assert_sr, input)?;
 
                 println!("consensus state: {:?}", &consensus_state);
             }
@@ -170,7 +170,8 @@ async fn finalizes_with_threshold_participation() {
     let harness = get_harness(KEYPAIRS[..].to_vec(), spec, Slot::new(224)).await;
     let num_blocks_produced = harness.slots_per_epoch() * 3;
 
-    let required_threshold = threshold(3, VALIDATOR_COUNT * ETH_PER_VALIDATOR * GWEI_PER_ETH);
+    let required_threshold =
+        threshold::<MainnetEthSpec>(3, VALIDATOR_COUNT * ETH_PER_VALIDATOR * GWEI_PER_ETH);
 
     let required_validators =
         required_threshold.div_ceil(ETH_PER_VALIDATOR * GWEI_PER_ETH) as usize;
@@ -418,7 +419,8 @@ async fn chain_finalizes_but_zkcasper_does_not() {
     let harness = get_harness(KEYPAIRS[..].to_vec(), spec, Slot::new(224)).await;
     let num_blocks_produced = harness.slots_per_epoch() * 3;
 
-    let required_threshold = threshold(3, VALIDATOR_COUNT * ETH_PER_VALIDATOR * GWEI_PER_ETH);
+    let required_threshold =
+        threshold::<MainnetEthSpec>(3, VALIDATOR_COUNT * ETH_PER_VALIDATOR * GWEI_PER_ETH);
 
     let required_validators =
         required_threshold.div_ceil(ETH_PER_VALIDATOR * GWEI_PER_ETH) as usize;

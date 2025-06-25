@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use risc0_zkvm::guest::env;
-use z_core::{Input, MainnetEthSpec, StateInput, verify};
+use z_core::{DefaultSpec, Input, MainnetEthSpec, StateInput, verify};
 
 type Spec = MainnetEthSpec;
 fn main() {
@@ -49,7 +49,7 @@ fn main() {
     env::log("Running FFG state update");
 
     let pre_state = input.state.clone();
-    let post_state = verify(&state_reader, input).unwrap();
+    let post_state = verify::<_, DefaultSpec>(&state_reader, input).unwrap();
 
     // write public output to the journal
     env::commit_slice(&pre_state.abi_encode());

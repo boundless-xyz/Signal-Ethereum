@@ -32,7 +32,7 @@ mod state_provider;
 pub use self::{host_state_reader::*, preflight_state_reader::*, state_provider::*};
 pub use ssz_state_reader::*;
 
-#[derive(Error, Debug)]
+#[derive(Error, Debug, PartialEq)]
 pub enum StateReaderError {
     #[error("any")]
     Any,

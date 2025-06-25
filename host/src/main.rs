@@ -28,9 +28,9 @@ use std::{
 use tracing::{debug, info, warn};
 use url::Url;
 use z_core::{
-    CacheStateProvider, ChainReader, Checkpoint, ConsensusState, Epoch, HostStateReader, Input,
-    InputBuilder, MainnetEthSpec, PreflightStateReader, Slot, StateInput, StateProvider,
-    StateReader, verify,
+    CacheStateProvider, ChainReader, Checkpoint, ConsensusState, DefaultSpec, Epoch,
+    HostStateReader, Input, InputBuilder, MainnetEthSpec, PreflightStateReader, Slot, StateInput,
+    StateProvider, StateReader, verify,
 };
 use z_core_test_utils::AssertStateReader;
 
@@ -254,7 +254,8 @@ fn run_verify<E: EthSpec + Serialize, R: StateReader<Spec = E> + StateProvider<S
 
     info!("Running preflight");
     let reader = PreflightStateReader::new(host_reader, input.state.finalized_checkpoint);
-    let consensus_state = verify(&reader, input.clone()).context("preflight failed")?;
+    let consensus_state =
+        verify::<_, DefaultSpec>(&reader, input.clone()).context("preflight failed")?;
     info!("Preflight succeeded");
 
     if mode == ExecMode::Ssz || mode == ExecMode::R0vm {
@@ -278,7 +279,7 @@ fn run_verify<E: EthSpec + Serialize, R: StateReader<Spec = E> + StateProvider<S
 
         // use the AssertStateReader to detect input issues already on the host
         let host_consensus_state =
-            verify(&AssertStateReader::new(&guest_reader, &reader), guest_input)
+            verify::<_, DefaultSpec>(&AssertStateReader::new(&guest_reader, &reader), guest_input)
                 .context("host verification failed")?;
         ensure!(host_consensus_state == consensus_state);
         info!("Host verification succeeded");

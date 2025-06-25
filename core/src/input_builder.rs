@@ -74,7 +74,8 @@ impl<E: EthSpec, CR: ChainReader> InputBuilder<E, CR> {
         // Find the first consensus state that confirms the finality of the trusted_checkpoint
         let finalization_epoch = self.find_finalization_epoch(trusted_checkpoint).await?;
         debug!(
-            "finalization_epoch: {finalization_epoch} Found state confirming trusted checkpoint"
+            epoch = finalization_epoch.as_u64(),
+            "Found state confirming trusted checkpoint"
         );
 
         let (state, next_state, links) = self

@@ -119,7 +119,7 @@ impl<P: StateProvider> StateReader for HostStateReader<P> {
             None => {
                 let beacon_state = self.state(epoch)?;
 
-                debug!("Caching validators for epoch {epoch}...");
+                debug!("Caching validators for epoch {epoch}");
                 let validators: Vec<_> = beacon_state
                     .validators()
                     .iter()

@@ -20,7 +20,7 @@ use ssz_rs::HashTreeRoot;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::{fs, marker::PhantomData};
-use tracing::{debug, warn};
+use tracing::{debug, info, warn};
 
 #[derive(Debug, thiserror::Error)]
 pub enum StateProviderError {
@@ -146,10 +146,9 @@ impl<E: EthSpec> FileProvider<E> {
 
     pub fn clear_states_before(&self, epoch: Epoch) -> Result<(), anyhow::Error> {
         let slot = epoch.start_slot(E::slots_per_epoch());
-        tracing::info!(
+        info!(
             "Clearing all beacon states before epoch: {} (slot: {})",
-            epoch,
-            slot
+            epoch, slot
         );
         for entry in fs::read_dir(&self.directory)? {
             let entry = entry?;

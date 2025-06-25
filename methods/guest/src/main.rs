@@ -12,9 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use beacon_types::{Config, EthSpec};
 use risc0_zkvm::guest::env;
 use z_core::{DefaultSpec, Input, MainnetEthSpec, StateInput, verify};
-
 type Spec = MainnetEthSpec;
 
 fn main() {
@@ -26,9 +26,21 @@ fn main() {
         .init();
 
     env::log("Reading frames...");
+    let config_bytes = env::read_frame();
     let ssz_reader_bytes = env::read_frame();
     let input_bytes = env::read_frame();
     env::log("Deserializing data...");
+
+    let chain_spec = {
+        let config: Config = serde_json::from_slice(&config_bytes).unwrap();
+        config
+            .apply_to_chain_spec::<Spec>(&Spec::default_spec())
+            .unwrap()
+    };
+    env::log(&format!(
+        "ChainSpec deserialized: {} bytes",
+        config_bytes.len()
+    ));
 
     let input: Input<Spec> = bincode::deserialize(&input_bytes).unwrap();
     env::log(&format!("Input deserialized: {} bytes", input_bytes.len()));
@@ -41,7 +53,7 @@ fn main() {
         ));
 
         env::log("Verifying StateReader...");
-        state_input.into_state_reader(&input.consensus_state)
+        state_input.into_state_reader(chain_spec, &input.consensus_state)
     }
     .unwrap();
 

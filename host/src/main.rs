@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use anyhow::{Context, ensure};
-use beacon_types::{ChainSpec, EthSpec};
+use beacon_types::{ChainSpec, Config, EthSpec};
 use clap::{Parser, ValueEnum};
 use eth2_network_config::Eth2NetworkConfig;
 use methods::BEACON_GUEST_ELF;
@@ -288,7 +288,11 @@ fn run_verify<
     if mode == ExecMode::Ssz || mode == ExecMode::R0vm {
         info!("Running host verification");
         let state_input = reader.to_input();
-
+        let config_bytes = serde_json::to_vec(&Config::from_chain_spec::<E::EthSpec>(
+            host_reader.chain_spec(),
+        ))
+        .context("failed to serialize chain spec")?;
+        debug!(len = config_bytes.len(), "Chain config serialized");
         let state_bytes = bincode::serialize(&state_input).context("failed to serialize state")?;
         debug!(len = state_bytes.len(), "State serialized");
         let input_bytes = bincode::serialize(&input).context("failed to serialize input")?;
@@ -300,7 +304,7 @@ fn run_verify<
             let state_input: StateInput =
                 bincode::deserialize(&state_bytes).context("failed to deserialize state")?;
             state_input
-                .into_state_reader(&input.consensus_state)
+                .into_state_reader(host_reader.chain_spec().clone(), &input.consensus_state)
                 .context("failed to validate input")?
         };
 
@@ -313,7 +317,7 @@ fn run_verify<
 
         if mode == ExecMode::R0vm {
             info!("Executing guest verification");
-            let journal = execute_guest_program(state_bytes, input_bytes)
+            let journal = execute_guest_program(config_bytes, state_bytes, input_bytes)
                 .context("guest verification failed")?;
             // decode the journal
             let (pre_state, post_state) = journal.split_at(ConsensusState::abi_encoded_size());
@@ -331,10 +335,12 @@ fn run_verify<
 }
 
 fn execute_guest_program(
+    config: impl AsRef<[u8]>,
     state: impl AsRef<[u8]>,
     input: impl AsRef<[u8]>,
 ) -> anyhow::Result<Vec<u8>> {
     let env = ExecutorEnv::builder()
+        .write_frame(config.as_ref())
         .write_frame(state.as_ref())
         .write_frame(input.as_ref())
         .build()?;

@@ -181,7 +181,7 @@ fn process_attestation<S: StateReader, E: EthSpec>(
 }
 
 /// Checks if given indexed attestation is not empty and has a valid aggregate signature.
-fn is_valid_indexed_attestation<'a, S: StateReader>(
+fn is_valid_indexed_attestation<S: StateReader>(
     state_reader: &S,
     attesting_validators: &[&ValidatorInfo],
     data: &AttestationData,
@@ -192,7 +192,7 @@ fn is_valid_indexed_attestation<'a, S: StateReader>(
     }
 
     let pubkeys = attesting_validators
-        .into_iter()
+        .iter()
         .map(|validator| &validator.pubkey)
         .collect::<Vec<_>>();
 

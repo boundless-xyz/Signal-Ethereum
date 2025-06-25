@@ -77,7 +77,7 @@ async fn test_zkasper_sync(
     println!("Pre consensus state: {:?}", consensus_state);
 
     loop {
-        let state_reader = HostStateReader::with_spec(harness, harness.spec.clone());
+        let state_reader = HostStateReader::new((*harness.spec).clone(), harness);
         let preflight_state_reader =
             PreflightStateReader::new(&state_reader, consensus_state.finalized_checkpoint);
         println!(

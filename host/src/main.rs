@@ -151,7 +151,10 @@ async fn main() -> anyhow::Result<()> {
 
     let provider = PersistentApiStateProvider::<Spec>::new(&state_dir, beacon_client.clone())?;
 
-    let reader = HostStateReader::new(CacheStateProvider::new(provider.clone()));
+    let reader = HostStateReader::new(
+        Spec::default_spec(),
+        CacheStateProvider::new(provider.clone()),
+    );
 
     match args.command {
         Command::Verify {
@@ -212,7 +215,8 @@ async fn run_sync<E: EthSpec + Serialize>(
 
     let mut consensus_state = beacon_client.get_consensus_state(start_slot).await?;
     info!("Initial Consensus State: {:#?}", consensus_state);
-    let sr = HostStateReader::<PersistentApiStateProvider<E>>::new(provider.clone());
+    let sr =
+        HostStateReader::<PersistentApiStateProvider<E>>::new(E::default_spec(), provider.clone());
 
     let input_builder = InputBuilder::<E, _>::new(beacon_client.clone());
 

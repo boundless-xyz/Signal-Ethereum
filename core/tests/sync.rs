@@ -61,6 +61,7 @@ async fn test_zkasper_sync(
     harness: &TestHarness,
     initial_consensus_state: ConsensusState,
 ) -> Result<ConsensusState, VerifyError> {
+    let spec = get_spec();
     let head_state = harness.chain.head_beacon_state_cloned();
 
     let mut consensus_state = initial_consensus_state;
@@ -68,7 +69,7 @@ async fn test_zkasper_sync(
     println!("Pre consensus state: {:?}", consensus_state);
 
     loop {
-        let state_reader = HostStateReader::new(harness);
+        let state_reader = HostStateReader::new((*spec).clone(), harness);
         let preflight_state_reader =
             PreflightStateReader::new(&state_reader, consensus_state.finalized_checkpoint);
         println!(
@@ -91,7 +92,7 @@ async fn test_zkasper_sync(
                 // build a self-contained SSZ reader
                 let ssz_state_reader = preflight_state_reader
                     .to_input()
-                    .into_state_reader(&consensus_state)
+                    .into_state_reader((*spec).clone(), &consensus_state)
                     .expect("Failed to convert to SSZ state reader");
                 // Merge into a single AssertStateReader that ensures identical data returned for each read
                 let assert_sr = AssertStateReader::new(&state_reader, &ssz_state_reader);
@@ -151,11 +152,15 @@ async fn simple_finalize_epoch() {
 #[test(tokio::test)]
 async fn finalizes_with_threshold_participation() {
     let spec = get_spec();
-    let harness = get_harness(KEYPAIRS[..].to_vec(), spec, Slot::new(224)).await;
+    let harness = get_harness(KEYPAIRS[..].to_vec(), spec.clone(), Slot::new(224)).await;
     let num_blocks_produced = harness.slots_per_epoch() * 3;
 
-    let required_threshold =
-        threshold::<MainnetEthSpec>(3, VALIDATOR_COUNT * ETH_PER_VALIDATOR * GWEI_PER_ETH);
+    let owned_spec = (*spec).clone();
+    let required_threshold = threshold(
+        &owned_spec,
+        3,
+        VALIDATOR_COUNT * ETH_PER_VALIDATOR * GWEI_PER_ETH,
+    );
 
     let required_validators =
         required_threshold.div_ceil(ETH_PER_VALIDATOR * GWEI_PER_ETH) as usize;
@@ -400,11 +405,15 @@ async fn finalize_after_inactivity_leak() {
 #[test(tokio::test)]
 async fn chain_finalizes_but_zkcasper_does_not() {
     let spec = get_spec();
-    let harness = get_harness(KEYPAIRS[..].to_vec(), spec, Slot::new(224)).await;
+    let harness = get_harness(KEYPAIRS[..].to_vec(), spec.clone(), Slot::new(224)).await;
     let num_blocks_produced = harness.slots_per_epoch() * 3;
 
-    let required_threshold =
-        threshold::<MainnetEthSpec>(3, VALIDATOR_COUNT * ETH_PER_VALIDATOR * GWEI_PER_ETH);
+    let owned_spec = (*spec).clone();
+    let required_threshold = threshold(
+        &owned_spec,
+        3,
+        VALIDATOR_COUNT * ETH_PER_VALIDATOR * GWEI_PER_ETH,
+    );
 
     let required_validators =
         required_threshold.div_ceil(ETH_PER_VALIDATOR * GWEI_PER_ETH) as usize;

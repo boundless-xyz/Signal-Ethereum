@@ -13,22 +13,25 @@
 // limitations under the License.
 
 use crate::{
-    AttestationData, BEACON_ATTESTER_DOMAIN, CommitteeCache, Epoch, Input, ShuffleData,
-    StateReader, StateTransitionError, ValidatorIndex, ValidatorInfo,
-    consensus_state::ConsensusState, ensure, get_attesting_indices, threshold::threshold,
+    AttestationData, Checkpoint, CommitteeCache, Epoch, Input, Link, ShuffleData, StateReader,
+    StateTransitionError, ValidatorIndex, ValidatorInfo, committee_cache,
+    consensus_state::ConsensusState, ensure, get_attesting_indices, get_total_balance,
+    threshold::threshold,
 };
+use beacon_types::{AggregateSignature, Attestation, Domain, EthSpec, SignedRoot};
+use itertools::Itertools;
+use safe_arith::{ArithError, SafeArith};
+use std::collections::BTreeMap;
+use tracing::{debug, info, trace};
 
-use alloc::collections::BTreeMap;
-use beacon_types::{AggregateSignature, EthSpec, SignedRoot};
-use tracing::{debug, info};
 #[derive(thiserror::Error, Debug, PartialEq)]
 pub enum VerifyError {
     #[error("Invalid attestation: {0}")]
-    InvalidAttestation(String),
-    #[error("State transition error: {0}")]
+    InvalidAttestation(&'static str),
+    #[error("Invalid finalization: {0}")]
+    InvalidFinalization(Checkpoint),
+    #[error("Invalid state transition")]
     StateTransition(#[from] StateTransitionError),
-    #[error("Consensus state is inconsistent")]
-    InconsistentState,
     #[error(
         "Attesting balance not met: {attesting_balance} < {threshold} (lookahead: {lookahead})"
     )]
@@ -37,113 +40,84 @@ pub enum VerifyError {
         attesting_balance: u64,
         threshold: u64,
     },
-    #[error("Committee cache error: {0:?}")]
-    CommitteeCacheError(#[from] crate::committee_cache::Error),
+    #[error("Committee cache error")]
+    CommitteeCacheError(#[from] committee_cache::Error),
     #[error("State reader error: {0}")]
     StateReaderError(String),
-    #[error("Missing validator info for index: {0}")]
+    #[error("Missing validator for index: {0}")]
     MissingValidatorInfo(ValidatorIndex),
-
-    #[error("Lighthouse types: {0:?}")]
+    #[error("{0:?}")]
     LighthouseTypes(beacon_types::Error),
-    #[error("Verify error: {0}")]
-    Other(String),
+    #[error("Arithmetic error: {0:?}")]
+    ArithError(ArithError),
 }
 
-impl From<beacon_types::Error> for VerifyError {
-    fn from(e: beacon_types::Error) -> Self {
-        VerifyError::LighthouseTypes(e)
+impl From<ArithError> for VerifyError {
+    fn from(e: ArithError) -> Self {
+        VerifyError::ArithError(e)
     }
 }
 
+/// Verifies a batch of attestations to advance the consensus state.
+///
+/// This function processes the given attestations. For each corresponding superiority link it
+/// updates the consensus state until a new finalization is reached.
+///
+/// # Preconditions
+///
+/// The `input.attestations` are expected to be sorted by `(attestation.data.source, attestation.data.target)`.
 pub fn verify<S: StateReader>(
     state_reader: &S,
     input: Input<S::Spec>,
 ) -> Result<ConsensusState, VerifyError> {
+    let trusted_checkpoint = input.consensus_state.finalized_checkpoint;
     let Input {
-        mut state,
-        links: link,
+        mut consensus_state,
         attestations,
     } = input;
-    ensure!(
-        link.len() == attestations.len(),
-        VerifyError::Other("Link and attestations must be the same length".to_string())
-    );
 
-    let trusted_checkpoint = state.finalized_checkpoint;
+    // group attestations by their corresponding link
+    for (link, attestations) in &attestations
+        .iter()
+        .chunk_by(|a| (&a.data().source, &a.data().target))
+    {
+        // we must not process more than one new finalization
+        ensure!(
+            consensus_state.finalized_checkpoint == trusted_checkpoint,
+            VerifyError::InvalidFinalization(consensus_state.finalized_checkpoint)
+        );
 
-    let mut validator_cache: BTreeMap<Epoch, BTreeMap<ValidatorIndex, &ValidatorInfo>> =
-        BTreeMap::new();
+        let link = Link {
+            source: (*link.0).into(),
+            target: (*link.1).into(),
+        };
+        info!("Processing attestations for {}", link);
 
-    let mut committee_caches: BTreeMap<Epoch, CommitteeCache<S::Spec>> = BTreeMap::new();
-    for (link, attestations) in link.iter().zip(attestations.into_iter()) {
-        let attesting_balance: u64 = attestations
-            .into_iter()
-            .filter(|a| {
-                a.data().source == link.source.into() && a.data().target == link.target.into()
-            })
-            .map(|attestation| {
-                let data = &attestation.data();
-                debug!("Processing attestation: {:?}", data);
+        // compute all committees for the target epoch
+        let active_validators: BTreeMap<_, _> = state_reader
+            .active_validators(link.target.epoch())
+            .map_err(|e| VerifyError::StateReaderError(e.to_string()))?
+            .collect();
+        let committees = compute_committees(state_reader, &active_validators, link.target.epoch())?;
 
-                assert_eq!(data.index, 0);
+        let mut attesting_balance = 0u64;
+        for attestation in attestations {
+            let balance =
+                process_attestation(state_reader, &active_validators, &committees, attestation)?;
+            attesting_balance.safe_add_assign(balance)?;
+        }
 
-                let attestation_epoch = data.target.epoch;
-
-                let committee_cache =
-                    committee_caches
-                        .entry(attestation_epoch)
-                        .or_insert_with(|| {
-                            get_shufflings_for_epoch(state_reader, attestation_epoch).unwrap()
-                        });
-
-                let attesting_indices = get_attesting_indices(&attestation, committee_cache)?;
-
-                let state_validators =
-                    validator_cache.entry(attestation_epoch).or_insert_with(|| {
-                        state_reader
-                            .active_validators(attestation_epoch)
-                            .map_err(|e| VerifyError::StateReaderError(e.to_string()))
-                            .unwrap()
-                            .collect()
-                    });
-
-                let unslashed_attesting_validators = attesting_indices
-                    .iter()
-                    .map(|i| {
-                        state_validators
-                            .get(i)
-                            .ok_or(VerifyError::MissingValidatorInfo(*i))
-                    })
-                    .filter(|v| v.as_ref().is_ok_and(|v| !v.slashed))
-                    .collect::<Result<Vec<_>, _>>()?;
-
-                let attesting_balance = unslashed_attesting_validators
-                    .iter()
-                    .fold(0u64, |acc, e| acc + e.effective_balance);
-
-                ensure!(
-                    is_valid_indexed_attestation(
-                        state_reader,
-                        unslashed_attesting_validators.into_iter(),
-                        data,
-                        attestation.signature(),
-                    )?,
-                    VerifyError::InvalidAttestation("Invalid indexed attestation".to_string(),)
-                );
-
-                Ok(attesting_balance)
-            })
-            .sum::<Result<u64, VerifyError>>()?;
-
-        let total_active_balance = state_reader
-            .get_total_active_balance(link.target.epoch())
-            .map_err(|e| VerifyError::StateReaderError(e.to_string()))?;
+        let total_active_balance =
+            get_total_balance(state_reader.chain_spec(), active_validators.values())?;
+        debug!(
+            attesting_balance,
+            total_active_balance, "Attestations processed"
+        );
 
         // In the worst case attestations can arrive one epoch after their target and because we don't have information about which epoch they belong to in the chain
         // (if any) we need to assume the worst case
         // TODO: Fix
-        let lookahead = link.target.epoch() + 1 - trusted_checkpoint.epoch();
+        let lookahead = link.target.epoch() + 1 - consensus_state.finalized_checkpoint.epoch();
         let threshold = threshold(lookahead.as_u64(), total_active_balance);
 
         ensure!(
@@ -155,31 +129,76 @@ pub fn verify<S: StateReader>(
             }
         );
 
-        state = state.state_transition(link)?;
-        ensure!(state.is_consistent(), VerifyError::InconsistentState);
-
-        debug!("state: {:?}", state)
+        consensus_state = consensus_state.state_transition(&link)?;
+        // the new state should always be consistent
+        assert!(consensus_state.is_consistent());
     }
 
-    Ok(state)
+    // we must process exactly one finalization
+    ensure!(
+        consensus_state.finalized_checkpoint != trusted_checkpoint,
+        VerifyError::InvalidFinalization(consensus_state.finalized_checkpoint)
+    );
+
+    Ok(consensus_state)
 }
 
+fn process_attestation<S: StateReader, E: EthSpec>(
+    state: &S,
+    active_validators: &BTreeMap<ValidatorIndex, &ValidatorInfo>,
+    committees: &CommitteeCache<E>,
+    attestation: &Attestation<E>,
+) -> Result<u64, VerifyError> {
+    let attesting_indices = get_attesting_indices(attestation, committees)?;
+    let attesting_validators = attesting_indices
+        .iter()
+        .map(|i| {
+            active_validators
+                .get(i)
+                .copied()
+                .ok_or(VerifyError::MissingValidatorInfo(*i))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+
+    // verify signature
+    ensure!(
+        is_valid_indexed_attestation(
+            state,
+            &attesting_validators,
+            attestation.data(),
+            attestation.signature(),
+        )?,
+        VerifyError::InvalidAttestation("Invalid signature")
+    );
+
+    // sum up the effective balance of all validators who have not been slashed
+    let target_balance = get_total_balance(
+        state.chain_spec(),
+        attesting_validators.iter().filter(|v| !v.slashed),
+    )?;
+
+    Ok(target_balance)
+}
+
+/// Checks if given indexed attestation is not empty and has a valid aggregate signature.
 fn is_valid_indexed_attestation<'a, S: StateReader>(
     state_reader: &S,
-    attesting_validators: impl IntoIterator<Item = &'a &'a ValidatorInfo>,
+    attesting_validators: &[&ValidatorInfo],
     data: &AttestationData,
     signature: &AggregateSignature,
 ) -> Result<bool, VerifyError> {
+    if attesting_validators.is_empty() {
+        return Err(VerifyError::InvalidAttestation("Empty attestation"));
+    }
+
     let pubkeys = attesting_validators
         .into_iter()
         .map(|validator| &validator.pubkey)
         .collect::<Vec<_>>();
-    if pubkeys.is_empty() {
-        return Ok(false);
-    }
+
     let domain = state_reader.chain_spec().get_domain(
         data.target.epoch,
-        beacon_types::Domain::BeaconAttester,
+        Domain::BeaconAttester,
         &state_reader
             .fork(data.target.epoch)
             .map_err(|e| VerifyError::StateReaderError(e.to_string()))?,
@@ -188,42 +207,39 @@ fn is_valid_indexed_attestation<'a, S: StateReader>(
             .map_err(|e| VerifyError::StateReaderError(e.to_string()))?,
     );
     let signing_root = data.signing_root(domain);
+    trace!(
+        num_pubkeys = pubkeys.len(),
+        "Verifying attestation signature"
+    );
 
     Ok(signature.eth_fast_aggregate_verify(signing_root, &pubkeys))
 }
 
-// this can compute validators for up to
-// 1 epoch ahead of the epoch the state_reader can read from
-pub fn get_shufflings_for_epoch<S: StateReader>(
+/// Return all the committees for the given epoch.
+fn compute_committees<S: StateReader>(
     state_reader: &S,
+    active_validators: &BTreeMap<ValidatorIndex, &ValidatorInfo>,
     epoch: Epoch,
 ) -> Result<CommitteeCache<S::Spec>, VerifyError> {
-    info!("Getting shufflings for epoch: {}", epoch);
+    let spec = state_reader.chain_spec();
 
-    let indices = state_reader
-        .get_active_validator_indices(epoch)
-        .map_err(|e| VerifyError::StateReaderError(e.to_string()))?
-        .collect();
+    let domain = spec.get_domain_constant(Domain::BeaconAttester);
     let seed = state_reader
-        .get_seed(epoch, BEACON_ATTESTER_DOMAIN.into())
+        .get_seed(epoch, domain.to_le_bytes().into())
         .map_err(|e| VerifyError::StateReaderError(e.to_string()))?;
+    let indices: Vec<_> = active_validators.keys().copied().collect();
+    let committees_per_slot = S::Spec::get_committee_count_per_slot(indices.len(), spec)
+        .map_err(VerifyError::LighthouseTypes)?;
 
-    let committees_per_slot = S::Spec::get_committee_count_per_slot(
-        state_reader
-            .get_active_validator_indices(epoch)
-            .map_err(|e| VerifyError::StateReaderError(e.to_string()))?
-            .count(),
-        state_reader.chain_spec(),
-    )? as u64;
-
-    CommitteeCache::initialized(
-        state_reader.chain_spec(),
+    let committee_cache = CommitteeCache::initialized(
+        spec,
         ShuffleData {
             seed,
             indices,
             committees_per_slot,
         },
         epoch,
-    )
-    .map_err(Into::into)
+    )?;
+
+    Ok(committee_cache)
 }

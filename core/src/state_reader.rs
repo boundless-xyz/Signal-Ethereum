@@ -13,12 +13,10 @@
 // limitations under the License.
 
 use crate::{Epoch, RandaoMixIndex, Root, ValidatorIndex, ValidatorInfo};
-use alloy_primitives::B256;
-use alloy_primitives::aliases::B32;
-use beacon_types::{ChainSpec, EthSpec};
+use alloy_primitives::{B256, aliases::B32};
+use beacon_types::{ChainSpec, EthSpec, Unsigned};
+use safe_arith::{ArithError, SafeArith};
 use sha2::Digest;
-use std::cmp::max;
-use thiserror::Error;
 
 #[cfg(feature = "host")]
 mod host_state_reader;
@@ -32,14 +30,8 @@ mod state_provider;
 pub use self::{host_state_reader::*, preflight_state_reader::*, state_provider::*};
 pub use ssz_state_reader::*;
 
-#[derive(Error, Debug)]
-pub enum StateReaderError {
-    #[error("any")]
-    Any,
-}
-
 pub trait StateReader {
-    type Error: std::error::Error;
+    type Error: std::error::Error + From<ArithError>;
     type Spec: EthSpec;
 
     fn chain_spec(&self) -> &ChainSpec;
@@ -64,39 +56,23 @@ pub trait StateReader {
 
     /// Return the RANDAO mix at a recent `epoch`.
     fn get_randao_mix(&self, state_epoch: Epoch, epoch: Epoch) -> Result<B256, Self::Error> {
-        let idx: RandaoMixIndex = (epoch
-            % Self::Spec::epochs_per_historical_vector() as RandaoMixIndex)
-            .try_into()
-            .unwrap();
+        let idx = epoch
+            .as_usize()
+            .safe_rem(Self::Spec::epochs_per_historical_vector())?;
 
         Ok(self
-            .randao_mix(state_epoch, idx)?
+            .randao_mix(state_epoch, idx as RandaoMixIndex)?
             .expect("randao_mix should be present"))
-    }
-
-    /// Return the sequence of active validator indices at `epoch`.
-    fn get_active_validator_indices(
-        &self,
-        epoch: Epoch,
-    ) -> Result<impl Iterator<Item = ValidatorIndex>, Self::Error> {
-        Ok(self.active_validators(epoch)?.map(|(index, _)| index))
     }
 
     /// Return the seed at `epoch`.
     fn get_seed(&self, epoch: Epoch, domain_type: B32) -> Result<B256, Self::Error> {
         // the seed for epoch is based on the RANDAO from the epoch MIN_SEED_LOOKAHEAD + 1 ago
-        let mix = self.get_randao_mix(
-            epoch,
-            epoch
-                .as_u64()
-                .checked_add(
-                    Self::Spec::epochs_per_historical_vector() as u64
-                        - self.chain_spec().min_seed_lookahead.as_u64()
-                        - 1,
-                )
-                .unwrap()
-                .into(),
-        )?;
+        let i = epoch
+            .safe_add(<Self::Spec as EthSpec>::EpochsPerHistoricalVector::to_u64())?
+            .safe_sub(self.chain_spec().min_seed_lookahead)?
+            .safe_sub(1)?;
+        let mix = self.get_randao_mix(epoch, i)?;
 
         let mut h = sha2::Sha256::new();
         Digest::update(&mut h, domain_type);
@@ -105,19 +81,26 @@ pub trait StateReader {
 
         Ok(<[u8; 32]>::from(h.finalize()).into())
     }
-
-    /// Return the combined effective balance of the active validators.
-    fn get_total_active_balance(&self, epoch: Epoch) -> Result<u64, Self::Error> {
-        Ok(max(
-            self.chain_spec().effective_balance_increment,
-            self.active_validators(epoch)?
-                .map(|(_, validator)| validator.effective_balance)
-                .sum(),
-        ))
-    }
 }
 
-#[inline]
-pub fn uint64_to_bytes(n: u64) -> [u8; 8] {
+/// Returns the combined effective balance of the `validators`.
+///
+/// See: https://github.com/ethereum/consensus-specs/blob/dev/specs/phase0/beacon-chain.md#get_total_balance
+pub fn get_total_balance<I>(spec: &ChainSpec, validators: I) -> Result<u64, ArithError>
+where
+    I: IntoIterator,
+    I::Item: AsRef<ValidatorInfo>,
+{
+    let total_balance = validators.into_iter().try_fold(0u64, |acc, validator| {
+        acc.safe_add(validator.as_ref().effective_balance)
+    })?;
+
+    Ok(std::cmp::max(
+        total_balance,
+        spec.effective_balance_increment,
+    ))
+}
+
+fn uint64_to_bytes(n: u64) -> [u8; 8] {
     n.to_le_bytes()
 }

@@ -253,7 +253,7 @@ fn run_verify<E: EthSpec + Serialize, R: StateReader<Spec = E> + StateProvider<S
     info!("Verification mode: {mode}");
 
     info!("Running preflight");
-    let reader = PreflightStateReader::new(host_reader, input.state.finalized_checkpoint);
+    let reader = PreflightStateReader::new(host_reader, input.consensus_state.finalized_checkpoint);
     let consensus_state = verify(&reader, input.clone()).context("preflight failed")?;
     info!("Preflight succeeded");
 
@@ -272,7 +272,7 @@ fn run_verify<E: EthSpec + Serialize, R: StateReader<Spec = E> + StateProvider<S
             let state_input: StateInput =
                 bincode::deserialize(&state_bytes).context("failed to deserialize state")?;
             state_input
-                .into_state_reader(&input.state)
+                .into_state_reader(&input.consensus_state)
                 .context("failed to validate input")?
         };
 
@@ -291,7 +291,7 @@ fn run_verify<E: EthSpec + Serialize, R: StateReader<Spec = E> + StateProvider<S
             let (pre_state, post_state) = journal.split_at(ConsensusState::abi_encoded_size());
             let pre_state = ConsensusState::abi_decode(pre_state).context("invalid journal")?;
             let post_state = ConsensusState::abi_decode(post_state).context("invalid journal")?;
-            ensure!(pre_state == input.state);
+            ensure!(pre_state == input.consensus_state);
             ensure!(post_state == consensus_state);
             info!("Guest verification succeeded");
         }

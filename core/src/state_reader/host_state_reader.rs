@@ -59,9 +59,9 @@ pub struct HostStateReader<P> {
 }
 
 impl<P: StateProvider> HostStateReader<P> {
-    pub fn new(provider: P) -> Self {
+    pub fn new(spec: ChainSpec, provider: P) -> Self {
         Self {
-            spec: P::Spec::default_spec(),
+            spec,
             provider,
             validator_cache: Default::default(),
         }
@@ -73,9 +73,9 @@ impl<P: StateProvider> HostStateReader<P> {
 }
 
 impl<E: EthSpec> HostStateReader<CacheStateProvider<FileProvider<E>>> {
-    pub fn new_with_dir(dir: impl Into<PathBuf>) -> Result<Self, HostReaderError> {
+    pub fn new_with_dir(spec: ChainSpec, dir: impl Into<PathBuf>) -> Result<Self, HostReaderError> {
         let provider = CacheStateProvider::new(FileProvider::new(dir)?);
-        Ok(Self::new(provider))
+        Ok(Self::new(spec, provider))
     }
 }
 

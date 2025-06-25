@@ -13,8 +13,9 @@
 // limitations under the License.
 
 use anyhow::{Context, ensure};
-use beacon_types::EthSpec;
+use beacon_types::{ChainSpec, EthSpec};
 use clap::{Parser, ValueEnum};
+use eth2_network_config::Eth2NetworkConfig;
 use methods::BEACON_GUEST_ELF;
 use risc0_zkvm::{ExecutorEnv, default_executor};
 use ssz_rs::prelude::*;
@@ -148,9 +149,22 @@ async fn main() -> anyhow::Result<()> {
     let state_dir = args.data_dir.join(args.network.to_string()).join("states");
     fs::create_dir_all(&state_dir)?;
 
+    let network_config = match args.network {
+        Network::Sepolia => Eth2NetworkConfig::constant("sepolia"),
+        Network::Mainnet => Eth2NetworkConfig::constant("mainnet"),
+    }
+    .unwrap()
+    .expect("Failed to load network config");
+    let chain_spec = network_config
+        .chain_spec::<<DefaultSpec as ZkasperSpec>::EthSpec>()
+        .unwrap();
+
     let provider = PersistentApiStateProvider::<Spec>::new(&state_dir, beacon_client.clone())?;
 
-    let reader = HostStateReader::new(CacheStateProvider::new(provider.clone()));
+    let reader = HostStateReader::new(
+        chain_spec.clone(),
+        CacheStateProvider::new(provider.clone()),
+    );
 
     match args.command {
         Command::Verify {
@@ -186,7 +200,15 @@ async fn main() -> anyhow::Result<()> {
             start_slot,
             log_path,
         } => {
-            run_sync::<DefaultSpec>(&provider, start_slot, &beacon_client, mode, log_path).await?;
+            run_sync::<DefaultSpec>(
+                chain_spec,
+                &provider,
+                start_slot,
+                &beacon_client,
+                mode,
+                log_path,
+            )
+            .await?;
         }
     }
 
@@ -194,6 +216,7 @@ async fn main() -> anyhow::Result<()> {
 }
 
 async fn run_sync<E: ZkasperSpec>(
+    chain_spec: ChainSpec,
     provider: &PersistentApiStateProvider<E::EthSpec>,
     start_slot: Slot,
     beacon_client: &BeaconClient,
@@ -211,7 +234,10 @@ async fn run_sync<E: ZkasperSpec>(
 
     let mut consensus_state = beacon_client.get_consensus_state(start_slot).await?;
     info!("Initial Consensus State: {:#?}", consensus_state);
-    let sr = HostStateReader::<PersistentApiStateProvider<E::EthSpec>>::new(provider.clone());
+    let sr = HostStateReader::<PersistentApiStateProvider<E::EthSpec>>::new(
+        chain_spec,
+        provider.clone(),
+    );
 
     let input_builder = InputBuilder::<E::EthSpec, _>::new(beacon_client.clone());
 

@@ -14,8 +14,10 @@
 
 use core::fmt::Debug;
 
-use beacon_types::{EthSpec, MainnetEthSpec};
+use beacon_types::{ChainSpec, EthSpec, ForkVersion, MainnetEthSpec};
 use ssz_types::typenum::{U5, U100, Unsigned};
+
+use crate::Epoch;
 
 /// Configurable trait for values specific to the ZKasper instantiation
 ///
@@ -35,10 +37,14 @@ pub trait ZkasperSpec {
     /// Maximum supported version of this instantiation of the protocol.
     type MaxSupportedVersion: Unsigned + Clone + Sync + Send + Debug + PartialEq;
 
-    fn is_supported_fork(version: &[u8; 4]) -> bool {
-        let version = &version[0]; // currently only the first byte is used for versioning
-        version >= &Self::MinSupportedVersion::to_u8()
-            && version <= &Self::MaxSupportedVersion::to_u8()
+    ///
+    fn is_supported_fork(chain_spec: &ChainSpec, epoch: Epoch, version: &ForkVersion) -> bool {
+        let fork_name = chain_spec.fork_name_at_epoch(epoch);
+        let fork_version = chain_spec.fork_version_for_name(fork_name);
+        assert_eq!(version, &fork_version);
+
+        fork_name as u8 >= Self::MinSupportedVersion::to_u8()
+            && fork_name as u8 <= Self::MaxSupportedVersion::to_u8()
     }
 
     fn epoch_lookahead_limit() -> u64 {

@@ -86,7 +86,11 @@ pub fn verify<ZS: ZkasperSpec, S: StateReader<Spec = ZS::EthSpec>>(
         .fork(consensus_state.finalized_checkpoint.epoch())
         .map_err(|e| VerifyError::StateReaderError(e.to_string()))?;
     ensure!(
-        ZS::is_supported_fork(&fork.current_version),
+        ZS::is_supported_fork(
+            state_reader.chain_spec(),
+            consensus_state.finalized_checkpoint.epoch(),
+            &fork.current_version
+        ),
         VerifyError::UnsupportedFork(fork.current_version)
     );
 
@@ -134,7 +138,11 @@ pub fn verify<ZS: ZkasperSpec, S: StateReader<Spec = ZS::EthSpec>>(
         // (if any) we need to assume the worst case
         // TODO: Fix
         let lookahead = link.target.epoch() + 1 - consensus_state.finalized_checkpoint.epoch();
-        let threshold = threshold::<S::Spec>(lookahead.as_u64(), total_active_balance);
+        let threshold = threshold(
+            state_reader.chain_spec(),
+            lookahead.as_u64(),
+            total_active_balance,
+        );
 
         ensure!(
             attesting_balance >= threshold,

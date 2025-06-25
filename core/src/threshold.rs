@@ -14,7 +14,7 @@
 
 use std::cmp::max;
 
-use beacon_types::EthSpec;
+use beacon_types::ChainSpec;
 
 /// Return the value that the attesting balance (in Gwei) must meet or exceed
 /// for a link to be considered a super-majority link as a function
@@ -25,16 +25,14 @@ use beacon_types::EthSpec;
 ///
 /// See docs/safety-and-liveness.md for a detailed explanation of the dynamic threshold
 ///
-pub fn threshold<S: EthSpec>(lookahead: u64, total_active_balance: u64) -> u64 {
-    let spec = S::default_spec();
-
+pub fn threshold(chain_spec: &ChainSpec, lookahead: u64, total_active_balance: u64) -> u64 {
     // max churn the beacon chain will allow in an epoch
     let min_per_epoch_churn_limit_electra_gwei: u64 =
-        S::default_spec().min_per_epoch_churn_limit_electra / (10_u64.pow(9)); // convert from wei to gwei
+        chain_spec.min_per_epoch_churn_limit_electra / (10_u64.pow(9)); // convert from wei to gwei
 
     let max_epoch_churn = max(
         min_per_epoch_churn_limit_electra_gwei,
-        total_active_balance.saturating_div(spec.churn_limit_quotient),
+        total_active_balance.saturating_div(chain_spec.churn_limit_quotient),
     );
 
     // TODO(willem): Also account for slashing, rewards, and inactivity leak

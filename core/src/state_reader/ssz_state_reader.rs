@@ -27,7 +27,7 @@ use crate::{
     has_compressed_chunks, serde_utils,
 };
 use alloy_primitives::B256;
-use beacon_types::{ChainSpec, EthSpec, Fork};
+use beacon_types::{ChainSpec, Config, EthSpec, Fork};
 use itertools::Itertools;
 use safe_arith::{ArithError, SafeArith};
 use serde::{Deserialize, Serialize};
@@ -39,6 +39,9 @@ use tracing::{debug, trace};
 #[serde_as]
 #[derive(Clone, PartialEq, Deserialize, Serialize)]
 pub struct StateInput<'a> {
+    /// Chain config for different networks such as mainnet, sepolia, etc...
+    pub config: Config,
+
     /// Used fields of the beacon block plus their inclusion proof against the block root.
     #[serde(borrow)]
     pub beacon_block: Multiproof<'a>,
@@ -122,7 +125,10 @@ impl StateInput<'_> {
         consensus_state: &ConsensusState,
     ) -> Result<SszStateReader<E>, SszReaderError> {
         // always use the default spec
-        let spec = E::default_spec();
+        let spec = self
+            .config
+            .apply_to_chain_spec::<E>(&E::default_spec())
+            .expect("Failed to apply config to chain spec");
 
         // the finalized checkpoint is the only state we can trust
         let trusted_checkpoint = consensus_state.finalized_checkpoint;

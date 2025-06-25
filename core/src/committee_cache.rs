@@ -1,5 +1,10 @@
 // Copyright 2025 RISC Zero, Inc.
 //
+// This file is based on or incorporates material from the Lighthouse project
+// (https://github.com/sigp/lighthouse), licensed under the Apache License 2.0.
+//
+// Copyright (c) 2019-2022 Sigma Prime
+//
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at

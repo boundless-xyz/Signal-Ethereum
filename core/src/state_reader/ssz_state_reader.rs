@@ -15,13 +15,13 @@
 use super::StateReader;
 use crate::{
     Checkpoint, ConsensusState, Epoch, PublicKey, RandaoMixIndex, Root, Slot, StatePatch,
-    ValidatorIndex, ValidatorInfo,
+    ValidatorIndex, ValidatorInfo, get_total_balance,
     guest_gindices::{
         activation_eligibility_epoch_gindex, activation_epoch_gindex,
         earliest_consolidation_epoch_gindex, earliest_exit_epoch_gindex, effective_balance_gindex,
         exit_epoch_gindex, finalized_checkpoint_epoch_gindex, fork_current_version_gindex,
         fork_epoch_gindex, fork_previous_version_gindex, genesis_validators_root_gindex,
-        public_key_0_gindex, public_key_1_gindex, slot_gindex, state_root_gindex,
+        public_key_0_gindex, public_key_1_gindex, slashed_gindex, slot_gindex, state_root_gindex,
         validators_gindex,
     },
     has_compressed_chunks, serde_utils,
@@ -29,6 +29,7 @@ use crate::{
 use alloy_primitives::B256;
 use beacon_types::{ChainSpec, EthSpec, Fork};
 use itertools::Itertools;
+use safe_arith::{ArithError, SafeArith};
 use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
 use ssz_multiproofs::Multiproof;
@@ -95,6 +96,14 @@ pub enum SszReaderError {
     },
     #[error("Missing state patch: {0}")]
     MissingStatePatch(Epoch),
+    #[error("Arithmetic error: {0:?}")]
+    ArithError(ArithError),
+}
+
+impl From<ArithError> for SszReaderError {
+    fn from(e: ArithError) -> Self {
+        SszReaderError::ArithError(e)
+    }
 }
 
 trait WithContext<T> {
@@ -165,7 +174,8 @@ impl StateInput<'_> {
             process_registry_updates(&spec, &mut validators, finalized_checkpoint_epoch, epoch);
         }
 
-        self.validate_state_patches(&spec, &trusted_checkpoint, &state, &validators);
+        // the state patches are unverified, but we have to perform some plausibility checks
+        self.validate_state_patches(&spec, &trusted_checkpoint, &state, &validators)?;
 
         Ok(SszStateReader {
             spec,
@@ -183,17 +193,17 @@ impl StateInput<'_> {
         trusted_checkpoint: &Checkpoint,
         state: &StateInfo,
         validators: &BTreeMap<ValidatorIndex, ValidatorInfo>,
-    ) {
+    ) -> Result<(), SszReaderError> {
         // get the total active balance at the trusted checkpoint
-        let total_active_balance: u64 = validators
+        let active_validators = validators
             .iter()
-            .filter(|(_, v)| v.is_active_at(trusted_checkpoint.epoch()))
-            .map(|(_, v)| v.effective_balance)
-            .sum();
+            .filter_map(|(_, v)| v.is_active_at(trusted_checkpoint.epoch()).then_some(v));
+        let total_active_balance: u64 = get_total_balance(spec, active_validators)?;
+
         // exit_epoch changes can happen due to consolidations and exits
         // get_balance_churn_limit() = get_activation_exit_churn_limit() + get_consolidation_churn_limit()
         // twice the churn limit seams reasonable ¯\_(ツ)_/¯
-        let churn = 2 * get_balance_churn_limit(spec, total_active_balance);
+        let churn = get_balance_churn_limit(spec, total_active_balance)?.safe_mul(2)?;
 
         // we cannot distinguish between exits and consolidations, so we have to take the minimum
         let earliest_exit_epoch = std::cmp::min(
@@ -205,8 +215,7 @@ impl StateInput<'_> {
         // is during the trusted epoch after the boundary block of the epoch.
         let mut earliest_exit_epoch = std::cmp::max(
             earliest_exit_epoch,
-            spec.compute_activation_exit_epoch(trusted_checkpoint.epoch())
-                .unwrap(),
+            spec.compute_activation_exit_epoch(trusted_checkpoint.epoch())?,
         );
 
         // validate the state patched
@@ -257,6 +266,8 @@ impl StateInput<'_> {
                 exit_balance_to_consume -= validator.effective_balance;
             }
         }
+
+        Ok(())
     }
 }
 
@@ -407,6 +418,10 @@ fn extract_validators_multiproof(
             assert_eq!(gindex, effective_balance_gindex(validator_index));
             let effective_balance = u64_from_chunk(effective_balance);
 
+            let (gindex, slashed) = values.next().ok_or(ssz_multiproofs::Error::MissingValue)?;
+            assert_eq!(gindex, slashed_gindex(validator_index));
+            let slashed = bool_from_chunk(slashed);
+
             let (gindex, activation_eligibility_epoch) =
                 values.next().ok_or(ssz_multiproofs::Error::MissingValue)?;
             assert_eq!(gindex, activation_eligibility_epoch_gindex(validator_index));
@@ -424,6 +439,7 @@ fn extract_validators_multiproof(
             let validator_info = ValidatorInfo {
                 pubkey,
                 effective_balance,
+                slashed,
                 activation_eligibility_epoch: activation_eligibility_epoch.into(),
                 activation_epoch: activation_epoch.into(),
                 exit_epoch: exit_epoch.into(),
@@ -466,19 +482,29 @@ fn process_registry_updates(
     }
 }
 
-fn get_balance_churn_limit(spec: &ChainSpec, total_active_balance: u64) -> u64 {
+fn get_balance_churn_limit(spec: &ChainSpec, total_active_balance: u64) -> Result<u64, ArithError> {
     let churn = std::cmp::max(
         spec.min_per_epoch_churn_limit_electra,
-        total_active_balance / spec.churn_limit_quotient,
+        total_active_balance.safe_div(spec.churn_limit_quotient)?,
     );
 
-    churn - churn % spec.effective_balance_increment
+    churn.safe_sub(churn.safe_rem(spec.effective_balance_increment)?)
 }
 
 /// Extracts an u64 from a 32-byte SSZ chunk.
 fn u64_from_chunk(node: &[u8; 32]) -> u64 {
     assert!(node[8..].iter().all(|&b| b == 0));
     u64::from_le_bytes(node[..8].try_into().unwrap())
+}
+
+/// Extracts a bool from a 32-byte SSZ chunk.
+fn bool_from_chunk(node: &[u8; 32]) -> bool {
+    assert!(node[1..].iter().all(|&b| b == 0));
+    match node[0] {
+        0 => false,
+        1 => true,
+        _ => panic!("Invalid boolean value: {}", node[0]),
+    }
 }
 
 #[cfg(test)]

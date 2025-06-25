@@ -21,7 +21,7 @@ use alloy_primitives::B256;
 use beacon_types::{ChainSpec, EthSpec, Fork};
 use elsa::FrozenMap;
 use ethereum_consensus::phase0::Validator;
-use ssz_rs::prelude::*;
+use safe_arith::ArithError;
 use std::path::PathBuf;
 use thiserror::Error;
 use tracing::{debug, trace};
@@ -40,8 +40,16 @@ pub enum HostReaderError {
     NotInCache,
     #[error(transparent)]
     StateProviderError(#[from] StateProviderError),
+    #[error("Arithmetic error: {0:?}")]
+    ArithError(ArithError),
     #[error(transparent)]
     Other(#[from] anyhow::Error),
+}
+
+impl From<ArithError> for HostReaderError {
+    fn from(e: ArithError) -> Self {
+        HostReaderError::ArithError(e)
+    }
 }
 
 pub struct HostStateReader<P> {

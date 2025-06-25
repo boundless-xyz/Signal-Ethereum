@@ -17,7 +17,6 @@ extern crate core;
 
 use crate::serde_utils::DiskAttestation;
 use alloy_primitives::B256;
-use beacon_types::{ChainSpec, EthSpec, PublicKey};
 use serde::{Deserializer, Serializer};
 use serde_with::serde_as;
 use std::{
@@ -31,15 +30,14 @@ mod attestation;
 mod beacon_state;
 mod bls;
 mod committee_cache;
+mod config;
 mod consensus_state;
 mod guest_gindices;
 #[cfg(feature = "host")]
 mod input_builder;
 mod serde_utils;
-mod spec;
 mod state_patch;
 mod state_reader;
-mod threshold;
 mod verify;
 
 pub use attestation::*;
@@ -47,15 +45,15 @@ pub use attestation::*;
 pub use beacon_state::*;
 pub use bls::*;
 pub use committee_cache::*;
+pub use config::*;
 pub use consensus_state::*;
 #[cfg(feature = "host")]
 pub use input_builder::*;
-pub use spec::*;
 pub use state_patch::*;
 pub use state_reader::*;
-pub use threshold::*;
 pub use verify::*;
 
+pub use beacon_types::{ChainSpec, EthSpec, PublicKey};
 pub type MainnetEthSpec = beacon_types::MainnetEthSpec;
 pub type MinimalEthSpec = beacon_types::MinimalEthSpec;
 // Need to redefine/redeclare a bunch of types and constants because we can't use ssz-rs and ethereum-consensus in the guest
@@ -181,7 +179,7 @@ impl From<&beacon_types::Validator> for ValidatorInfo {
         }
     }
 }
-#[derive(Clone, Copy, Debug, PartialEq, Hash, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[repr(transparent)]
 pub struct Checkpoint(beacon_types::Checkpoint);
 
@@ -267,7 +265,7 @@ impl From<Checkpoint> for beacon_types::Checkpoint {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Link {
     pub source: Checkpoint,
     pub target: Checkpoint,

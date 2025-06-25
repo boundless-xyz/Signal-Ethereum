@@ -23,6 +23,7 @@ use elsa::FrozenMap;
 use ethereum_consensus::phase0::Validator;
 use safe_arith::ArithError;
 use std::path::PathBuf;
+use std::sync::Arc;
 use thiserror::Error;
 use tracing::{debug, trace};
 
@@ -53,16 +54,22 @@ impl From<ArithError> for HostReaderError {
 }
 
 pub struct HostStateReader<P> {
-    spec: ChainSpec,
     provider: P,
+    spec: Arc<ChainSpec>,
     validator_cache: FrozenMap<Epoch, Vec<(ValidatorIndex, ValidatorInfo)>>,
 }
 
 impl<P: StateProvider> HostStateReader<P> {
+    #[must_use]
     pub fn new(provider: P) -> Self {
+        Self::with_spec(provider, P::Spec::default_spec().into())
+    }
+
+    #[must_use]
+    pub fn with_spec(provider: P, spec: Arc<ChainSpec>) -> Self {
         Self {
-            spec: P::Spec::default_spec(),
             provider,
+            spec,
             validator_cache: Default::default(),
         }
     }

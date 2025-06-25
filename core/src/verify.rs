@@ -13,12 +13,13 @@
 // limitations under the License.
 
 use crate::{
-    AttestationData, Checkpoint, CommitteeCache, Epoch, Input, Link, ShuffleData, StateReader,
-    StateTransitionError, ValidatorIndex, ValidatorInfo, ZkasperSpec, committee_cache,
+    AttestationData, Checkpoint, CommitteeCache, Config, Epoch, Input, Link, ShuffleData,
+    StateReader, StateTransitionError, ValidatorIndex, ValidatorInfo, committee_cache,
     consensus_state::ConsensusState, ensure, get_attesting_indices, get_total_balance,
-    threshold::threshold,
 };
-use beacon_types::{AggregateSignature, Attestation, Domain, EthSpec, SignedRoot};
+use beacon_types::{
+    AggregateSignature, Attestation, ChainSpec, Domain, EthSpec, ForkName, SignedRoot,
+};
 use itertools::Itertools;
 use safe_arith::{ArithError, SafeArith};
 use std::collections::BTreeMap;
@@ -32,11 +33,8 @@ pub enum VerifyError {
     InvalidFinalization(Checkpoint),
     #[error("Invalid state transition")]
     StateTransition(#[from] StateTransitionError),
-    #[error(
-        "Attesting balance not met: {attesting_balance} < {threshold} (lookahead: {lookahead})"
-    )]
+    #[error("Attesting balance not met: {attesting_balance} < {threshold}")]
     ThresholdNotMet {
-        lookahead: u64,
         attesting_balance: u64,
         threshold: u64,
     },
@@ -46,14 +44,12 @@ pub enum VerifyError {
     StateReaderError(String),
     #[error("Missing validator for index: {0}")]
     MissingValidatorInfo(ValidatorIndex),
-    #[error("Unsupported fork")]
-    UnsupportedFork([u8; 4]),
+    #[error("Unsupported fork: {0}")]
+    UnsupportedFork(ForkName),
     #[error("{0:?}")]
     LighthouseTypes(beacon_types::Error),
-    #[error(
-        "Number of epochs between trusted checkpoint and next finalized checkpoint exceeds limit: {0} > {1}"
-    )]
-    LookaheadExceedsLimit(u64, u64),
+    #[error("Epoch lookahead limit exceeded: {0} > {1}")]
+    LookaheadExceedsLimit(Epoch, Epoch),
     #[error("Arithmetic error: {0:?}")]
     ArithError(ArithError),
 }
@@ -72,23 +68,17 @@ impl From<ArithError> for VerifyError {
 /// # Preconditions
 ///
 /// The `input.attestations` are expected to be sorted by `(attestation.data.source, attestation.data.target)`.
-pub fn verify<ZS: ZkasperSpec, S: StateReader<Spec = ZS::EthSpec>>(
+pub fn verify<S: StateReader>(
+    cfg: &Config,
     state_reader: &S,
     input: Input<S::Spec>,
 ) -> Result<ConsensusState, VerifyError> {
+    let spec = state_reader.chain_spec();
     let trusted_checkpoint = input.consensus_state.finalized_checkpoint;
     let Input {
         mut consensus_state,
         attestations,
     } = input;
-
-    let fork = state_reader
-        .fork(consensus_state.finalized_checkpoint.epoch())
-        .map_err(|e| VerifyError::StateReaderError(e.to_string()))?;
-    ensure!(
-        ZS::is_supported_fork(&fork.current_version),
-        VerifyError::UnsupportedFork(fork.current_version)
-    );
 
     // group attestations by their corresponding link
     for (link, attestations) in &attestations
@@ -105,7 +95,9 @@ pub fn verify<ZS: ZkasperSpec, S: StateReader<Spec = ZS::EthSpec>>(
             source: (*link.0).into(),
             target: (*link.1).into(),
         };
+        validate_link(cfg, spec, trusted_checkpoint, &link)?;
         let target_epoch = link.target.epoch();
+
         info!("Computing committees for epoch {}", target_epoch);
 
         // compute all committees for the target epoch
@@ -116,45 +108,36 @@ pub fn verify<ZS: ZkasperSpec, S: StateReader<Spec = ZS::EthSpec>>(
         let committees = compute_committees(state_reader, &active_validators, target_epoch)?;
 
         info!("Processing attestations for {}", link);
-        let mut attesting_balance = 0u64;
+        let mut target_balance = 0u64;
         for attestation in attestations {
-            let balance =
+            let attesting_balance =
                 process_attestation(state_reader, &active_validators, &committees, attestation)?;
-            attesting_balance.safe_add_assign(balance)?;
+            target_balance.safe_add_assign(attesting_balance)?;
         }
 
-        let total_active_balance =
-            get_total_balance(state_reader.chain_spec(), active_validators.values())?;
+        let total_active_balance = get_total_balance(spec, active_validators.values())?;
         debug!(
-            attesting_balance,
+            target_balance,
             total_active_balance, "Attestations processed"
         );
 
-        // In the worst case attestations can arrive one epoch after their target and because we don't have information about which epoch they belong to in the chain
-        // (if any) we need to assume the worst case
-        // TODO: Fix
-        let lookahead = link.target.epoch() + 1 - consensus_state.finalized_checkpoint.epoch();
-        let threshold = threshold::<S::Spec>(lookahead.as_u64(), total_active_balance);
-
+        // the target balance must be sufficient for a new justification
+        let lhs = target_balance as u128 * cfg.justification_threshold_quotient as u128;
+        let rhs = total_active_balance as u128 * cfg.justification_threshold_factor as u128;
         ensure!(
-            attesting_balance >= threshold,
+            lhs >= rhs,
             VerifyError::ThresholdNotMet {
-                lookahead: lookahead.as_u64(),
-                attesting_balance,
-                threshold,
+                attesting_balance: target_balance,
+                // this is not exactly equivalent, but good enough for an error message
+                threshold: (rhs / cfg.justification_threshold_quotient as u128) as u64,
             }
         );
+        // just a simple sanity check against catastrophic misconfiguration
+        assert!(target_balance.safe_mul(3)? >= total_active_balance.safe_mul(2)?);
 
         consensus_state = consensus_state.state_transition(&link)?;
         // the new state should always be consistent
         assert!(consensus_state.is_consistent());
-
-        let lookahead =
-            (consensus_state.finalized_checkpoint.epoch() - trusted_checkpoint.epoch()).as_u64();
-        ensure!(
-            lookahead <= ZS::epoch_lookahead_limit(),
-            VerifyError::LookaheadExceedsLimit(lookahead, ZS::epoch_lookahead_limit())
-        );
     }
 
     // we must process exactly one finalization
@@ -164,6 +147,33 @@ pub fn verify<ZS: ZkasperSpec, S: StateReader<Spec = ZS::EthSpec>>(
     );
 
     Ok(consensus_state)
+}
+
+/// Validates an attestation's link against the internal config.
+fn validate_link(
+    cfg: &Config,
+    spec: &ChainSpec,
+    trusted_checkpoint: Checkpoint,
+    link: &Link,
+) -> Result<(), VerifyError> {
+    let target_epoch = link.target.epoch();
+
+    // check that the target fork is supported
+    let target_fork_name = spec.fork_name_at_epoch(target_epoch);
+    ensure!(
+        cfg.is_supported_version(target_fork_name),
+        VerifyError::UnsupportedFork(target_fork_name)
+    );
+
+    // If the target epoch is less than the trusted checkpoint, this will pass, but it is definitely
+    // not a valid state transition.
+    let lookahead = target_epoch.saturating_sub(trusted_checkpoint.epoch());
+    ensure!(
+        lookahead <= cfg.epoch_lookahead_limit,
+        VerifyError::LookaheadExceedsLimit(lookahead, cfg.epoch_lookahead_limit)
+    );
+
+    Ok(())
 }
 
 fn process_attestation<S: StateReader, E: EthSpec>(

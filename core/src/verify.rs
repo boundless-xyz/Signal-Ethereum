@@ -109,7 +109,7 @@ pub fn verify<S: StateReader>(
 
         let total_active_balance =
             get_total_balance(state_reader.chain_spec(), active_validators.values())?;
-        trace!(
+        debug!(
             attesting_balance,
             total_active_balance, "Attestations processed"
         );
@@ -155,40 +155,46 @@ fn process_attestation<S: StateReader, E: EthSpec>(
         .map(|i| {
             active_validators
                 .get(i)
+                .copied()
                 .ok_or(VerifyError::MissingValidatorInfo(*i))
         })
         .collect::<Result<Vec<_>, _>>()?;
-
-    let attesting_balance = get_total_balance(state.chain_spec(), &attesting_validators)?;
 
     // verify signature
     ensure!(
         is_valid_indexed_attestation(
             state,
-            attesting_validators,
+            &attesting_validators,
             attestation.data(),
             attestation.signature(),
         )?,
         VerifyError::InvalidAttestation("Invalid signature")
     );
 
-    Ok(attesting_balance)
+    // sum up the effective balance of all validators who have not been slashed
+    let target_balance = get_total_balance(
+        state.chain_spec(),
+        attesting_validators.iter().filter(|v| !v.slashed),
+    )?;
+
+    Ok(target_balance)
 }
 
 /// Checks if given indexed attestation is not empty and has a valid aggregate signature.
-fn is_valid_indexed_attestation<'a, S: StateReader>(
+fn is_valid_indexed_attestation<S: StateReader>(
     state_reader: &S,
-    attesting_validators: impl IntoIterator<Item = &'a &'a ValidatorInfo>,
+    attesting_validators: &[&ValidatorInfo],
     data: &AttestationData,
     signature: &AggregateSignature,
 ) -> Result<bool, VerifyError> {
-    let pubkeys = attesting_validators
-        .into_iter()
-        .map(|validator| &validator.pubkey)
-        .collect::<Vec<_>>();
-    if pubkeys.is_empty() {
+    if attesting_validators.is_empty() {
         return Err(VerifyError::InvalidAttestation("Empty attestation"));
     }
+
+    let pubkeys = attesting_validators
+        .iter()
+        .map(|validator| &validator.pubkey)
+        .collect::<Vec<_>>();
 
     let domain = state_reader.chain_spec().get_domain(
         data.target.epoch,
@@ -201,7 +207,7 @@ fn is_valid_indexed_attestation<'a, S: StateReader>(
             .map_err(|e| VerifyError::StateReaderError(e.to_string()))?,
     );
     let signing_root = data.signing_root(domain);
-    debug!(
+    trace!(
         num_pubkeys = pubkeys.len(),
         "Verifying attestation signature"
     );

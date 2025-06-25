@@ -21,7 +21,7 @@ use crate::{
         earliest_consolidation_epoch_gindex, earliest_exit_epoch_gindex, effective_balance_gindex,
         exit_epoch_gindex, finalized_checkpoint_epoch_gindex, fork_current_version_gindex,
         fork_epoch_gindex, fork_previous_version_gindex, genesis_validators_root_gindex,
-        public_key_0_gindex, public_key_1_gindex, slot_gindex, state_root_gindex,
+        public_key_0_gindex, public_key_1_gindex, slashed_gindex, slot_gindex, state_root_gindex,
         validators_gindex,
     },
     has_compressed_chunks, serde_utils,
@@ -418,6 +418,10 @@ fn extract_validators_multiproof(
             assert_eq!(gindex, effective_balance_gindex(validator_index));
             let effective_balance = u64_from_chunk(effective_balance);
 
+            let (gindex, slashed) = values.next().ok_or(ssz_multiproofs::Error::MissingValue)?;
+            assert_eq!(gindex, slashed_gindex(validator_index));
+            let slashed = bool_from_chunk(slashed);
+
             let (gindex, activation_eligibility_epoch) =
                 values.next().ok_or(ssz_multiproofs::Error::MissingValue)?;
             assert_eq!(gindex, activation_eligibility_epoch_gindex(validator_index));
@@ -435,6 +439,7 @@ fn extract_validators_multiproof(
             let validator_info = ValidatorInfo {
                 pubkey,
                 effective_balance,
+                slashed,
                 activation_eligibility_epoch: activation_eligibility_epoch.into(),
                 activation_epoch: activation_epoch.into(),
                 exit_epoch: exit_epoch.into(),
@@ -490,6 +495,16 @@ fn get_balance_churn_limit(spec: &ChainSpec, total_active_balance: u64) -> Resul
 fn u64_from_chunk(node: &[u8; 32]) -> u64 {
     assert!(node[8..].iter().all(|&b| b == 0));
     u64::from_le_bytes(node[..8].try_into().unwrap())
+}
+
+/// Extracts a bool from a 32-byte SSZ chunk.
+fn bool_from_chunk(node: &[u8; 32]) -> bool {
+    assert!(node[1..].iter().all(|&b| b == 0));
+    match node[0] {
+        0 => false,
+        1 => true,
+        _ => panic!("Invalid boolean value: {}", node[0]),
+    }
 }
 
 #[cfg(test)]

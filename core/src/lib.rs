@@ -114,6 +114,7 @@ impl<E: EthSpec> fmt::Debug for Input<E> {
 pub struct ValidatorInfo {
     pub pubkey: PublicKey,
     pub effective_balance: u64,
+    pub slashed: bool,
     pub activation_eligibility_epoch: Epoch,
     pub activation_epoch: Epoch,
     pub exit_epoch: Epoch,
@@ -157,6 +158,7 @@ impl From<&ethereum_consensus::phase0::Validator> for ValidatorInfo {
         Self {
             pubkey: PublicKey::deserialize(&v.public_key).unwrap(),
             effective_balance: v.effective_balance,
+            slashed: v.slashed,
             activation_epoch: v.activation_epoch.into(),
             activation_eligibility_epoch: v.activation_eligibility_epoch.into(),
             exit_epoch: v.exit_epoch.into(),
@@ -170,6 +172,7 @@ impl From<&beacon_types::Validator> for ValidatorInfo {
         Self {
             pubkey: v.pubkey.decompress().expect("fail to decompress pub key"),
             effective_balance: v.effective_balance,
+            slashed: v.slashed,
             activation_epoch: v.activation_epoch,
             activation_eligibility_epoch: v.activation_eligibility_epoch,
             exit_epoch: v.exit_epoch,

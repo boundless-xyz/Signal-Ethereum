@@ -78,9 +78,9 @@ impl<E: EthSpec> CommitteeCache<E> {
             .ok_or(Error::InsufficientValidators)?;
 
         debug!(
-            "Shuffling {} active validators for seed: {}",
-            active_validator_indices.len(),
-            seed
+            num_active_validators = active_validator_indices.len(),
+            seed = seed.to_string(),
+            "Computing shuffling",
         );
         let shuffling = shuffle_list(
             active_validator_indices,
@@ -100,7 +100,6 @@ impl<E: EthSpec> CommitteeCache<E> {
                 .ok_or(Error::ShuffleIndexOutOfBounds(v))? = NonZeroUsize::new(i + 1);
         }
 
-        tracing::info!("Committee cache initialized!");
         Ok(CommitteeCache {
             initialized_epoch: Some(epoch),
             shuffling,

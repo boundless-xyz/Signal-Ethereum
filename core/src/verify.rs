@@ -105,15 +105,17 @@ pub fn verify<ZS: ZkasperSpec, S: StateReader<Spec = ZS::EthSpec>>(
             source: (*link.0).into(),
             target: (*link.1).into(),
         };
-        info!("Processing attestations for {}", link);
+        let target_epoch = link.target.epoch();
+        info!("Computing committees for epoch {}", target_epoch);
 
         // compute all committees for the target epoch
         let active_validators: BTreeMap<_, _> = state_reader
-            .active_validators(link.target.epoch())
+            .active_validators(target_epoch)
             .map_err(|e| VerifyError::StateReaderError(e.to_string()))?
             .collect();
-        let committees = compute_committees(state_reader, &active_validators, link.target.epoch())?;
+        let committees = compute_committees(state_reader, &active_validators, target_epoch)?;
 
+        info!("Processing attestations for {}", link);
         let mut attesting_balance = 0u64;
         for attestation in attestations {
             let balance =

@@ -47,6 +47,10 @@ pub enum VerifyError {
     UnsupportedFork([u8; 4]),
     #[error("Lighthouse types: {0:?}")]
     LighthouseTypes(beacon_types::Error),
+    #[error(
+        "Number of epochs between trusted checkpoint and next finalized checkpoint exceeds limit: {0} > {1}"
+    )]
+    LookaheadExceedsLimit(u64, u64),
     #[error("Verify error: {0}")]
     Other(String),
 }
@@ -165,6 +169,12 @@ pub fn verify<S: StateReader, ZS: ZkasperSpec>(
 
         state = state.state_transition(link)?;
         ensure!(state.is_consistent(), VerifyError::InconsistentState);
+
+        let lookahead = (state.finalized_checkpoint.epoch() - trusted_checkpoint.epoch()).as_u64();
+        ensure!(
+            lookahead <= ZS::epoch_lookahead_limit(),
+            VerifyError::LookaheadExceedsLimit(lookahead, ZS::epoch_lookahead_limit())
+        );
 
         debug!("state: {:?}", state)
     }

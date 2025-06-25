@@ -1,6 +1,6 @@
 use core::fmt::Debug;
 
-use ssz_types::typenum::{U5, U64, Unsigned};
+use ssz_types::typenum::{U5, U100, Unsigned};
 
 /// Configurable trait for values specific to the ZKasper instantiation
 ///
@@ -9,7 +9,7 @@ use ssz_types::typenum::{U5, U64, Unsigned};
 pub trait ZkasperSpec {
     /// The maximum allowable number of epochs past the trusted state to look ahead
     /// when attempting to finalize a checkpoint.
-    type MaxEpochsToFinalize: Unsigned + Clone + Sync + Send + Debug + PartialEq;
+    type EpochLookaheadLimit: Unsigned + Clone + Sync + Send + Debug + PartialEq;
 
     /// Minimum supported version of this instantiation of the protocol.
     type MinSupportedVersion: Unsigned + Clone + Sync + Send + Debug + PartialEq;
@@ -22,6 +22,10 @@ pub trait ZkasperSpec {
         version >= &Self::MinSupportedVersion::to_u8()
             && version <= &Self::MaxSupportedVersion::to_u8()
     }
+
+    fn epoch_lookahead_limit() -> u64 {
+        Self::EpochLookaheadLimit::to_u64()
+    }
 }
 
 /// Ethereum Foundation specifications.
@@ -29,7 +33,7 @@ pub trait ZkasperSpec {
 pub struct DefaultSpec;
 
 impl ZkasperSpec for DefaultSpec {
-    type MaxEpochsToFinalize = U64;
+    type EpochLookaheadLimit = U100; // Arbitrary value picked for now
     type MinSupportedVersion = U5; // Electra
     type MaxSupportedVersion = U5; // Electra
 }

@@ -53,7 +53,7 @@ mod abi {
         fn from(value: crate::Checkpoint) -> Self {
             Self {
                 epoch: U256::from(value.0.epoch.as_u64()),
-                root: value.0.root.into(),
+                root: value.0.root,
             }
         }
     }
@@ -64,7 +64,7 @@ mod abi {
         fn try_from(checkpoint: Checkpoint) -> Result<Self, Self::Error> {
             Ok(Self(beacon_types::Checkpoint {
                 epoch: crate::Epoch::new(checkpoint.epoch.try_into()?),
-                root: checkpoint.root.into(),
+                root: checkpoint.root,
             }))
         }
     }

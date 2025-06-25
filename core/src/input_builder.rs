@@ -91,8 +91,7 @@ impl<E: EthSpec, CR: ChainReader> InputBuilder<E, CR> {
 
         Ok((
             Input {
-                state,
-                links,
+                consensus_state: state,
                 attestations,
             },
             next_state,
@@ -169,7 +168,7 @@ impl<E: EthSpec, CR: ChainReader> InputBuilder<E, CR> {
     async fn collect_attestations_for_links(
         &self,
         links: &[Link],
-    ) -> Result<Vec<Vec<Attestation<E>>>, InputBuilderError> {
+    ) -> Result<Vec<Attestation<E>>, InputBuilderError> {
         if links.is_empty() {
             return Ok(vec![]);
         }
@@ -211,7 +210,7 @@ impl<E: EthSpec, CR: ChainReader> InputBuilder<E, CR> {
         // 3. Assemble the final nested Vec in the correct order
         let result = links
             .iter()
-            .map(|link| attestations_by_link.remove(link).unwrap_or_default())
+            .flat_map(|link| attestations_by_link.remove(link).unwrap_or_default())
             .collect();
 
         Ok(result)

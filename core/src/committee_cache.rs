@@ -55,7 +55,7 @@ pub enum Error {
 pub struct ShuffleData {
     pub(crate) seed: B256,
     pub(crate) indices: Vec<ValidatorIndex>,
-    pub(crate) committees_per_slot: u64,
+    pub(crate) committees_per_slot: usize,
 }
 
 impl<E: EthSpec> CommitteeCache<E> {
@@ -105,7 +105,7 @@ impl<E: EthSpec> CommitteeCache<E> {
             initialized_epoch: Some(epoch),
             shuffling,
             shuffling_positions,
-            committees_per_slot: committees_per_slot.try_into().unwrap(),
+            committees_per_slot,
             slots_per_epoch: E::slots_per_epoch() as usize,
             _phantom: core::marker::PhantomData,
         })

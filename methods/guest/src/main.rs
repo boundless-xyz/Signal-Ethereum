@@ -49,7 +49,7 @@ fn main() {
     env::log("Running FFG state update");
 
     let pre_state = input.state.clone();
-    let post_state = verify::<_, DefaultSpec>(&state_reader, input).unwrap();
+    let post_state = verify::<DefaultSpec, _>(&state_reader, input).unwrap();
 
     // write public output to the journal
     env::commit_slice(&pre_state.abi_encode());

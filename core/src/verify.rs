@@ -61,7 +61,7 @@ impl From<beacon_types::Error> for VerifyError {
     }
 }
 
-pub fn verify<S: StateReader, ZS: ZkasperSpec>(
+pub fn verify<ZS: ZkasperSpec, S: StateReader<Spec = ZS::EthSpec>>(
     state_reader: &S,
     input: Input<S::Spec>,
 ) -> Result<ConsensusState, VerifyError> {

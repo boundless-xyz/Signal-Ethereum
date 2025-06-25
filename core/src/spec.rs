@@ -1,5 +1,6 @@
 use core::fmt::Debug;
 
+use beacon_types::{EthSpec, MainnetEthSpec};
 use ssz_types::typenum::{U5, U100, Unsigned};
 
 /// Configurable trait for values specific to the ZKasper instantiation
@@ -7,6 +8,9 @@ use ssz_types::typenum::{U5, U100, Unsigned};
 /// This should NOT contain values that are specific to the chain
 /// which should be in EthSpec instead.
 pub trait ZkasperSpec {
+    /// The EthSpec that defines the chain for this Zkasper instantiation
+    type EthSpec: EthSpec;
+
     /// The maximum allowable number of epochs past the trusted state to look ahead
     /// when attempting to finalize a checkpoint.
     type EpochLookaheadLimit: Unsigned + Clone + Sync + Send + Debug + PartialEq;
@@ -33,6 +37,7 @@ pub trait ZkasperSpec {
 pub struct DefaultSpec;
 
 impl ZkasperSpec for DefaultSpec {
+    type EthSpec = MainnetEthSpec;
     type EpochLookaheadLimit = U100; // Arbitrary value picked for now
     type MinSupportedVersion = U5; // Electra
     type MaxSupportedVersion = U5; // Electra

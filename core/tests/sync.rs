@@ -102,7 +102,7 @@ async fn test_zkasper_sync(
                 );
 
                 // Perform a preflight verification to record the state reads
-                _ = verify::<_, DefaultSpec>(&preflight_state_reader, input.clone())?;
+                _ = verify::<DefaultSpec, _>(&preflight_state_reader, input.clone())?;
 
                 // build a self-contained SSZ reader
                 let ssz_state_reader = preflight_state_reader
@@ -112,7 +112,7 @@ async fn test_zkasper_sync(
                 // Merge into a single AssertStateReader that ensures identical data returned for each read
                 let assert_sr = AssertStateReader::new(&state_reader, &ssz_state_reader);
                 // Verify again
-                consensus_state = verify::<_, DefaultSpec>(&assert_sr, input)?;
+                consensus_state = verify::<DefaultSpec, _>(&assert_sr, input)?;
 
                 println!("consensus state: {:?}", &consensus_state);
             }

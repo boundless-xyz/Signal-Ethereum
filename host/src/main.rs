@@ -234,10 +234,7 @@ async fn run_sync<E: ZkasperSpec>(
 
     let mut consensus_state = beacon_client.get_consensus_state(start_slot).await?;
     info!("Initial Consensus State: {:#?}", consensus_state);
-    let sr = HostStateReader::<PersistentApiStateProvider<E::EthSpec>>::new(
-        chain_spec,
-        provider.clone(),
-    );
+    let sr = HostStateReader::new(chain_spec, CacheStateProvider::new(provider.clone()));
 
     let input_builder = InputBuilder::<E::EthSpec, _>::new(beacon_client.clone());
 

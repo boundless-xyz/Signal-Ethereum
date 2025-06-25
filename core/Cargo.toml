@@ -23,6 +23,7 @@ ethereum-consensus = { workspace = true, default-features = false, optional = tr
 ethereum_ssz = "0.7.1"
 futures = { version = "0.3", optional = true }
 itertools = "0.14"
+hashlru = { version = "0.11.1", optional = true }
 prettyplease = { version = "0.2", optional = true }
 proc-macro2 = { version = "1.0", optional = true }
 quote = { version = "1.0", optional = true }
@@ -65,4 +66,5 @@ host = [
     "dep:proc-macro2",
     "dep:ssz_rs",
     "dep:beacon_chain",
+    "dep:hashlru",
 ]

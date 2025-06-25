@@ -52,8 +52,15 @@ impl<E: EthSpec> StateProvider for PersistentApiStateProvider<E> {
     fn state_at_slot(&self, slot: Slot) -> Result<StateRef, StateProviderError> {
         // First try to get the state from the file provider
         match self.file_provider.state_at_slot(slot) {
-            Err(StateProviderError::NotFound(_)) => {}
-            state => return state,
+            Err(StateProviderError::NotFound(_)) => {
+                tracing::debug!(
+                    "State for slot {slot} not found in file provider, fetching from API"
+                );
+            }
+            state => {
+                tracing::debug!("State for slot {slot} found in file provider");
+                return state;
+            }
         }
 
         let state = tokio::task::block_in_place(|| {

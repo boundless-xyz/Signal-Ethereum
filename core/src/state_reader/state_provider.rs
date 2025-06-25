@@ -15,7 +15,6 @@
 use crate::{Checkpoint, Epoch, Root, Slot, beacon_state::mainnet::BeaconState};
 use anyhow::{Context, ensure};
 use beacon_types::EthSpec;
-use elsa::FrozenMap;
 use ssz_rs::HashTreeRoot;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -79,14 +78,14 @@ pub trait StateProvider {
 #[derive(Clone)]
 pub struct CacheStateProvider<P> {
     inner: P,
-    cache: FrozenMap<Slot, Box<Arc<BeaconState>>>,
+    cache: hashlru::SyncCache<Slot, StateRef>,
 }
 
 impl<P> CacheStateProvider<P> {
     pub fn new(provider: P) -> Self {
         Self {
             inner: provider,
-            cache: FrozenMap::new(),
+            cache: hashlru::SyncCache::new(8),
         }
     }
 }
@@ -94,9 +93,8 @@ impl<P> CacheStateProvider<P> {
 impl<P: StateProvider> StateProvider for CacheStateProvider<P> {
     type Spec = P::Spec;
     fn genesis_validators_root(&self) -> Result<Root, StateProviderError> {
-        let cache = self.cache.clone().into_map();
-        match cache.values().next() {
-            Some(state) => Ok(state.genesis_validators_root()),
+        match self.cache.peek_mru() {
+            Some((_, state)) => Ok(state.genesis_validators_root()),
             None => Ok(self.state_at_slot(0u64.into())?.genesis_validators_root()),
         }
     }
@@ -104,6 +102,7 @@ impl<P: StateProvider> StateProvider for CacheStateProvider<P> {
     fn state_at_slot(&self, slot: Slot) -> Result<StateRef, StateProviderError> {
         match self.cache.get(&slot) {
             None => {
+                tracing::debug!("CacheStateProvider cache miss for slot {slot}");
                 let state = self.inner.state_at_slot(slot)?;
                 self.cache.insert(slot, state.clone().into());
                 Ok(state)

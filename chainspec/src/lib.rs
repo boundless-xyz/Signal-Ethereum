@@ -16,14 +16,12 @@
 
 use std::sync::LazyLock;
 
-use z_core::ChainSpec;
+use z_core::{ChainSpec, Epoch};
 
 pub static CHAINSPEC: LazyLock<ChainSpec> = LazyLock::new(|| {
     if cfg!(feature = "mainnet") {
         ChainSpec::mainnet()
     } else if cfg!(feature = "sepolia") {
-        use z_core::Epoch;
-
         let mut spec = ChainSpec::mainnet();
 
         spec.altair_fork_epoch = Some(Epoch::new(50));
@@ -43,8 +41,6 @@ pub static CHAINSPEC: LazyLock<ChainSpec> = LazyLock::new(|| {
 
         spec
     } else if cfg!(feature = "testharness") {
-        use z_core::Epoch;
-
         let mut spec = ChainSpec::mainnet();
         spec.altair_fork_epoch = Some(Epoch::new(0));
         spec.bellatrix_fork_epoch = Some(Epoch::new(1));

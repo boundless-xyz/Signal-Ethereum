@@ -13,7 +13,8 @@
 // limitations under the License.
 
 use anyhow::{Context, ensure};
-use beacon_types::EthSpec;
+use beacon_types::{EthSpec, chain_spec};
+use chainspec::{MAINNET_SPEC, SEPOLIA_SPEC};
 use clap::{Parser, ValueEnum};
 use methods::host::vm_verify;
 use serde::Serialize;
@@ -135,6 +136,10 @@ async fn main() -> anyhow::Result<()> {
         .with_env_filter(tracing_subscriber::filter::EnvFilter::from_default_env())
         .init();
     let args = Args::try_parse()?;
+    let CHAINSPEC = match args.network {
+        Network::Sepolia => SEPOLIA_SPEC.clone(),
+        Network::Mainnet => MAINNET_SPEC.clone(),
+    };
 
     let beacon_client = BeaconClient::builder(args.beacon_api)
         .with_cache(args.data_dir.join("http"))
@@ -174,8 +179,14 @@ async fn main() -> anyhow::Result<()> {
             info!("Pre-state: {:#?}", input.consensus_state);
             debug!("Input: {:?}", input);
 
-            let post_state =
-                run_verify(&args.network, mode, &DEFAULT_CONFIG, &reader, input.clone())?;
+            let post_state = run_verify(
+                CHAINSPEC,
+                &args.network,
+                mode,
+                &DEFAULT_CONFIG,
+                &reader,
+                input.clone(),
+            )?;
             info!("Post-state: {:#?}", post_state);
         }
         Command::Sync {
@@ -184,6 +195,7 @@ async fn main() -> anyhow::Result<()> {
             log_path,
         } => {
             run_sync(
+                CHAINSPEC,
                 &args.network,
                 &provider,
                 start_slot,
@@ -199,6 +211,7 @@ async fn main() -> anyhow::Result<()> {
 }
 
 async fn run_sync<E: EthSpec + Serialize>(
+    chain_spec: z_core::ChainSpec,
     network: &Network,
     provider: &PersistentApiStateProvider<E>,
     start_slot: Slot,
@@ -222,7 +235,10 @@ async fn run_sync<E: EthSpec + Serialize>(
 
     let mut consensus_state = beacon_client.get_consensus_state(start_slot).await?;
     info!("Initial Consensus State: {:#?}", consensus_state);
-    let sr = HostStateReader::new(CHAINSPEC.clone(), CacheStateProvider::new(provider.clone()));
+    let sr = HostStateReader::new(
+        chain_spec.clone(),
+        CacheStateProvider::new(provider.clone()),
+    );
     let input_builder = InputBuilder::<E, _>::new(beacon_client.clone());
 
     loop {
@@ -230,7 +246,14 @@ async fn run_sync<E: EthSpec + Serialize>(
             .build(consensus_state.finalized_checkpoint)
             .await?;
         debug!("Input: {:?}", input);
-        let msg = match run_verify(network, mode, &DEFAULT_CONFIG, &sr, input.clone()) {
+        let msg = match run_verify(
+            chain_spec.clone(),
+            network,
+            mode,
+            &DEFAULT_CONFIG,
+            &sr,
+            input.clone(),
+        ) {
             Ok(state) => {
                 info!("Verification successful. New state: {:#?}", &state);
                 if state != expected_state {
@@ -255,6 +278,7 @@ async fn run_sync<E: EthSpec + Serialize>(
 }
 
 fn run_verify<E: EthSpec + Serialize, R: StateReader<Spec = E> + StateProvider<Spec = E>>(
+    chain_spec: z_core::ChainSpec,
     network: &Network,
     mode: ExecMode,
     cfg: &Config,
@@ -283,7 +307,7 @@ fn run_verify<E: EthSpec + Serialize, R: StateReader<Spec = E> + StateProvider<S
             let state_input: StateInput =
                 bincode::deserialize(&state_bytes).context("failed to deserialize state")?;
             state_input
-                .into_state_reader(CHAINSPEC.clone(), &input.consensus_state)
+                .into_state_reader(chain_spec, &input.consensus_state)
                 .context("failed to validate input")?
         };
 

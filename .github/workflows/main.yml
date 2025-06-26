@@ -101,6 +101,12 @@ jobs:
       - name: lint rust code
         run: cargo fmt --all --check
 
+      - name: cargo clippy
+        env:
+          RUSTFLAGS: "-Dwarnings"
+          RISC0_SKIP_BUILD: 1
+        run: cargo clippy --all
+
       - name: lint guest code
         working-directory: methods/guest
         run: cargo fmt --all --check

@@ -12,11 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::state_provider::{StateProvider, StateProviderError, StateRef};
 use anyhow::Context;
 use beacon_types::EthSpec;
 use std::path::PathBuf;
 use tokio::runtime::Handle;
-use z_core::{Epoch, Slot, StateProvider, StateProviderError, StateRef};
+use z_core::{Epoch, Slot};
 
 use crate::{beacon_client::BeaconClient, state_provider::FileProvider};
 

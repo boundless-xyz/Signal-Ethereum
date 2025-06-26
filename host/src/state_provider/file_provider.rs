@@ -1,12 +1,10 @@
+use crate::state_provider::{StateProvider, StateProviderError, StateRef};
 use anyhow::{Context, ensure};
 use beacon_types::EthSpec;
-use ssz_rs::HashTreeRoot;
 use std::path::PathBuf;
-use std::sync::Arc;
 use std::{fs, marker::PhantomData};
-use tracing::{debug, warn};
-use z_core::{Checkpoint, Epoch, Root, Slot, mainnet::BeaconState};
-use z_core::{StateProvider, StateProviderError, StateRef};
+use tracing::debug;
+use z_core::{Epoch, Slot, mainnet::BeaconState};
 
 #[derive(Clone)]
 pub struct FileProvider<E: EthSpec> {

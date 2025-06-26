@@ -20,14 +20,10 @@ pub(crate) use cache_provider::*;
 pub(crate) use file_provider::*;
 pub(crate) use persistant_api_provider::*;
 
-use anyhow::{Context, ensure};
 use beacon_types::EthSpec;
-use elsa::FrozenMap;
 use ssz_rs::HashTreeRoot;
-use std::path::PathBuf;
 use std::sync::Arc;
-use std::{fs, marker::PhantomData};
-use tracing::{debug, warn};
+use tracing::warn;
 use z_core::{Checkpoint, Epoch, Root, Slot, mainnet::BeaconState};
 
 pub type StateRef = Arc<BeaconState>;
@@ -68,7 +64,8 @@ pub trait StateProvider {
         // check that the state matches the epoch boundary block
         let mut epoch_boundary_block = state.latest_block_header().clone();
         epoch_boundary_block.state_root = state.hash_tree_root().unwrap();
-        crate::ensure!(
+
+        z_core::ensure!(
             checkpoint.root() == epoch_boundary_block.hash_tree_root().unwrap(),
             StateProviderError::InvalidCheckpoint
         );

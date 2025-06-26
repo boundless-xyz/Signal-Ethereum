@@ -16,7 +16,7 @@ use crate::{
     beacon_client::BeaconClient,
     host_state_reader::HostStateReader,
     preflight_state_reader::PreflightStateReader,
-    state_provider::{CacheStateProvider, PersistentApiStateProvider},
+    state_provider::{CacheStateProvider, PersistentApiStateProvider, StateProvider},
 };
 use anyhow::{Context, ensure};
 use clap::{Parser, ValueEnum};
@@ -30,18 +30,19 @@ use std::{
     io::Write,
     path::PathBuf,
 };
+use test_utils::AssertStateReader;
 use tracing::{debug, info, warn};
 use url::Url;
 use z_core::{
     ChainReader, Checkpoint, Config, ConsensusState, DEFAULT_CONFIG, Epoch, EthSpec, Input,
-    InputBuilder, MainnetEthSpec, Slot, StateInput, StateProvider, StateReader, verify,
+    InputBuilder, MainnetEthSpec, Slot, StateInput, StateReader, verify,
 };
-use z_core_test_utils::AssertStateReader;
 
 mod beacon_client;
 mod host_state_reader;
 mod preflight_state_reader;
 mod state_provider;
+mod test_utils;
 
 // all chains use the mainnet preset
 type Spec = MainnetEthSpec;

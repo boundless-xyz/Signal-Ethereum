@@ -1,7 +1,7 @@
+use crate::state_provider::{StateProvider, StateProviderError, StateRef};
 use elsa::FrozenMap;
 use std::sync::Arc;
 use z_core::{Root, Slot, mainnet::BeaconState};
-use z_core::{StateProvider, StateProviderError, StateRef};
 
 #[derive(Clone)]
 pub struct CacheStateProvider<P> {

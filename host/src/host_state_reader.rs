@@ -20,12 +20,11 @@ use safe_arith::ArithError;
 use std::path::PathBuf;
 use thiserror::Error;
 use tracing::{debug, trace};
-use z_core::{
-    Epoch, RandaoMixIndex, Root, Slot, StateProvider, StateProviderError, StateReader, StateRef,
-    ValidatorIndex, ValidatorInfo,
-};
+use z_core::{Epoch, RandaoMixIndex, Root, Slot, StateReader, ValidatorIndex, ValidatorInfo};
 
-use crate::state_provider::{CacheStateProvider, FileProvider};
+use crate::state_provider::{
+    CacheStateProvider, FileProvider, StateProvider, StateProviderError, StateRef,
+};
 
 #[derive(Error, Debug)]
 pub enum HostReaderError {

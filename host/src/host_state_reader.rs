@@ -12,11 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::{
-    CacheStateProvider, Epoch, RandaoMixIndex, Root, Slot, StateProvider, StateProviderError,
-    StateReader, StateRef, ValidatorIndex, ValidatorInfo,
-    state_reader::state_provider::FileProvider,
-};
 use alloy_primitives::B256;
 use beacon_types::{ChainSpec, EthSpec, Fork};
 use elsa::FrozenMap;
@@ -25,6 +20,12 @@ use safe_arith::ArithError;
 use std::path::PathBuf;
 use thiserror::Error;
 use tracing::{debug, trace};
+use z_core::{
+    CacheStateProvider, Epoch, RandaoMixIndex, Root, Slot, StateProvider, StateProviderError,
+    StateReader, StateRef, ValidatorIndex, ValidatorInfo,
+};
+
+use crate::state_provider::FileProvider;
 
 #[derive(Error, Debug)]
 pub enum HostReaderError {

@@ -18,16 +18,12 @@ use beacon_types::{ChainSpec, EthSpec, Unsigned};
 use safe_arith::{ArithError, SafeArith};
 use sha2::Digest;
 
-#[cfg(feature = "host")]
-mod host_state_reader;
-#[cfg(feature = "host")]
-mod preflight_state_reader;
 mod ssz_state_reader;
 #[cfg(feature = "host")]
 mod state_provider;
 
 #[cfg(feature = "host")]
-pub use self::{host_state_reader::*, preflight_state_reader::*, state_provider::*};
+pub use self::state_provider::*;
 pub use ssz_state_reader::*;
 
 pub trait StateReader {

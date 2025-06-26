@@ -18,10 +18,6 @@ use ssz_rs::prelude::*;
 use thiserror::Error;
 
 use super::{StateInput, host_state_reader::HostReaderError};
-use crate::{
-    Checkpoint, Epoch, RandaoMixIndex, Root, StatePatchBuilder, StateProvider, StateReader,
-    ValidatorIndex, ValidatorInfo, beacon_state::mainnet::BeaconState, mainnet::ElectraBeaconState,
-};
 use alloy_primitives::B256;
 use ethereum_consensus::phase0::BeaconBlockHeader;
 use std::{
@@ -30,6 +26,10 @@ use std::{
     ops::Deref,
 };
 use tracing::{debug, info};
+use z_core::{
+    Checkpoint, Epoch, RandaoMixIndex, Root, StatePatchBuilder, StateProvider, StateReader,
+    ValidatorIndex, ValidatorInfo, mainnet::BeaconState, mainnet::ElectraBeaconState,
+};
 
 #[derive(Error, Debug)]
 pub enum PreflightReaderError {

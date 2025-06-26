@@ -12,7 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::{beacon_client::BeaconClient, state_provider::PersistentApiStateProvider};
+use crate::{
+    beacon_client::BeaconClient, host_state_reader::HostStateReader,
+    preflight_state_reader::PreflightStateReader, state_provider::PersistentApiStateProvider,
+};
 use anyhow::{Context, ensure};
 use clap::{Parser, ValueEnum};
 use methods::{MAINNET_ELF, SEPOLIA_ELF};
@@ -29,12 +32,14 @@ use tracing::{debug, info, warn};
 use url::Url;
 use z_core::{
     CacheStateProvider, ChainReader, Checkpoint, Config, ConsensusState, DEFAULT_CONFIG, Epoch,
-    EthSpec, HostStateReader, Input, InputBuilder, MainnetEthSpec, PreflightStateReader, Slot,
-    StateInput, StateProvider, StateReader, verify,
+    EthSpec, Input, InputBuilder, MainnetEthSpec, Slot, StateInput, StateProvider, StateReader,
+    verify,
 };
 use z_core_test_utils::AssertStateReader;
 
 mod beacon_client;
+mod host_state_reader;
+mod preflight_state_reader;
 mod state_provider;
 
 // all chains use the mainnet preset

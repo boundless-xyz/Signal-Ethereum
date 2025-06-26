@@ -14,6 +14,7 @@
 
 use anyhow::{Context, ensure};
 use beacon_types::EthSpec;
+use chainspec::CHAINSPEC;
 use clap::{Parser, ValueEnum};
 use methods::BEACON_GUEST_ELF;
 use risc0_zkvm::{ExecutorEnv, default_executor};
@@ -216,9 +217,7 @@ async fn run_sync<E: EthSpec + Serialize>(
 
     let mut consensus_state = beacon_client.get_consensus_state(start_slot).await?;
     info!("Initial Consensus State: {:#?}", consensus_state);
-    let sr =
-        HostStateReader::<PersistentApiStateProvider<E>>::new(E::default_spec(), provider.clone());
-
+    let sr = HostStateReader::new(CHAINSPEC.clone(), CacheStateProvider::new(provider.clone()));
     let input_builder = InputBuilder::<E, _>::new(beacon_client.clone());
 
     loop {
@@ -278,7 +277,7 @@ fn run_verify<E: EthSpec + Serialize, R: StateReader<Spec = E> + StateProvider<S
             let state_input: StateInput =
                 bincode::deserialize(&state_bytes).context("failed to deserialize state")?;
             state_input
-                .into_state_reader(E::default_spec(), &input.consensus_state)
+                .into_state_reader(CHAINSPEC.clone(), &input.consensus_state)
                 .context("failed to validate input")?
         };
 

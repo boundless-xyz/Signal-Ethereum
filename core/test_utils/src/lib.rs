@@ -30,7 +30,7 @@ mod test_harness_state_reader;
 type E = MainnetEthSpec;
 pub type TestHarness = test_harness_state_reader::TestHarness<EphemeralHarnessType<E>>;
 
-pub static TEST_SPEC: LazyLock<Arc<ChainSpec>> = LazyLock::new(|| {
+pub static TEST_CHAINSPEC: LazyLock<Arc<ChainSpec>> = LazyLock::new(|| {
     let altair_fork_epoch = Epoch::new(0);
     let bellatrix_fork_epoch = Epoch::new(1);
     let capella_fork_epoch = Epoch::new(2);

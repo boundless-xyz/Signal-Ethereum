@@ -50,6 +50,7 @@ state_processing = { git = "https://github.com/ec2/lighthouse.git", rev = "d8a5e
 test-log = { version = "0.2", features = ["trace"] }
 test_utils = { path = "test_utils" }
 tokio = { workspace = true }
+methods = { workspace = true, default-features = false, features = ["host", "testharness"] }
 
 [features]
 default = ["host"]

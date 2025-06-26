@@ -12,8 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use chainspec::CHAINSPEC;
 use risc0_zkvm::guest::env;
-use z_core::{DEFAULT_CONFIG, EthSpec, Input, MainnetEthSpec, StateInput, verify};
+use z_core::{DEFAULT_CONFIG, Input, MainnetEthSpec, StateInput, verify};
 
 type Spec = MainnetEthSpec;
 
@@ -41,7 +42,7 @@ fn main() {
         ));
 
         env::log("Verifying StateReader...");
-        state_input.into_state_reader(Spec::default_spec(), &input.consensus_state)
+        state_input.into_state_reader(CHAINSPEC.clone(), &input.consensus_state)
     }
     .unwrap();
 

@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["core", "core/test_utils", "host", "methods", "ssz-multiproofs"]
+members = [ "chainspec","core", "core/test_utils", "host", "methods", "ssz-multiproofs"]
 
 [workspace.package]
 version = "0.1.0"
@@ -21,7 +21,9 @@ incremental = false # Disable incremental compilation for deterministic builds
 overflow-checks = false # Skip overflow checks for better performance
 
 [workspace.dependencies]
-methods = { path = "./methods" }
+chainspec = { path = "./chainspec", default-features = false }
+methods = { path = "./methods", default-features = false }
+z-core = { path = "./core", default-features = false }
 
 alloy-primitives = { version = "0.8.25" }
 alloy-sol-types = { version = "0.8.25" }

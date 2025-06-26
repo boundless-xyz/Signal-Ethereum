@@ -1,0 +1,14 @@
+[package]
+name = "chainspec"
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+
+[features]
+default = ["mainnet"]
+mainnet = []
+testharness = []
+sepolia = []
+
+[dependencies]
+z-core = { workspace = true }

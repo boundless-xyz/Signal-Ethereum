@@ -12,6 +12,7 @@ async-trait = "0.1"
 beacon_chain = { workspace = true }
 beacon_types = { workspace = true }
 bincode = { workspace = true }
+bls = { workspace = true }
 chainspec = { workspace = true, features = ["mainnet", "sepolia"] }
 clap = { version = "4.0", features = ["derive", "env"] }
 elsa = { version = "1.11" }

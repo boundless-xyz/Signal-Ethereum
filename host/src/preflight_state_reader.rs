@@ -17,8 +17,7 @@ use ssz_multiproofs::MultiproofBuilder;
 use ssz_rs::prelude::*;
 use thiserror::Error;
 
-use super::{StateInput, host_state_reader::HostReaderError};
-use crate::state_provider::StateProvider;
+use crate::{HostReaderError, StateProvider};
 use alloy_primitives::B256;
 use ethereum_consensus::phase0::BeaconBlockHeader;
 use std::{
@@ -28,8 +27,8 @@ use std::{
 };
 use tracing::{debug, info};
 use z_core::{
-    Checkpoint, Epoch, RandaoMixIndex, Root, StatePatchBuilder, StateReader, ValidatorIndex,
-    ValidatorInfo, mainnet::BeaconState, mainnet::ElectraBeaconState,
+    Checkpoint, Epoch, RandaoMixIndex, Root, StateInput, StatePatchBuilder, StateReader,
+    ValidatorIndex, ValidatorInfo, mainnet::BeaconState, mainnet::ElectraBeaconState,
 };
 
 #[derive(Error, Debug)]

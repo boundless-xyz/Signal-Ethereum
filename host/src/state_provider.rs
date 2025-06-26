@@ -16,9 +16,9 @@ pub mod cache_provider;
 pub mod file_provider;
 pub mod persistant_api_provider;
 
-pub(crate) use cache_provider::*;
-pub(crate) use file_provider::*;
-pub(crate) use persistant_api_provider::*;
+pub use cache_provider::*;
+pub use file_provider::*;
+pub use persistant_api_provider::*;
 
 use beacon_types::EthSpec;
 use ssz_rs::HashTreeRoot;

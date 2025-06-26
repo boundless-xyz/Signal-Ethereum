@@ -12,14 +12,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::{
+use anyhow::{Context, ensure};
+use clap::{Parser, ValueEnum};
+use host::{
     beacon_client::BeaconClient,
     host_state_reader::HostStateReader,
     preflight_state_reader::PreflightStateReader,
     state_provider::{CacheStateProvider, PersistentApiStateProvider, StateProvider},
+    test_utils::AssertStateReader,
 };
-use anyhow::{Context, ensure};
-use clap::{Parser, ValueEnum};
 use methods::{MAINNET_ELF, SEPOLIA_ELF};
 use risc0_zkvm::{ExecutorEnv, default_executor};
 use serde::Serialize;
@@ -30,19 +31,12 @@ use std::{
     io::Write,
     path::PathBuf,
 };
-use test_utils::AssertStateReader;
 use tracing::{debug, info, warn};
 use url::Url;
 use z_core::{
     ChainReader, Checkpoint, Config, ConsensusState, DEFAULT_CONFIG, Epoch, EthSpec, Input,
     InputBuilder, MainnetEthSpec, Slot, StateInput, StateReader, verify,
 };
-
-mod beacon_client;
-mod host_state_reader;
-mod preflight_state_reader;
-mod state_provider;
-mod test_utils;
 
 // all chains use the mainnet preset
 type Spec = MainnetEthSpec;

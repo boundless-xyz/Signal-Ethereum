@@ -35,14 +35,16 @@ use beacon_types::{
 use bls::get_withdrawal_credentials;
 use chainspec::{ChainSpec, Config as ChainSpecConfig};
 use ethereum_consensus::deneb::FAR_FUTURE_EPOCH;
-use host::{AssertStateReader, TestHarness, consensus_state_from_state, get_harness};
+use host::{
+    AssertStateReader, HostStateReader, PreflightStateReader, TestHarness,
+    consensus_state_from_state, get_harness,
+};
 use methods::TEST_HARNESS_ELF;
 use risc0_zkvm::{ExecutorEnv, default_executor};
 use state_processing::per_block_processing::is_valid_deposit_signature;
 use test_log::test;
 use z_core::{
-    Config, ConsensusState, HostStateReader, Input, InputBuilder, PreflightStateReader, StateInput,
-    StateReader, VerifyError, verify,
+    Config, ConsensusState, Input, InputBuilder, StateInput, StateReader, VerifyError, verify,
 };
 
 const VALIDATOR_COUNT: u64 = 48;

@@ -22,16 +22,13 @@ use z_core::{Epoch, Slot};
 use crate::{beacon_client::BeaconClient, state_provider::FileProvider};
 
 #[derive(Clone)]
-pub(crate) struct PersistentApiStateProvider<E: EthSpec> {
+pub struct PersistentApiStateProvider<E: EthSpec> {
     file_provider: FileProvider<E>,
     client: BeaconClient,
 }
 
 impl<E: EthSpec> PersistentApiStateProvider<E> {
-    pub(crate) fn new(
-        dir: impl Into<PathBuf>,
-        client: BeaconClient,
-    ) -> Result<Self, anyhow::Error> {
+    pub fn new(dir: impl Into<PathBuf>, client: BeaconClient) -> Result<Self, anyhow::Error> {
         let file_provider = FileProvider::new(dir)?;
         Ok(Self {
             file_provider,

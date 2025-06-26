@@ -19,8 +19,10 @@
 //! The function `test_zkasper_sync` is then called to check if the ZKasper input building and state transition process is able
 //! to handle these scenarios correctly.
 
-use std::io;
-use std::sync::{Arc, LazyLock};
+use std::{
+    io,
+    sync::{Arc, LazyLock},
+};
 
 use anyhow::{Context, anyhow};
 use beacon_chain::BlockError;
@@ -33,6 +35,7 @@ use beacon_types::{
 use bls::get_withdrawal_credentials;
 use chainspec::{ChainSpec, Config as ChainSpecConfig};
 use ethereum_consensus::deneb::FAR_FUTURE_EPOCH;
+use methods::TEST_HARNESS_ELF;
 use risc0_zkvm::{ExecutorEnv, default_executor};
 use state_processing::per_block_processing::is_valid_deposit_signature;
 use test_log::test;
@@ -157,54 +160,6 @@ async fn test_zkasper_sync(
     );
 
     Ok(consensus_state)
-}
-
-/// A minimal sink that prints every complete line it receives through `Write`.
-#[derive(Default)]
-struct LinePrinter {
-    buffer: Vec<u8>,
-}
-
-impl io::Write for LinePrinter {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        for &byte in buf {
-            if byte == b'\n' {
-                println!("{}", String::from_utf8_lossy(&self.buffer));
-                self.buffer.clear();
-            } else {
-                self.buffer.push(byte);
-            }
-        }
-        Ok(buf.len())
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        Ok(())
-    }
-}
-
-fn vm_verify(
-    spec: &ChainSpecConfig,
-    config: &Config,
-    state_input: &StateInput,
-    input: &Input<MainnetEthSpec>,
-) -> anyhow::Result<(ConsensusState, ConsensusState)> {
-    let mut stdout = LinePrinter::default();
-    let env = ExecutorEnv::builder()
-        .write_frame(&serde_cbor::to_vec(spec)?)
-        .write_frame(&serde_cbor::to_vec(config)?)
-        .write_frame(&bincode::serialize(state_input)?)
-        .write_frame(&bincode::serialize(input)?)
-        .stdout(&mut stdout)
-        .build()?;
-
-    let journal = default_executor().execute(env, TESTHARNESS_ELF)?.journal;
-    // decode the journal
-    let (pre_state, post_state) = journal.bytes.split_at(ConsensusState::abi_encoded_size());
-    let pre_state = ConsensusState::abi_decode(pre_state).context("invalid journal")?;
-    let post_state = ConsensusState::abi_decode(post_state).context("invalid journal")?;
-
-    Ok((pre_state, post_state))
 }
 
 /// This test builds a chain that is just long enough to finalize an epoch
@@ -433,7 +388,7 @@ async fn finalize_after_inactivity_leak() {
     // this should result in an inactivity leak
     advance_non_finalizing(
         &harness,
-        Epochs(target_epoch.as_u64() - current_epoch.as_u64()),
+        AdvanceBy::Epochs(target_epoch.as_u64() - current_epoch.as_u64()),
     )
     .await
     .unwrap();
@@ -611,7 +566,9 @@ async fn finalize_when_validator_exits() {
     );
 
     // Run until the exit epoch plus a few more so post-exit attestations are processed
-    advance_finalizing(&mut harness, Epochs(8)).await.unwrap();
+    advance_finalizing(&mut harness, AdvanceBy::Epochs(8))
+        .await
+        .unwrap();
     assert_eq!(
         harness.get_current_state().current_epoch(),
         expected_exit_epoch.as_u64() + 3,
@@ -669,7 +626,7 @@ async fn finalize_when_validator_activates() {
     // continue until just before the deposit is processed
     advance_finalizing(
         &mut harness,
-        Slots(MainnetEthSpec::slots_per_epoch() * 2 - 1),
+        AdvanceBy::Slots(MainnetEthSpec::slots_per_epoch() * 2 - 1),
     )
     .await
     .unwrap();
@@ -680,7 +637,9 @@ async fn finalize_when_validator_activates() {
     );
 
     // Validator should be present in the set but its activation epoch should be set to FAR_FUTURE_EPOCH
-    advance_finalizing(&mut harness, Epochs(1)).await.unwrap();
+    advance_finalizing(&mut harness, AdvanceBy::Epochs(1))
+        .await
+        .unwrap();
 
     assert_eq!(
         harness.get_current_state().validators().len() as u64,
@@ -698,7 +657,9 @@ async fn finalize_when_validator_activates() {
     );
 
     // Run epochs until validator activation epoch is set
-    advance_finalizing(&mut harness, Epochs(7)).await.unwrap();
+    advance_finalizing(&mut harness, AdvanceBy::Epochs(7))
+        .await
+        .unwrap();
 
     assert_eq!(
         harness
@@ -714,7 +675,9 @@ async fn finalize_when_validator_activates() {
     harness.validator_keypairs.push(new_keypair.clone());
 
     // add extra epochs so there are attestations using the new validator to be processed
-    advance_finalizing(&mut harness, Epochs(5)).await.unwrap();
+    advance_finalizing(&mut harness, AdvanceBy::Epochs(5))
+        .await
+        .unwrap();
 
     test_zkasper_sync(&CONFIG, &harness, consensus_state)
         .await
@@ -763,7 +726,7 @@ async fn finalize_with_validator_activation_and_delayed_finality() {
     // continue until just before the deposit is processed
     advance_finalizing(
         &mut harness,
-        Slots(MainnetEthSpec::slots_per_epoch() * 2 - 1),
+        AdvanceBy::Slots(MainnetEthSpec::slots_per_epoch() * 2 - 1),
     )
     .await
     .unwrap();
@@ -775,7 +738,9 @@ async fn finalize_with_validator_activation_and_delayed_finality() {
     );
 
     // Validator should be present in the set but its activation epoch should be set to FAR_FUTURE_EPOCH
-    advance_finalizing(&mut harness, Epochs(1)).await.unwrap();
+    advance_finalizing(&mut harness, AdvanceBy::Epochs(1))
+        .await
+        .unwrap();
     assert_eq!(
         harness.get_current_state().validators().len() as u64,
         VALIDATOR_COUNT + 1,
@@ -793,7 +758,9 @@ async fn finalize_with_validator_activation_and_delayed_finality() {
 
     // Run epochs until validator activation epoch is just set.
     // NOTE: this is set once the activation_eligibility_epoch has finalized
-    advance_finalizing(&mut harness, Epochs(3)).await.unwrap();
+    advance_finalizing(&mut harness, AdvanceBy::Epochs(3))
+        .await
+        .unwrap();
 
     assert_eq!(
         harness
@@ -808,10 +775,14 @@ async fn finalize_with_validator_activation_and_delayed_finality() {
     harness.validator_keypairs.push(new_keypair.clone());
 
     // From here we want to experience a number of epochs without finalization
-    advance_non_finalizing(&harness, Epochs(8)).await.unwrap();
+    advance_non_finalizing(&harness, AdvanceBy::Epochs(8))
+        .await
+        .unwrap();
 
     // Then start finalizing again
-    advance_finalizing(&mut harness, Epochs(3)).await.unwrap();
+    advance_finalizing(&mut harness, AdvanceBy::Epochs(3))
+        .await
+        .unwrap();
 
     test_zkasper_sync(&CONFIG, &harness, consensus_state)
         .await
@@ -856,6 +827,55 @@ async fn handle_skipped_first_slot_of_epoch() {
     test_zkasper_sync(&CONFIG, &harness, consensus_state)
         .await
         .unwrap();
+}
+
+/// A minimal sink that prints every complete line it receives through `Write`.
+/// This is used to "captures" the output of R0VM tests.
+#[derive(Default)]
+struct LinePrinter {
+    buffer: Vec<u8>,
+}
+
+impl io::Write for LinePrinter {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        for &byte in buf {
+            if byte == b'\n' {
+                println!("{}", String::from_utf8_lossy(&self.buffer));
+                self.buffer.clear();
+            } else {
+                self.buffer.push(byte);
+            }
+        }
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+fn vm_verify(
+    spec: &ChainSpecConfig,
+    config: &Config,
+    state_input: &StateInput,
+    input: &Input<MainnetEthSpec>,
+) -> anyhow::Result<(ConsensusState, ConsensusState)> {
+    let mut stdout = LinePrinter::default();
+    let env = ExecutorEnv::builder()
+        .write_frame(&serde_cbor::to_vec(spec)?)
+        .write_frame(&serde_cbor::to_vec(config)?)
+        .write_frame(&bincode::serialize(state_input)?)
+        .write_frame(&bincode::serialize(input)?)
+        .stdout(&mut stdout)
+        .build()?;
+
+    let journal = default_executor().execute(env, TEST_HARNESS_ELF)?.journal;
+    // decode the journal
+    let (pre_state, post_state) = journal.bytes.split_at(ConsensusState::abi_encoded_size());
+    let pre_state = ConsensusState::abi_decode(pre_state).context("invalid journal")?;
+    let post_state = ConsensusState::abi_decode(post_state).context("invalid journal")?;
+
+    Ok((pre_state, post_state))
 }
 
 async fn process_block(
@@ -910,13 +930,11 @@ enum AdvanceBy {
     Epochs(u64),
     Slots(u64),
 }
-use AdvanceBy::*;
-use methods::TESTHARNESS_ELF;
 
 async fn advance_finalizing(harness: &mut TestHarness, by: AdvanceBy) -> Result<(), BlockError> {
     let slots = match by {
-        Epochs(e) => e * harness.slots_per_epoch(),
-        Slots(s) => s,
+        AdvanceBy::Epochs(e) => e * harness.slots_per_epoch(),
+        AdvanceBy::Slots(s) => s,
     };
     harness.extend_slots(slots as usize).await;
     Ok(())
@@ -924,15 +942,15 @@ async fn advance_finalizing(harness: &mut TestHarness, by: AdvanceBy) -> Result<
 
 async fn advance_non_finalizing(harness: &TestHarness, by: AdvanceBy) -> Result<(), BlockError> {
     let slots = match by {
-        Epochs(e) => e * harness.slots_per_epoch(),
-        Slots(s) => s,
+        AdvanceBy::Epochs(e) => e * harness.slots_per_epoch(),
+        AdvanceBy::Slots(s) => s,
     };
 
     let two_thirds = (harness.validator_keypairs.len() / 3) * 2;
     let less_than_two_thirds = two_thirds - 2;
     let attesters = (0..less_than_two_thirds).collect();
 
-    if harness.chain.slot().unwrap() == harness.chain.canonical_head.cached_head().head_slot() {
+    if harness.chain.slot()? == harness.chain.canonical_head.cached_head().head_slot() {
         harness.advance_slot();
     }
     harness

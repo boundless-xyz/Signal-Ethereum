@@ -24,7 +24,7 @@ fn main() {
     // for the tests we load the chain spec and config
     let config: ChainConfig = serde_cbor::from_slice(&env::read_frame()).unwrap();
     let spec = ChainSpec::from_config::<MainnetEthSpec>(&config).unwrap();
-    let config: Config = serde_cbor::from_slice(&env::read_frame()).unwrap();
+    let config: Config = env::read();
 
     beacon_guest::entry::<MainnetEthSpec>(spec, &config);
 }

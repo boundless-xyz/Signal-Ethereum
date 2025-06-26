@@ -863,7 +863,7 @@ fn vm_verify(
     let mut stdout = LinePrinter::default();
     let env = ExecutorEnv::builder()
         .write_frame(&serde_cbor::to_vec(spec)?)
-        .write_frame(&serde_cbor::to_vec(config)?)
+        .write(config)?
         .write_frame(&bincode::serialize(state_input)?)
         .write_frame(&bincode::serialize(input)?)
         .stdout(&mut stdout)

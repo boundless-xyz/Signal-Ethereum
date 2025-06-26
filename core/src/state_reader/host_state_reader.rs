@@ -23,7 +23,6 @@ use elsa::FrozenMap;
 use ethereum_consensus::phase0::Validator;
 use safe_arith::ArithError;
 use std::path::PathBuf;
-use std::sync::Arc;
 use thiserror::Error;
 use tracing::{debug, trace};
 

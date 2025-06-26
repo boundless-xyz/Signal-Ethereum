@@ -20,7 +20,7 @@ use ssz_rs::HashTreeRoot;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::{fs, marker::PhantomData};
-use tracing::{debug, info, warn};
+use tracing::{debug, warn};
 
 #[derive(Debug, thiserror::Error)]
 pub enum StateProviderError {
@@ -79,7 +79,7 @@ pub trait StateProvider {
 #[derive(Clone)]
 pub struct CacheStateProvider<P> {
     inner: P,
-    cache: FrozenMap<Slot, Box<Arc<BeaconState>>>,
+    cache: FrozenMap<Slot, Arc<BeaconState>>,
 }
 
 impl<P> CacheStateProvider<P> {
@@ -102,13 +102,13 @@ impl<P: StateProvider> StateProvider for CacheStateProvider<P> {
     }
 
     fn state_at_slot(&self, slot: Slot) -> Result<StateRef, StateProviderError> {
-        match self.cache.get(&slot) {
+        match self.cache.map_get(&slot, Clone::clone) {
             None => {
                 let state = self.inner.state_at_slot(slot)?;
-                self.cache.insert(slot, state.clone().into());
+                self.cache.insert(slot, state.clone());
                 Ok(state)
             }
-            Some(beacon_state) => Ok(beacon_state.clone()),
+            Some(beacon_state) => Ok(beacon_state),
         }
     }
 }
@@ -146,9 +146,10 @@ impl<E: EthSpec> FileProvider<E> {
 
     pub fn clear_states_before(&self, epoch: Epoch) -> Result<(), anyhow::Error> {
         let slot = epoch.start_slot(E::slots_per_epoch());
-        info!(
+        tracing::info!(
             "Clearing all beacon states before epoch: {} (slot: {})",
-            epoch, slot
+            epoch,
+            slot
         );
         for entry in fs::read_dir(&self.directory)? {
             let entry = entry?;

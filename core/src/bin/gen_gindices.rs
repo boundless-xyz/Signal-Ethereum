@@ -117,7 +117,7 @@ fn validators_gindices() -> proc_macro2::TokenStream {
         ("slashed", Path::from(&["slashed".into()])),
     ]
     .map(|(name, path)| gen_gindices::<Validator>(name.to_string(), path))
-    .map(|(name, ret_type, value)| (format!("{name}"), ret_type, quote!(#value)))
+    .map(|(name, ret_type, value)| (name.to_string(), ret_type, quote!(#value)))
     .to_vec();
 
     let v: proc_macro2::TokenStream = g
@@ -152,12 +152,7 @@ where
     [("state_root", Path::from(&["state_root".into()]))]
         .map(|(name, path)| gen_gindices::<G>(name.to_string(), path))
         .map(|(name, ret_type, value)| {
-            (
-                format!("{name}"),
-                ret_type,
-                "BeaconBlock".to_string(),
-                value,
-            )
+            (name.to_string(), ret_type, "BeaconBlock".to_string(), value)
         })
         .to_vec()
 }
@@ -198,14 +193,7 @@ where
         ),
     ]
     .map(|(name, path)| gen_gindices::<G>(name.to_string(), path))
-    .map(|(name, ret_type, value)| {
-        (
-            format!("{name}"),
-            ret_type,
-            "BeaconState".to_string(),
-            value,
-        )
-    })
+    .map(|(name, ret_type, value)| (name.to_string(), ret_type, "BeaconState".to_string(), value))
     .to_vec()
 }
 

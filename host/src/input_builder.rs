@@ -12,15 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::{
-    Attestation, Checkpoint, ConsensusState, Epoch, Input, Link, conv_attestation, ensure,
-};
-
+use crate::conv_attestation;
 use beacon_types::EthSpec;
 use ethereum_consensus::{electra::mainnet::SignedBeaconBlockHeader, types::mainnet::BeaconBlock};
 use std::collections::HashMap;
 use std::fmt::Display;
 use tracing::debug;
+use z_core::{Attestation, Checkpoint, ConsensusState, Epoch, Input, Link, ensure};
 
 /// A trait to abstract reading data from an instance of a beacon chain
 /// This could be an RPC to a node or something else (e.g. test harness)

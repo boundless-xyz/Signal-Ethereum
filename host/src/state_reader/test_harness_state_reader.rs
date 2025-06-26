@@ -18,8 +18,8 @@
 //!
 //!
 
-use crate::state_provider::{StateProvider, StateProviderError, StateRef};
 use crate::test_utils::consensus_state_from_state;
+use crate::{ChainReader, StateProvider, StateProviderError, StateRef};
 use anyhow::anyhow;
 use beacon_chain::{
     BeaconChainTypes, StateSkipConfig, WhenSlotSkipped, test_utils::BeaconChainHarness,
@@ -30,7 +30,7 @@ use ethereum_consensus::types::mainnet::BeaconBlock;
 use std::ops::{Deref, DerefMut};
 use std::str::FromStr;
 use tracing::trace;
-use z_core::{ChainReader, Root, Slot};
+use z_core::{Root, Slot};
 
 pub struct TestHarness<T: BeaconChainTypes>(BeaconChainHarness<T>);
 

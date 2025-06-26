@@ -13,11 +13,15 @@
 // limitations under the License.
 
 pub mod beacon_client;
+pub mod conversions;
+pub mod input_builder;
 pub mod state_provider;
 pub mod state_reader;
 pub mod test_utils;
 
 pub use beacon_client::*;
+pub use conversions::*;
+pub use input_builder::*;
 pub use state_provider::*;
 pub use state_reader::*;
 pub use test_utils::*;

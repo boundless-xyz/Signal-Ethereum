@@ -15,8 +15,8 @@
 use anyhow::{Context, ensure};
 use clap::{Parser, ValueEnum};
 use host::{
-    AssertStateReader, CacheStateProvider, PersistentApiStateProvider, StateProvider,
-    beacon_client::BeaconClient, host_state_reader::HostStateReader,
+    AssertStateReader, CacheStateProvider, ChainReader, InputBuilder, PersistentApiStateProvider,
+    StateProvider, beacon_client::BeaconClient, host_state_reader::HostStateReader,
     preflight_state_reader::PreflightStateReader,
 };
 use methods::{MAINNET_ELF, SEPOLIA_ELF};
@@ -32,8 +32,8 @@ use std::{
 use tracing::{debug, info, warn};
 use url::Url;
 use z_core::{
-    ChainReader, Checkpoint, Config, ConsensusState, DEFAULT_CONFIG, Epoch, EthSpec, Input,
-    InputBuilder, MainnetEthSpec, Slot, StateInput, StateReader, verify,
+    Checkpoint, Config, ConsensusState, DEFAULT_CONFIG, Epoch, EthSpec, Input, MainnetEthSpec,
+    Slot, StateInput, StateReader, verify,
 };
 
 // all chains use the mainnet preset

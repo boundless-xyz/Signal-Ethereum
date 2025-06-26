@@ -6,7 +6,6 @@ repository = { workspace = true }
 license = "Apache-2.0"
 
 [features]
-default = ["mainnet"]
 mainnet = ["methods/mainnet", "chainspec/mainnet"]
 sepolia = ["methods/sepolia", "chainspec/sepolia"]
 

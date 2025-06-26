@@ -108,8 +108,8 @@ impl ConsensusState {
     ///
     /// Invariant:
     /// - The consensus state remains internally consistent:
-    ///     - finalized_checkpoint < current_justified_checkpoint
-    ///     - current_justified_checkpoint >= previous_justified_checkpoint
+    ///     - finalized_checkpoint <= previous_justified_checkpoint
+    ///     - previous_justified_checkpoint <= current_justified_checkpoint
     ///
     /// Pre-condition:
     /// - The input consensus state must be internally consistent.
@@ -230,8 +230,8 @@ impl ConsensusState {
     #[inline]
     pub fn is_consistent(&self) -> bool {
         self.finalized_checkpoint.epoch() <= self.previous_justified_checkpoint.epoch()
-            && self.current_justified_checkpoint.epoch()
-                >= self.previous_justified_checkpoint.epoch()
+            && self.previous_justified_checkpoint.epoch()
+                <= self.current_justified_checkpoint.epoch()
     }
 
     /// Returns the size of the ABI-encoded state in bytes.

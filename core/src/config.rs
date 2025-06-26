@@ -16,7 +16,7 @@ use crate::Epoch;
 use beacon_types::ForkName;
 
 /// ZKasper's internal configuration struct.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Config {
     pub min_version: ForkName,
     pub max_version: ForkName,

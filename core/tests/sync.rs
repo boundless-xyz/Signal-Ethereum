@@ -20,25 +20,24 @@
 //! to handle these scenarios correctly.
 use std::sync::{Arc, LazyLock};
 
-use anyhow::anyhow;
+use anyhow::{Context, anyhow};
 use beacon_chain::BlockError;
 use beacon_chain::test_utils::{AttestationStrategy, BlockStrategy};
 use beacon_types::test_utils::generate_deterministic_keypair;
 use beacon_types::{
-    BlobsList, ChainSpec, DepositData, DepositRequest, Epoch, EthSpec, ForkName, Hash256, Keypair,
-    KzgProofs, MainnetEthSpec, PublicKeyBytes, SignatureBytes, SignedBeaconBlock, Slot,
-    VariableList,
+    BlobsList, DepositData, DepositRequest, Epoch, EthSpec, ForkName, Hash256, Keypair, KzgProofs,
+    MainnetEthSpec, PublicKeyBytes, SignatureBytes, SignedBeaconBlock, Slot, VariableList,
 };
 use bls::get_withdrawal_credentials;
-use chainspec::CHAINSPEC;
+use chainspec::{ChainSpec, Config as ChainSpecConfig};
 use ethereum_consensus::deneb::FAR_FUTURE_EPOCH;
-use methods::host::vm_verify;
+use risc0_zkvm::{ExecutorEnv, default_executor};
 use state_processing::per_block_processing::is_valid_deposit_signature;
 use test_log::test;
 use test_utils::{AssertStateReader, TestHarness, consensus_state_from_state, get_harness};
 use z_core::{
-    Config, ConsensusState, HostStateReader, InputBuilder, PreflightStateReader, StateReader,
-    VerifyError, verify,
+    Config, ConsensusState, HostStateReader, Input, InputBuilder, PreflightStateReader, StateInput,
+    StateReader, VerifyError, verify,
 };
 
 const VALIDATOR_COUNT: u64 = 48;
@@ -51,6 +50,19 @@ static CONFIG: Config = Config {
     justification_threshold_factor: 65545,
     justification_threshold_quotient: 98304,
 };
+static CHAINSPEC: LazyLock<(ChainSpecConfig, ChainSpec)> = LazyLock::new(|| {
+    let mut config = ChainSpecConfig::default();
+    config.altair_fork_epoch = serde_json::from_str("0").unwrap();
+    config.bellatrix_fork_epoch = serde_json::from_str("1").unwrap();
+    config.capella_fork_epoch = serde_json::from_str("2").unwrap();
+    config.deneb_fork_epoch = serde_json::from_str("3").unwrap();
+    config.electra_fork_epoch = serde_json::from_str("4").unwrap();
+    config.fulu_fork_epoch = None;
+
+    let spec = ChainSpec::from_config::<MainnetEthSpec>(&config).unwrap();
+
+    (config, spec)
+});
 
 pub type SignedBlockContentsTuple<E> = (
     Arc<SignedBeaconBlock<E>>,
@@ -110,14 +122,13 @@ async fn test_zkasper_sync(
                 let assert_sr = AssertStateReader::new(&state_reader, &ssz_state_reader);
 
                 // Verify again
-                (consensus_state) = verify(cfg, &assert_sr, input.clone())?;
+                consensus_state = verify(cfg, &assert_sr, input.clone())?;
 
-                // Finally verify in the ZKVM
+                // Finally, if that succeeded, also verify in the R0VM
                 let (_, vm_consensus_state) =
-                    vm_verify(&state_input, &input).expect("Failed to verify in ZKVM");
-
+                    vm_verify(&CHAINSPEC.0, &CONFIG, &state_input, &input).unwrap();
                 assert_eq!(
-                    vm_consensus_state, consensus_state,
+                    consensus_state, vm_consensus_state,
                     "local and vm computed new state should match"
                 );
 
@@ -146,11 +157,33 @@ async fn test_zkasper_sync(
     Ok(consensus_state)
 }
 
+fn vm_verify(
+    spec: &ChainSpecConfig,
+    config: &Config,
+    state_input: &StateInput,
+    input: &Input<MainnetEthSpec>,
+) -> anyhow::Result<(ConsensusState, ConsensusState)> {
+    let env = ExecutorEnv::builder()
+        .write_frame(&serde_cbor::to_vec(spec)?)
+        .write_frame(&serde_cbor::to_vec(config)?)
+        .write_frame(&bincode::serialize(state_input)?)
+        .write_frame(&bincode::serialize(input)?)
+        .build()?;
+
+    let journal = default_executor().execute(env, TESTHARNESS_ELF)?.journal;
+    // decode the journal
+    let (pre_state, post_state) = journal.bytes.split_at(ConsensusState::abi_encoded_size());
+    let pre_state = ConsensusState::abi_decode(pre_state).context("invalid journal")?;
+    let post_state = ConsensusState::abi_decode(post_state).context("invalid journal")?;
+
+    Ok((pre_state, post_state))
+}
+
 /// This test builds a chain that is just long enough to finalize an epoch
 /// given 100% validator participation
 #[test(tokio::test)]
 async fn simple_finalize_epoch() {
-    let harness = get_harness(KEYPAIRS[..].to_vec(), CHAINSPEC.clone(), Slot::new(224)).await;
+    let harness = get_harness(KEYPAIRS[..].to_vec(), &CHAINSPEC.1, Slot::new(224)).await;
 
     // Grab our bootstrap consensus state from there
     let head_state = harness.chain.head_beacon_state_cloned();
@@ -174,7 +207,7 @@ async fn simple_finalize_epoch() {
 
 #[test(tokio::test)]
 async fn finalizes_with_threshold_participation() {
-    let harness = get_harness(KEYPAIRS[..].to_vec(), CHAINSPEC.clone(), Slot::new(224)).await;
+    let harness = get_harness(KEYPAIRS[..].to_vec(), &CHAINSPEC.1, Slot::new(224)).await;
     let num_blocks_produced = harness.slots_per_epoch() * 3;
 
     let total_active_balance = VALIDATOR_COUNT * ETH_PER_VALIDATOR * GWEI_PER_ETH;
@@ -244,7 +277,7 @@ async fn does_not_finalize_with_less_than_two_thirds_participation() {
         config.justification_threshold_quotient = 3;
         config
     };
-    let harness = get_harness(KEYPAIRS[..].to_vec(), CHAINSPEC.clone(), Slot::new(224)).await;
+    let harness = get_harness(KEYPAIRS[..].to_vec(), &CHAINSPEC.1, Slot::new(224)).await;
     let num_blocks_produced = harness.slots_per_epoch() * 5;
 
     let two_thirds = (VALIDATOR_COUNT / 3) * 2;
@@ -304,7 +337,7 @@ async fn does_not_finalize_with_less_than_two_thirds_participation() {
 
 #[test(tokio::test)]
 async fn finalize_after_one_empty_epoch() {
-    let harness = get_harness(KEYPAIRS[..].to_vec(), CHAINSPEC.clone(), Slot::new(224)).await;
+    let harness = get_harness(KEYPAIRS[..].to_vec(), &CHAINSPEC.1, Slot::new(224)).await;
 
     // Grab our bootstrap consensus state from there
     let head_state = harness.chain.head_beacon_state_cloned();
@@ -351,7 +384,7 @@ async fn finalize_after_one_empty_epoch() {
 
 #[test(tokio::test)]
 async fn finalize_after_inactivity_leak() {
-    let harness = get_harness(KEYPAIRS[..].to_vec(), CHAINSPEC.clone(), Slot::new(224)).await;
+    let harness = get_harness(KEYPAIRS[..].to_vec(), &CHAINSPEC.1, Slot::new(224)).await;
 
     // Grab our bootstrap consensus state from there
     let head_state = harness.chain.head_beacon_state_cloned();
@@ -362,7 +395,7 @@ async fn finalize_after_inactivity_leak() {
 
     // Where we get into leak
     let target_epoch = harness.get_current_state().current_epoch()
-        + CHAINSPEC.min_epochs_to_inactivity_penalty
+        + CHAINSPEC.1.min_epochs_to_inactivity_penalty
         + 1;
 
     println!("Current epoch: {}", head_state.current_epoch());
@@ -380,7 +413,7 @@ async fn finalize_after_inactivity_leak() {
     assert!(
         harness
             .get_current_state()
-            .is_in_inactivity_leak(target_epoch, &CHAINSPEC)
+            .is_in_inactivity_leak(target_epoch, &CHAINSPEC.1)
             .unwrap(),
         "we should be in an inactivity leak"
     );
@@ -408,7 +441,7 @@ async fn finalize_after_inactivity_leak() {
     assert!(
         !harness
             .get_current_state()
-            .is_in_inactivity_leak(target_epoch, &CHAINSPEC)
+            .is_in_inactivity_leak(target_epoch, &CHAINSPEC.1)
             .unwrap(),
         "we be should out of inactivity leak after finalization"
     );
@@ -441,7 +474,7 @@ async fn finalize_after_inactivity_leak() {
 /// This is a liveness failure case
 #[test(tokio::test)]
 async fn chain_finalizes_but_zkcasper_does_not() {
-    let harness = get_harness(KEYPAIRS[..].to_vec(), CHAINSPEC.clone(), Slot::new(224)).await;
+    let harness = get_harness(KEYPAIRS[..].to_vec(), &CHAINSPEC.1, Slot::new(224)).await;
     let num_blocks_produced = harness.slots_per_epoch() * 3;
 
     let total_active_balance = VALIDATOR_COUNT * ETH_PER_VALIDATOR * GWEI_PER_ETH;
@@ -515,7 +548,7 @@ async fn chain_finalizes_but_zkcasper_does_not() {
 async fn finalize_when_validator_exits() {
     let mut harness = get_harness(
         KEYPAIRS[..].to_vec(),
-        CHAINSPEC.clone(),
+        &CHAINSPEC.1,
         (256u64 * MainnetEthSpec::slots_per_epoch()).into(), // need to start past epoch 256 or else exits are not allowed. Sorry this makes the test slow
     )
     .await;
@@ -570,15 +603,14 @@ async fn finalize_when_validator_exits() {
 /// ZKasper will be able to handle it correctly.
 #[tokio::test]
 async fn finalize_when_validator_activates() {
-    let mut harness = get_harness(KEYPAIRS[..].to_vec(), CHAINSPEC.clone(), Slot::new(224)).await;
+    let mut harness = get_harness(KEYPAIRS[..].to_vec(), &CHAINSPEC.1, Slot::new(224)).await;
 
     let consensus_state = consensus_state_from_state(&harness.get_current_state());
 
     // build a block with a deposit (this will be the first Electra style deposit)
     let new_keypair = generate_deterministic_keypair(VALIDATOR_COUNT as usize);
     let deposit_index = 0;
-    let deposit_request =
-        build_signed_deposit_request(deposit_index, &new_keypair, CHAINSPEC.clone());
+    let deposit_request = build_signed_deposit_request(deposit_index, &new_keypair, &CHAINSPEC.1);
 
     harness.advance_slot();
     let slot = harness.get_current_slot();
@@ -666,15 +698,14 @@ async fn finalize_when_validator_activates() {
 /// activation epoch being set and the activation epoch itself
 #[tokio::test]
 async fn finalize_with_validator_activation_and_delayed_finality() {
-    let mut harness = get_harness(KEYPAIRS[..].to_vec(), CHAINSPEC.clone(), Slot::new(224)).await;
+    let mut harness = get_harness(KEYPAIRS[..].to_vec(), &CHAINSPEC.1, Slot::new(224)).await;
 
     let consensus_state = consensus_state_from_state(&harness.get_current_state());
 
     // build a block with a deposit (this will be the first Electra style deposit)
     let new_keypair = generate_deterministic_keypair(VALIDATOR_COUNT as usize);
     let deposit_index = 0;
-    let deposit_request =
-        build_signed_deposit_request(deposit_index, &new_keypair, CHAINSPEC.clone());
+    let deposit_request = build_signed_deposit_request(deposit_index, &new_keypair, &CHAINSPEC.1);
 
     harness.advance_slot();
     let slot = harness.get_current_slot();
@@ -763,7 +794,7 @@ async fn finalize_with_validator_activation_and_delayed_finality() {
 /// given 100% validator participation
 #[tokio::test]
 async fn handle_skipped_first_slot_of_epoch() {
-    let harness = get_harness(KEYPAIRS[..].to_vec(), CHAINSPEC.clone(), Slot::new(224)).await;
+    let harness = get_harness(KEYPAIRS[..].to_vec(), &CHAINSPEC.1, Slot::new(224)).await;
 
     // Grab our bootstrap consensus state from there
     let head_state = harness.chain.head_beacon_state_cloned();
@@ -822,7 +853,7 @@ async fn process_block(
 fn build_signed_deposit_request(
     deposit_index: u64,
     keypair: &Keypair,
-    spec: ChainSpec,
+    spec: &ChainSpec,
 ) -> DepositRequest {
     let mut deposit_data = DepositData {
         pubkey: PublicKeyBytes::from(keypair.pk.clone()),
@@ -832,9 +863,9 @@ fn build_signed_deposit_request(
         amount: 32 * GWEI_PER_ETH,
         signature: SignatureBytes::empty(),
     };
-    deposit_data.signature = deposit_data.create_signature(&keypair.sk, &spec);
+    deposit_data.signature = deposit_data.create_signature(&keypair.sk, spec);
     assert!(
-        is_valid_deposit_signature(&deposit_data, &spec).is_ok(),
+        is_valid_deposit_signature(&deposit_data, spec).is_ok(),
         "Deposit signature should be valid"
     );
 
@@ -852,6 +883,7 @@ enum AdvanceBy {
     Slots(u64),
 }
 use AdvanceBy::*;
+use methods::TESTHARNESS_ELF;
 
 async fn advance_finalizing(harness: &mut TestHarness, by: AdvanceBy) -> Result<(), BlockError> {
     let slots = match by {

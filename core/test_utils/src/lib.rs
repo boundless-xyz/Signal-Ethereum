@@ -28,7 +28,11 @@ mod test_harness_state_reader;
 type E = MainnetEthSpec;
 pub type TestHarness = test_harness_state_reader::TestHarness<EphemeralHarnessType<E>>;
 
-pub async fn get_harness(keypairs: Vec<Keypair>, spec: ChainSpec, start_slot: Slot) -> TestHarness {
+pub async fn get_harness(
+    keypairs: Vec<Keypair>,
+    spec: &ChainSpec,
+    start_slot: Slot,
+) -> TestHarness {
     let validator_count = keypairs.len();
     let harness = BeaconChainHarness::builder(MainnetEthSpec)
         .spec(spec.clone().into())

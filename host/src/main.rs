@@ -12,11 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::{beacon_client::BeaconClient, state_provider::PersistentApiStateProvider};
 use anyhow::{Context, ensure};
-use beacon_types::EthSpec;
-use chainspec::CHAINSPEC;
 use clap::{Parser, ValueEnum};
-use methods::host::vm_verify;
+use methods::{MAINNET_ELF, SEPOLIA_ELF};
+use risc0_zkvm::{ExecutorEnv, default_executor};
 use serde::Serialize;
 use ssz_rs::HashTreeRoot;
 use std::{
@@ -29,15 +29,16 @@ use tracing::{debug, info, warn};
 use url::Url;
 use z_core::{
     CacheStateProvider, ChainReader, Checkpoint, Config, ConsensusState, DEFAULT_CONFIG, Epoch,
-    HostStateReader, Input, InputBuilder, MainnetEthSpec, PreflightStateReader, Slot, StateInput,
-    StateProvider, StateReader, verify,
+    EthSpec, HostStateReader, Input, InputBuilder, MainnetEthSpec, PreflightStateReader, Slot,
+    StateInput, StateProvider, StateReader, verify,
 };
 use z_core_test_utils::AssertStateReader;
 
 mod beacon_client;
 mod state_provider;
 
-use crate::{beacon_client::BeaconClient, state_provider::PersistentApiStateProvider};
+// all chains use the mainnet preset
+type Spec = MainnetEthSpec;
 
 /// CLI for generating and submitting ZKasper proofs
 #[derive(Parser, Debug)]
@@ -114,8 +115,8 @@ enum Command {
 /// Enum for network selection
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 enum Network {
-    Sepolia,
     Mainnet,
+    Sepolia,
 }
 
 impl fmt::Display for Network {
@@ -126,8 +127,6 @@ impl fmt::Display for Network {
         }
     }
 }
-
-type Spec = MainnetEthSpec;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -145,9 +144,14 @@ async fn main() -> anyhow::Result<()> {
     let state_dir = args.data_dir.join(args.network.to_string()).join("states");
     fs::create_dir_all(&state_dir)?;
 
-    let provider = PersistentApiStateProvider::<Spec>::new(&state_dir, beacon_client.clone())?;
+    // load the corresponding chain spec
+    let spec = match args.network {
+        Network::Sepolia => chainspec::sepolia_spec(),
+        Network::Mainnet => chainspec::mainnet_spec(),
+    };
 
-    let reader = HostStateReader::new(CHAINSPEC.clone(), CacheStateProvider::new(provider.clone()));
+    let provider = PersistentApiStateProvider::<Spec>::new(&state_dir, beacon_client.clone())?;
+    let reader = HostStateReader::new(spec, CacheStateProvider::new(provider));
 
     match args.command {
         Command::Verify {
@@ -175,7 +179,8 @@ async fn main() -> anyhow::Result<()> {
             info!("Pre-state: {:#?}", input.consensus_state);
             debug!("Input: {:?}", input);
 
-            let post_state = run_verify(mode, &DEFAULT_CONFIG, &reader, input.clone())?;
+            let post_state =
+                run_verify(args.network, mode, &DEFAULT_CONFIG, &reader, input.clone())?;
             info!("Post-state: {:#?}", post_state);
         }
         Command::Sync {
@@ -183,7 +188,15 @@ async fn main() -> anyhow::Result<()> {
             start_slot,
             log_path,
         } => {
-            run_sync(&provider, start_slot, &beacon_client, mode, log_path).await?;
+            run_sync(
+                reader,
+                start_slot,
+                &beacon_client,
+                args.network,
+                mode,
+                log_path,
+            )
+            .await?;
         }
     }
 
@@ -191,9 +204,10 @@ async fn main() -> anyhow::Result<()> {
 }
 
 async fn run_sync<E: EthSpec + Serialize>(
-    provider: &PersistentApiStateProvider<E>,
+    sr: HostStateReader<CacheStateProvider<PersistentApiStateProvider<E>>>,
     start_slot: Slot,
     beacon_client: &BeaconClient,
+    network: Network,
     mode: ExecMode,
     log_path: Option<PathBuf>,
 ) -> anyhow::Result<()> {
@@ -213,7 +227,6 @@ async fn run_sync<E: EthSpec + Serialize>(
 
     let mut consensus_state = beacon_client.get_consensus_state(start_slot).await?;
     info!("Initial Consensus State: {:#?}", consensus_state);
-    let sr = HostStateReader::new(CHAINSPEC.clone(), CacheStateProvider::new(provider.clone()));
     let input_builder = InputBuilder::<E, _>::new(beacon_client.clone());
 
     loop {
@@ -221,7 +234,7 @@ async fn run_sync<E: EthSpec + Serialize>(
             .build(consensus_state.finalized_checkpoint)
             .await?;
         debug!("Input: {:?}", input);
-        let msg = match run_verify(mode, &DEFAULT_CONFIG, &sr, input.clone()) {
+        let msg = match run_verify(network, mode, &DEFAULT_CONFIG, &sr, input.clone()) {
             Ok(state) => {
                 info!("Verification successful. New state: {:#?}", &state);
                 if state != expected_state {
@@ -241,11 +254,13 @@ async fn run_sync<E: EthSpec + Serialize>(
         consensus_state = expected_state;
 
         // uncache old states
+        let provider = sr.provider().inner();
         provider.clear_states_before(consensus_state.finalized_checkpoint.epoch())?;
     }
 }
 
 fn run_verify<E: EthSpec + Serialize, R: StateReader<Spec = E> + StateProvider<Spec = E>>(
+    network: Network,
     mode: ExecMode,
     cfg: &Config,
     host_reader: &R,
@@ -273,7 +288,7 @@ fn run_verify<E: EthSpec + Serialize, R: StateReader<Spec = E> + StateProvider<S
             let state_input: StateInput =
                 bincode::deserialize(&state_bytes).context("failed to deserialize state")?;
             state_input
-                .into_state_reader(CHAINSPEC.clone(), &input.consensus_state)
+                .into_state_reader(host_reader.chain_spec().clone(), &input.consensus_state)
                 .context("failed to validate input")?
         };
 
@@ -288,7 +303,13 @@ fn run_verify<E: EthSpec + Serialize, R: StateReader<Spec = E> + StateProvider<S
         info!("Host verification succeeded");
 
         if mode == ExecMode::R0vm {
-            let (pre_state, post_state) = vm_verify(&state_input, &input)?;
+            info!("Executing guest verification");
+            let journal = execute_guest_program(network, state_bytes, input_bytes)
+                .context("guest verification failed")?;
+            // decode the journal
+            let (pre_state, post_state) = journal.split_at(ConsensusState::abi_encoded_size());
+            let pre_state = ConsensusState::abi_decode(pre_state).context("invalid journal")?;
+            let post_state = ConsensusState::abi_decode(post_state).context("invalid journal")?;
             ensure!(pre_state == input.consensus_state);
             ensure!(post_state == consensus_state);
             info!("Guest verification succeeded");
@@ -298,6 +319,25 @@ fn run_verify<E: EthSpec + Serialize, R: StateReader<Spec = E> + StateProvider<S
     info!("New consensus state: {:#?}", consensus_state);
 
     Ok(consensus_state)
+}
+
+fn execute_guest_program(
+    network: Network,
+    state: impl AsRef<[u8]>,
+    input: impl AsRef<[u8]>,
+) -> anyhow::Result<Vec<u8>> {
+    let env = ExecutorEnv::builder()
+        .write_frame(state.as_ref())
+        .write_frame(input.as_ref())
+        .build()?;
+    let elf = match network {
+        Network::Mainnet => MAINNET_ELF,
+        Network::Sepolia => SEPOLIA_ELF,
+    };
+    let session_info = default_executor().execute(env, elf)?;
+    debug!(cycles = session_info.cycles(), "Session info");
+
+    Ok(session_info.journal.bytes)
 }
 
 fn log_sync(file: &File, from: &ConsensusState, to: &ConsensusState, message: &str) {

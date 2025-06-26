@@ -68,6 +68,11 @@ impl<P: StateProvider> HostStateReader<P> {
         }
     }
 
+    #[inline]
+    pub fn provider(&self) -> &P {
+        &self.provider
+    }
+
     fn state(&self, epoch: Epoch) -> Result<StateRef, StateProviderError> {
         self.provider.state_at_epoch(epoch)
     }

@@ -3,13 +3,11 @@ name = "chainspec"
 version = { workspace = true }
 edition = { workspace = true }
 repository = { workspace = true }
-license = "Apache-2.0"
-
 
 [features]
 mainnet = []
-testharness = []
 sepolia = []
 
 [dependencies]
-z-core = { workspace = true }
+serde_yaml = "0.9"
+beacon_types = { workspace = true, default-features = false, features = ["legacy-arith"] }

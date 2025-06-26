@@ -1,55 +1,40 @@
-// Copyright 2025 RISC Zero, Inc.
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+//! A crate for loading Ethereum beacon chain configurations.
 
-//! Select the chainspec to use based on feature flags
+pub use beacon_types::{ChainSpec, Config, MainnetEthSpec};
 
-use std::sync::LazyLock;
+#[cfg(feature = "mainnet")]
+/// Returns the mainnet `ChainSpec`.
+pub fn mainnet_spec() -> ChainSpec {
+    let config_bytes = include_bytes!("../configs/mainnet.yaml");
+    let config: Config =
+        serde_yaml::from_slice(config_bytes).expect("Failed to deserialize config");
+    ChainSpec::from_config::<MainnetEthSpec>(&config).expect("Failed to create chainspec")
+}
 
-use z_core::{ChainSpec, Epoch};
+#[cfg(feature = "sepolia")]
+/// Returns the sepolia `ChainSpec`.
+pub fn sepolia_spec() -> ChainSpec {
+    let config_bytes = include_bytes!("../configs/sepolia.yaml");
+    let config: Config =
+        serde_yaml::from_slice(config_bytes).expect("Failed to deserialize config");
+    ChainSpec::from_config::<MainnetEthSpec>(&config).expect("Failed to create chainspec")
+}
 
-pub static CHAINSPEC: LazyLock<ChainSpec> = LazyLock::new(|| {
-    if cfg!(feature = "mainnet") {
-        ChainSpec::mainnet()
-    } else if cfg!(feature = "sepolia") {
-        let mut spec = ChainSpec::mainnet();
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-        spec.altair_fork_epoch = Some(Epoch::new(50));
-        spec.altair_fork_version = [0x90, 0x00, 0x00, 0x70];
-
-        spec.bellatrix_fork_epoch = Some(Epoch::new(100));
-        spec.bellatrix_fork_version = [0x90, 0x00, 0x00, 0x71];
-
-        spec.capella_fork_epoch = Some(Epoch::new(56832));
-        spec.capella_fork_version = [0x90, 0x00, 0x00, 0x72];
-
-        spec.deneb_fork_epoch = Some(Epoch::new(132608));
-        spec.deneb_fork_version = [0x90, 0x00, 0x00, 0x73];
-
-        spec.electra_fork_epoch = Some(Epoch::new(222464));
-        spec.electra_fork_version = [0x90, 0x00, 0x00, 0x74];
-
-        spec
-    } else if cfg!(feature = "testharness") {
-        let mut spec = ChainSpec::mainnet();
-        spec.altair_fork_epoch = Some(Epoch::new(0));
-        spec.bellatrix_fork_epoch = Some(Epoch::new(1));
-        spec.capella_fork_epoch = Some(Epoch::new(2));
-        spec.deneb_fork_epoch = Some(Epoch::new(3));
-        spec.electra_fork_epoch = Some(Epoch::new(4));
-
-        spec
-    } else {
-        unreachable!("No valid feature flag set for chainspec");
+    #[test]
+    #[cfg(feature = "mainnet")]
+    fn test_mainnet_spec_loads() {
+        let spec = mainnet_spec();
+        assert_eq!(spec.config_name, Some("mainnet".to_string()));
     }
-});
+
+    #[test]
+    #[cfg(feature = "sepolia")]
+    fn test_sepolia_spec_loads() {
+        let spec = mainnet_spec();
+        assert_eq!(spec.config_name, Some("sepolia".to_string()));
+    }
+}

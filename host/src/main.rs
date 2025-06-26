@@ -147,10 +147,7 @@ async fn main() -> anyhow::Result<()> {
 
     let provider = PersistentApiStateProvider::<Spec>::new(&state_dir, beacon_client.clone())?;
 
-    let reader = HostStateReader::new(
-        Spec::default_spec(),
-        CacheStateProvider::new(provider.clone()),
-    );
+    let reader = HostStateReader::new(CHAINSPEC.clone(), CacheStateProvider::new(provider.clone()));
 
     match args.command {
         Command::Verify {

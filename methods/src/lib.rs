@@ -23,6 +23,7 @@ pub mod host {
 
     /// Runs the verification method in the RISC Zero VM, handling the serialization and deserialization
     pub fn vm_verify<S: EthSpec>(
+        spec: String,
         state_input: &StateInput,
         input: &Input<S>,
     ) -> Result<(ConsensusState, ConsensusState), anyhow::Error> {
@@ -35,8 +36,8 @@ pub mod host {
             bincode::serialize(state_input).context("failed to serialize state reader")?;
         debug!(len = state_bytes.len(), "State reader serialized");
 
-        let journal =
-            execute_guest_program(state_bytes, input_bytes).context("guest verification failed")?;
+        let journal = execute_guest_program(spec, state_bytes, input_bytes)
+            .context("guest verification failed")?;
 
         // decode the journal
         let (pre_state, post_state) = journal.split_at(ConsensusState::abi_encoded_size());
@@ -47,15 +48,22 @@ pub mod host {
     }
 
     fn execute_guest_program(
+        spec: String,
         state: impl AsRef<[u8]>,
         input: impl AsRef<[u8]>,
     ) -> anyhow::Result<Vec<u8>> {
+        let elf = match spec.as_str() {
+            "mainnet" => super::BEACON_GUEST_MAINNET_ELF,
+            "sepolia" => super::BEACON_GUEST_SEPOLIA_ELF,
+            "test" => super::BEACON_GUEST_TESTHARNESS_ELF,
+            _ => return Err(anyhow::anyhow!("Unsupported spec: {}", spec)),
+        };
         let env = ExecutorEnv::builder()
             .write_frame(state.as_ref())
             .write_frame(input.as_ref())
             .build()?;
         let executor = default_executor();
-        let session_info = executor.execute(env, super::BEACON_GUEST_ELF)?;
+        let session_info = executor.execute(env, elf)?;
         debug!(cycles = session_info.cycles(), "Session info");
 
         Ok(session_info.journal.bytes)

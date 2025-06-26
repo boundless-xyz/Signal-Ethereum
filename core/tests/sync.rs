@@ -111,10 +111,11 @@ async fn test_zkasper_sync(
 
                 // Verify again
                 (consensus_state) = verify(cfg, &assert_sr, input.clone())?;
+                println!("verify in host good!");
 
                 // Finally verify in the ZKVM
-                let (_, vm_consensus_state) =
-                    vm_verify(&state_input, &input).expect("Failed to verify in ZKVM");
+                let (_, vm_consensus_state) = vm_verify("test".to_string(), &state_input, &input)
+                    .expect("Failed to verify in ZKVM");
 
                 assert_eq!(
                     vm_consensus_state, consensus_state,

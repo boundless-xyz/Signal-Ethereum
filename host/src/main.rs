@@ -14,7 +14,6 @@
 
 use anyhow::{Context, ensure};
 use beacon_types::EthSpec;
-use chainspec::CHAINSPEC;
 use clap::{Parser, ValueEnum};
 use methods::host::vm_verify;
 use serde::Serialize;
@@ -175,7 +174,8 @@ async fn main() -> anyhow::Result<()> {
             info!("Pre-state: {:#?}", input.consensus_state);
             debug!("Input: {:?}", input);
 
-            let post_state = run_verify(mode, &DEFAULT_CONFIG, &reader, input.clone())?;
+            let post_state =
+                run_verify(&args.network, mode, &DEFAULT_CONFIG, &reader, input.clone())?;
             info!("Post-state: {:#?}", post_state);
         }
         Command::Sync {
@@ -183,7 +183,15 @@ async fn main() -> anyhow::Result<()> {
             start_slot,
             log_path,
         } => {
-            run_sync(&provider, start_slot, &beacon_client, mode, log_path).await?;
+            run_sync(
+                &args.network,
+                &provider,
+                start_slot,
+                &beacon_client,
+                mode,
+                log_path,
+            )
+            .await?;
         }
     }
 
@@ -191,6 +199,7 @@ async fn main() -> anyhow::Result<()> {
 }
 
 async fn run_sync<E: EthSpec + Serialize>(
+    network: &Network,
     provider: &PersistentApiStateProvider<E>,
     start_slot: Slot,
     beacon_client: &BeaconClient,
@@ -221,7 +230,7 @@ async fn run_sync<E: EthSpec + Serialize>(
             .build(consensus_state.finalized_checkpoint)
             .await?;
         debug!("Input: {:?}", input);
-        let msg = match run_verify(mode, &DEFAULT_CONFIG, &sr, input.clone()) {
+        let msg = match run_verify(network, mode, &DEFAULT_CONFIG, &sr, input.clone()) {
             Ok(state) => {
                 info!("Verification successful. New state: {:#?}", &state);
                 if state != expected_state {
@@ -246,6 +255,7 @@ async fn run_sync<E: EthSpec + Serialize>(
 }
 
 fn run_verify<E: EthSpec + Serialize, R: StateReader<Spec = E> + StateProvider<Spec = E>>(
+    network: &Network,
     mode: ExecMode,
     cfg: &Config,
     host_reader: &R,
@@ -288,7 +298,7 @@ fn run_verify<E: EthSpec + Serialize, R: StateReader<Spec = E> + StateProvider<S
         info!("Host verification succeeded");
 
         if mode == ExecMode::R0vm {
-            let (pre_state, post_state) = vm_verify(&state_input, &input)?;
+            let (pre_state, post_state) = vm_verify(network.to_string(), &state_input, &input)?;
             ensure!(pre_state == input.consensus_state);
             ensure!(post_state == consensus_state);
             info!("Guest verification succeeded");

@@ -1,24 +1,9 @@
-// Copyright 2025 RISC Zero, Inc.
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
-
-use chainspec::CHAINSPEC;
 use risc0_zkvm::guest::env;
-use z_core::{DEFAULT_CONFIG, Input, MainnetEthSpec, StateInput, verify};
+use z_core::{ChainSpec, DEFAULT_CONFIG, Input, MainnetEthSpec, StateInput, verify};
 
 type Spec = MainnetEthSpec;
 
-fn main() {
+pub fn entry(chain_spec: ChainSpec) {
     let filter = tracing_subscriber::filter::EnvFilter::from_default_env()
         .add_directive(tracing_subscriber::filter::LevelFilter::INFO.into());
     tracing_subscriber::fmt()
@@ -42,7 +27,7 @@ fn main() {
         ));
 
         env::log("Verifying StateReader...");
-        state_input.into_state_reader(CHAINSPEC.clone(), &input.consensus_state)
+        state_input.into_state_reader(chain_spec, &input.consensus_state)
     }
     .unwrap();
 

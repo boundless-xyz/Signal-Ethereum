@@ -13,8 +13,8 @@
 // limitations under the License.
 
 use crate::{
-    AttestationData, Checkpoint, CommitteeCache, Config, Epoch, Input, Link, ShuffleData,
-    StateReader, StateTransitionError, ValidatorIndex, ValidatorInfo, committee_cache,
+    AttestationData, Checkpoint, CommitteeCache, Config, ConsensusError, Epoch, Input, Link,
+    ShuffleData, StateReader, ValidatorIndex, ValidatorInfo, committee_cache,
     consensus_state::ConsensusState, ensure, get_attesting_indices, get_total_balance,
 };
 use beacon_types::{
@@ -32,7 +32,7 @@ pub enum VerifyError {
     #[error("Invalid finalization: {0}")]
     InvalidFinalization(Checkpoint),
     #[error("Invalid state transition")]
-    StateTransition(#[from] StateTransitionError),
+    ConsensusError(#[from] ConsensusError),
     #[error("Attesting balance not met: {attesting_balance} < {threshold}")]
     ThresholdNotMet {
         attesting_balance: u64,

@@ -18,6 +18,8 @@
 //! has experienced certain events (e.g. finalization, validator exits, etc) that are valid in a beacon chain.
 //! The function `test_zkasper_sync` is then called to check if the ZKasper input building and state transition process is able
 //! to handle these scenarios correctly.
+
+use std::io;
 use std::sync::{Arc, LazyLock};
 
 use anyhow::{Context, anyhow};
@@ -157,17 +159,43 @@ async fn test_zkasper_sync(
     Ok(consensus_state)
 }
 
+/// A minimal sink that prints every complete line it receives through `Write`.
+#[derive(Default)]
+struct LinePrinter {
+    buffer: Vec<u8>,
+}
+
+impl io::Write for LinePrinter {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        for &byte in buf {
+            if byte == b'\n' {
+                println!("{}", String::from_utf8_lossy(&self.buffer));
+                self.buffer.clear();
+            } else {
+                self.buffer.push(byte);
+            }
+        }
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
 fn vm_verify(
     spec: &ChainSpecConfig,
     config: &Config,
     state_input: &StateInput,
     input: &Input<MainnetEthSpec>,
 ) -> anyhow::Result<(ConsensusState, ConsensusState)> {
+    let mut stdout = LinePrinter::default();
     let env = ExecutorEnv::builder()
         .write_frame(&serde_cbor::to_vec(spec)?)
         .write_frame(&serde_cbor::to_vec(config)?)
         .write_frame(&bincode::serialize(state_input)?)
         .write_frame(&bincode::serialize(input)?)
+        .stdout(&mut stdout)
         .build()?;
 
     let journal = default_executor().execute(env, TESTHARNESS_ELF)?.journal;

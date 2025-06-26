@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 
 pub use assert_state_reader::AssertStateReader;
 use beacon_chain::{
@@ -30,7 +30,7 @@ mod test_harness_state_reader;
 type E = MainnetEthSpec;
 pub type TestHarness = test_harness_state_reader::TestHarness<EphemeralHarnessType<E>>;
 
-pub fn get_spec() -> Arc<ChainSpec> {
+pub static TEST_SPEC: LazyLock<Arc<ChainSpec>> = LazyLock::new(|| {
     let altair_fork_epoch = Epoch::new(0);
     let bellatrix_fork_epoch = Epoch::new(1);
     let capella_fork_epoch = Epoch::new(2);
@@ -43,8 +43,9 @@ pub fn get_spec() -> Arc<ChainSpec> {
     spec.capella_fork_epoch = Some(capella_fork_epoch);
     spec.deneb_fork_epoch = Some(deneb_fork_epoch);
     spec.electra_fork_epoch = Some(electra_fork_epoch);
-    Arc::new(spec)
-}
+
+    spec.into()
+});
 
 pub async fn get_harness(
     keypairs: Vec<Keypair>,
@@ -109,8 +110,8 @@ pub async fn get_harness(
     harness.into()
 }
 
-pub fn consensus_state_from_state(
-    state: &beacon_types::BeaconState<MainnetEthSpec>,
+pub fn consensus_state_from_state<T: EthSpec>(
+    state: &beacon_types::BeaconState<T>,
 ) -> ConsensusState {
     ConsensusState {
         finalized_checkpoint: z_core::Checkpoint::new(

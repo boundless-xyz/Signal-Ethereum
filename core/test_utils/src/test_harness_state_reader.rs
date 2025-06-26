@@ -18,19 +18,18 @@
 //!
 //!
 
+use crate::consensus_state_from_state;
 use anyhow::anyhow;
 use beacon_chain::{
     BeaconChainTypes, StateSkipConfig, WhenSlotSkipped, test_utils::BeaconChainHarness,
 };
-use beacon_types::{EthSpec, Hash256};
+use beacon_types::Hash256;
 use ethereum_consensus::phase0::SignedBeaconBlockHeader;
 use ethereum_consensus::types::mainnet::BeaconBlock;
 use std::ops::{Deref, DerefMut};
 use std::str::FromStr;
 use tracing::trace;
-use z_core::{
-    ChainReader, ConsensusState, Root, Slot, StateProvider, StateProviderError, StateRef,
-};
+use z_core::{ChainReader, Root, Slot, StateProvider, StateProviderError, StateRef};
 
 pub struct TestHarness<T: BeaconChainTypes>(BeaconChainHarness<T>);
 
@@ -165,15 +164,6 @@ enum SlotOrRoot {
     Root(Hash256),
 }
 
-fn convert_via_json<T, TT>(value: T) -> Result<TT, serde_json::Error>
-where
-    T: serde::Serialize,
-    TT: serde::de::DeserializeOwned,
-{
-    let json = serde_json::to_value(value)?;
-    serde_json::from_value(json)
-}
-
 impl FromStr for SlotOrRoot {
     type Err = anyhow::Error;
 
@@ -190,21 +180,11 @@ impl FromStr for SlotOrRoot {
     }
 }
 
-pub fn consensus_state_from_state<T: EthSpec>(
-    state: &beacon_types::BeaconState<T>,
-) -> ConsensusState {
-    ConsensusState {
-        finalized_checkpoint: z_core::Checkpoint::new(
-            state.finalized_checkpoint().epoch,
-            state.finalized_checkpoint().root,
-        ),
-        current_justified_checkpoint: z_core::Checkpoint::new(
-            state.current_justified_checkpoint().epoch,
-            state.current_justified_checkpoint().root,
-        ),
-        previous_justified_checkpoint: z_core::Checkpoint::new(
-            state.previous_justified_checkpoint().epoch,
-            state.previous_justified_checkpoint().root,
-        ),
-    }
+fn convert_via_json<T, TT>(value: T) -> Result<TT, serde_json::Error>
+where
+    T: serde::Serialize,
+    TT: serde::de::DeserializeOwned,
+{
+    let json = serde_json::to_value(value)?;
+    serde_json::from_value(json)
 }

@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use risc0_zkvm::guest::env;
-use z_core::{DefaultSpec, Input, MainnetEthSpec, StateInput, verify};
+use z_core::{DEFAULT_CONFIG, EthSpec, Input, MainnetEthSpec, StateInput, verify};
 
 type Spec = MainnetEthSpec;
 
@@ -41,7 +41,7 @@ fn main() {
         ));
 
         env::log("Verifying StateReader...");
-        state_input.into_state_reader(&input.consensus_state)
+        state_input.into_state_reader(Spec::default_spec(), &input.consensus_state)
     }
     .unwrap();
 
@@ -51,7 +51,7 @@ fn main() {
     env::log("Verifying FFG state transitions...");
 
     let pre_state = input.consensus_state.clone();
-    let post_state = verify::<DefaultSpec, _>(&state_reader, input).unwrap();
+    let post_state = verify(&DEFAULT_CONFIG, &state_reader, input).unwrap();
 
     env::log(&format!(
         "New finalization: {}",

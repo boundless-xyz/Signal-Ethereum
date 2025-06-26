@@ -15,11 +15,9 @@
 use anyhow::{Context, ensure};
 use clap::{Parser, ValueEnum};
 use host::{
-    beacon_client::BeaconClient,
-    host_state_reader::HostStateReader,
+    AssertStateReader, CacheStateProvider, PersistentApiStateProvider, StateProvider,
+    beacon_client::BeaconClient, host_state_reader::HostStateReader,
     preflight_state_reader::PreflightStateReader,
-    state_provider::{CacheStateProvider, PersistentApiStateProvider, StateProvider},
-    test_utils::AssertStateReader,
 };
 use methods::{MAINNET_ELF, SEPOLIA_ELF};
 use risc0_zkvm::{ExecutorEnv, default_executor};

@@ -12,12 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-pub mod beacon_client;
-pub mod state_provider;
-pub mod state_reader;
-pub mod test_utils;
+pub mod assert_state_reader;
+pub mod host_state_reader;
+pub mod preflight_state_reader;
+pub mod test_harness_state_reader;
 
-pub use beacon_client::*;
-pub use state_provider::*;
-pub use state_reader::*;
-pub use test_utils::*;
+pub use assert_state_reader::*;
+pub use host_state_reader::*;
+pub use preflight_state_reader::*;

@@ -20,11 +20,12 @@ pub use cache_provider::*;
 pub use file_provider::*;
 pub use persistant_api_provider::*;
 
+use crate::mainnet::BeaconState;
 use beacon_types::EthSpec;
 use ssz_rs::HashTreeRoot;
 use std::sync::Arc;
 use tracing::warn;
-use z_core::{Checkpoint, Epoch, Root, Slot, mainnet::BeaconState};
+use z_core::{Checkpoint, Epoch, Root, Slot};
 
 pub type StateRef = Arc<BeaconState>;
 

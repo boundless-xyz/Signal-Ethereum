@@ -5,26 +5,16 @@ edition = { workspace = true }
 repository = { workspace = true }
 license = "Apache-2.0"
 
-[[bin]]
-name = "gen_gindices"
-test = false
-bench = false
-required-features = ["host"]
 
 [dependencies]
 alloy-primitives = { workspace = true, features = ["rlp"] }
 alloy-sol-types = { workspace = true }
 anyhow = { workspace = true }
-beacon_chain = { workspace = true, optional = true }
 beacon_types = { workspace = true, default-features = false, features = ["legacy-arith"] }
 bls = { workspace = true }
-elsa = { version = "1.11", optional = true }
 ethereum-consensus = { workspace = true, default-features = false, optional = true }
 ethereum_ssz = "0.7.1"
 itertools = "0.14"
-prettyplease = { version = "0.2", optional = true }
-proc-macro2 = { version = "1.0", optional = true }
-quote = { version = "1.0", optional = true }
 safe_arith = { workspace = true }
 serde = { workspace = true }
 serde_arrays = { version = "0.2.0" }
@@ -32,9 +22,7 @@ serde_json = "1.0.133"
 serde_with = "3.13"
 sha2 = { workspace = true, default-features = false }
 ssz-multiproofs = { path = "../ssz-multiproofs" }
-ssz_rs = { workspace = true, default-features = true, optional = true, features = ["serde"] }
 swap_or_not_shuffle = { workspace = true }
-syn = { version = "2.0", optional = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
 tree_hash = { version = "0.8" }
@@ -48,11 +36,4 @@ rand = "0.9"
 default = ["host"]
 host = [
     "dep:ethereum-consensus",
-    "dep:elsa",
-    "dep:quote",
-    "dep:syn",
-    "dep:prettyplease",
-    "dep:proc-macro2",
-    "dep:ssz_rs",
-    "dep:beacon_chain",
 ]

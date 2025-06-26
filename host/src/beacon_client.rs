@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::ChainReader;
+use crate::{ChainReader, mainnet::BeaconState};
 use ethereum_consensus::{
     Fork, phase0::SignedBeaconBlockHeader, primitives::Root, serde::as_str,
     types::mainnet::BeaconBlock,
@@ -28,7 +28,7 @@ use std::path::PathBuf;
 use std::result::Result as StdResult;
 use tracing::warn;
 use url::Url;
-use z_core::{Checkpoint, ConsensusState, mainnet::BeaconState};
+use z_core::{Checkpoint, ConsensusState};
 
 /// Errors returned by the [BeaconClient].
 #[derive(Debug, thiserror::Error)]

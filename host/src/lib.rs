@@ -12,16 +12,20 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-pub mod beacon_client;
-pub mod conversions;
-pub mod input_builder;
-pub mod state_provider;
-pub mod state_reader;
-pub mod test_utils;
+mod beacon_client;
+mod beacon_state;
+mod conversions;
+mod input_builder;
+mod state_patch_builder;
+mod state_provider;
+mod state_reader;
+mod test_utils;
 
 pub use beacon_client::*;
+pub use beacon_state::*;
 pub use conversions::*;
 pub use input_builder::*;
+pub use state_patch_builder::*;
 pub use state_provider::*;
 pub use state_reader::*;
 pub use test_utils::*;

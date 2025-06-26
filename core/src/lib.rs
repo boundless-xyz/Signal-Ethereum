@@ -26,21 +26,17 @@ use std::{
 use tree_hash::TreeHash;
 
 mod attestation;
-#[cfg(feature = "host")]
-mod beacon_state;
 mod bls;
 mod committee_cache;
 mod config;
 mod consensus_state;
 mod guest_gindices;
-mod serde_utils;
+pub mod serde_utils;
 mod state_patch;
 mod state_reader;
 mod verify;
 
 pub use attestation::*;
-#[cfg(feature = "host")]
-pub use beacon_state::*;
 pub use bls::*;
 pub use committee_cache::*;
 pub use config::*;
@@ -162,19 +158,6 @@ impl From<&ethereum_consensus::phase0::Validator> for ValidatorInfo {
     }
 }
 
-#[cfg(feature = "host")]
-impl From<&beacon_types::Validator> for ValidatorInfo {
-    fn from(v: &beacon_types::Validator) -> Self {
-        Self {
-            pubkey: v.pubkey.decompress().expect("fail to decompress pub key"),
-            effective_balance: v.effective_balance,
-            slashed: v.slashed,
-            activation_epoch: v.activation_epoch,
-            activation_eligibility_epoch: v.activation_eligibility_epoch,
-            exit_epoch: v.exit_epoch,
-        }
-    }
-}
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[repr(transparent)]
 pub struct Checkpoint(beacon_types::Checkpoint);
@@ -270,13 +253,6 @@ pub struct Link {
 impl Display for Link {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         write!(f, "{}->{}", self.source, self.target)
-    }
-}
-
-#[cfg(feature = "host")]
-impl From<ethereum_consensus::electra::Checkpoint> for Checkpoint {
-    fn from(checkpoint: ethereum_consensus::electra::Checkpoint) -> Self {
-        Self::new(checkpoint.epoch.into(), checkpoint.root)
     }
 }
 

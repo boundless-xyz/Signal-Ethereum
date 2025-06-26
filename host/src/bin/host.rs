@@ -15,8 +15,8 @@
 use anyhow::{Context, ensure};
 use clap::{Parser, ValueEnum};
 use host::{
-    AssertStateReader, CacheStateProvider, ChainReader, InputBuilder, PersistentApiStateProvider,
-    StateProvider, beacon_client::BeaconClient, host_state_reader::HostStateReader,
+    AssertStateReader, BeaconClient, CacheStateProvider, ChainReader, InputBuilder,
+    PersistentApiStateProvider, StateProvider, host_state_reader::HostStateReader,
     preflight_state_reader::PreflightStateReader,
 };
 use methods::{MAINNET_ELF, SEPOLIA_ELF};

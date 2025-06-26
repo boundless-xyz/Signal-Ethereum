@@ -17,8 +17,10 @@ use alloy_primitives::B256;
 use serde_with::serde_as;
 use std::collections::BTreeMap;
 
+pub static EMPTY_STATE_PATCH: StatePatch = StatePatch::new();
+
 #[serde_as]
-#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct StatePatch {
     pub randao_mixes: BTreeMap<RandaoMixIndex, B256>,
     #[serde_as(as = "BTreeMap<_, serde_utils::U64>")]
@@ -26,6 +28,16 @@ pub struct StatePatch {
 }
 
 impl StatePatch {
+    /// Makes a new, empty `StatePatch`.
+    #[inline]
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            randao_mixes: BTreeMap::new(),
+            validator_exits: BTreeMap::new(),
+        }
+    }
+
     /// Checks if the validator is active at the given epoch.
     #[inline]
     pub fn is_active_validator(
@@ -38,6 +50,12 @@ impl StatePatch {
             Some(exit_epoch) => epoch < *exit_epoch && validator.is_active_at(epoch),
             None => validator.is_active_at(epoch),
         }
+    }
+}
+
+impl Default for StatePatch {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -62,7 +80,7 @@ mod host {
         pub fn new(state: StateRef) -> Self {
             Self {
                 state,
-                patch: Default::default(),
+                patch: StatePatch::new(),
             }
         }
 

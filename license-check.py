@@ -29,7 +29,7 @@ EXTENSIONS = [
 ]
 
 SKIP_PATHS = [
-    str(Path.cwd()) + "/core/src/shuffle_list.rs",
+    str(Path.cwd()) + "/core/src/committee_cache.rs",
 ]
 
 def check_header(file, expected_year, lines_actual):

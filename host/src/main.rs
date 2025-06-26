@@ -17,7 +17,8 @@ use beacon_types::EthSpec;
 use clap::{Parser, ValueEnum};
 use methods::BEACON_GUEST_ELF;
 use risc0_zkvm::{ExecutorEnv, default_executor};
-use ssz_rs::prelude::*;
+use serde::Serialize;
+use ssz_rs::HashTreeRoot;
 use std::{
     fmt::{self, Display},
     fs::{self, File},
@@ -27,9 +28,9 @@ use std::{
 use tracing::{debug, info, warn};
 use url::Url;
 use z_core::{
-    CacheStateProvider, ChainReader, Checkpoint, ConsensusState, DefaultSpec, Epoch,
+    CacheStateProvider, ChainReader, Checkpoint, Config, ConsensusState, DEFAULT_CONFIG, Epoch,
     HostStateReader, Input, InputBuilder, MainnetEthSpec, PreflightStateReader, Slot, StateInput,
-    StateProvider, StateReader, ZkasperSpec, verify,
+    StateProvider, StateReader, verify,
 };
 use z_core_test_utils::AssertStateReader;
 
@@ -145,7 +146,11 @@ async fn main() -> anyhow::Result<()> {
     fs::create_dir_all(&state_dir)?;
 
     let provider = PersistentApiStateProvider::<Spec>::new(&state_dir, beacon_client.clone())?;
-    let reader = HostStateReader::new(CacheStateProvider::new(provider.clone()));
+
+    let reader = HostStateReader::new(
+        Spec::default_spec(),
+        CacheStateProvider::new(provider.clone()),
+    );
 
     match args.command {
         Command::Verify {
@@ -181,15 +186,15 @@ async fn main() -> anyhow::Result<()> {
             start_slot,
             log_path,
         } => {
-            run_sync::<DefaultSpec>(&provider, start_slot, &beacon_client, mode, log_path).await?;
+            run_sync(&provider, start_slot, &beacon_client, mode, log_path).await?;
         }
     }
 
     Ok(())
 }
 
-async fn run_sync<E: ZkasperSpec>(
-    provider: &PersistentApiStateProvider<E::EthSpec>,
+async fn run_sync<E: EthSpec + Serialize>(
+    provider: &PersistentApiStateProvider<E>,
     start_slot: Slot,
     beacon_client: &BeaconClient,
     mode: ExecMode,
@@ -211,16 +216,17 @@ async fn run_sync<E: ZkasperSpec>(
 
     let mut consensus_state = beacon_client.get_consensus_state(start_slot).await?;
     info!("Initial Consensus State: {:#?}", consensus_state);
-    let sr = HostStateReader::<PersistentApiStateProvider<E::EthSpec>>::new(provider.clone());
+    let sr =
+        HostStateReader::<PersistentApiStateProvider<E>>::new(E::default_spec(), provider.clone());
 
-    let input_builder = InputBuilder::<E::EthSpec, _>::new(beacon_client.clone());
+    let input_builder = InputBuilder::<E, _>::new(beacon_client.clone());
 
     loop {
         let (input, expected_state) = input_builder
             .build(consensus_state.finalized_checkpoint)
             .await?;
         debug!("Input: {:?}", input);
-        let msg = match run_verify::<E, _>(mode, &sr, input.clone()) {
+        let msg = match run_verify(mode, &DEFAULT_CONFIG, &sr, input.clone()) {
             Ok(state) => {
                 info!("Verification successful. New state: {:#?}", &state);
                 if state != expected_state {
@@ -244,19 +250,17 @@ async fn run_sync<E: ZkasperSpec>(
     }
 }
 
-fn run_verify<
-    E: ZkasperSpec,
-    R: StateReader<Spec = E::EthSpec> + StateProvider<Spec = E::EthSpec>,
->(
+fn run_verify<E: EthSpec + Serialize, R: StateReader<Spec = E> + StateProvider<Spec = E>>(
     mode: ExecMode,
+    cfg: &Config,
     host_reader: &R,
-    input: Input<E::EthSpec>,
+    input: Input<E>,
 ) -> anyhow::Result<ConsensusState> {
     info!("Verification mode: {mode}");
 
     info!("Running preflight");
     let reader = PreflightStateReader::new(host_reader, input.consensus_state.finalized_checkpoint);
-    let consensus_state = verify::<E, _>(&reader, input.clone()).context("preflight failed")?;
+    let consensus_state = verify(cfg, &reader, input.clone()).context("preflight failed")?;
     info!("Preflight succeeded");
 
     if mode == ExecMode::Ssz || mode == ExecMode::R0vm {
@@ -268,20 +272,23 @@ fn run_verify<
         let input_bytes = bincode::serialize(&input).context("failed to serialize input")?;
         debug!(len = input_bytes.len(), "Input serialized");
 
-        let guest_input: Input<E::EthSpec> =
+        let guest_input: Input<E> =
             bincode::deserialize(&input_bytes).context("failed to deserialize input")?;
         let guest_reader = {
             let state_input: StateInput =
                 bincode::deserialize(&state_bytes).context("failed to deserialize state")?;
             state_input
-                .into_state_reader(&input.consensus_state)
+                .into_state_reader(E::default_spec(), &input.consensus_state)
                 .context("failed to validate input")?
         };
 
         // use the AssertStateReader to detect input issues already on the host
-        let host_consensus_state =
-            verify::<E, _>(&AssertStateReader::new(&guest_reader, &reader), guest_input)
-                .context("host verification failed")?;
+        let host_consensus_state = verify(
+            cfg,
+            &AssertStateReader::new(&guest_reader, &reader),
+            guest_input,
+        )
+        .context("host verification failed")?;
         ensure!(host_consensus_state == consensus_state);
         info!("Host verification succeeded");
 

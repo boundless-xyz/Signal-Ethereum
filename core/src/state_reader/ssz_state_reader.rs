@@ -14,8 +14,8 @@
 
 use super::StateReader;
 use crate::{
-    Checkpoint, ConsensusState, Epoch, PublicKey, RandaoMixIndex, Root, Slot, StatePatch,
-    ValidatorIndex, ValidatorInfo, get_total_balance,
+    Checkpoint, ConsensusState, EMPTY_STATE_PATCH, Epoch, PublicKey, RandaoMixIndex, Root, Slot,
+    StatePatch, ValidatorIndex, ValidatorInfo, ensure, get_total_balance,
     guest_gindices::{
         activation_eligibility_epoch_gindex, activation_epoch_gindex,
         earliest_consolidation_epoch_gindex, earliest_exit_epoch_gindex, effective_balance_gindex,
@@ -65,7 +65,6 @@ pub struct SszStateReader<E: EthSpec> {
 
     // verified beacon state fields
     genesis_validators_root: B256,
-    fork: Fork,
     validators: BTreeMap<ValidatorIndex, ValidatorInfo>,
 
     // additional unverified data
@@ -94,8 +93,8 @@ pub enum SszReaderError {
         #[source]
         source: ssz_multiproofs::Error,
     },
-    #[error("Missing state patch: {0}")]
-    MissingStatePatch(Epoch),
+    #[error("Config error: {0}")]
+    ConfigError(&'static str),
     #[error("Arithmetic error: {0:?}")]
     ArithError(ArithError),
 }
@@ -119,11 +118,9 @@ impl<T> WithContext<T> for Result<T, ssz_multiproofs::Error> {
 impl StateInput<'_> {
     pub fn into_state_reader<E: EthSpec>(
         mut self,
+        spec: ChainSpec,
         consensus_state: &ConsensusState,
     ) -> Result<SszStateReader<E>, SszReaderError> {
-        // always use the default spec
-        let spec = E::default_spec();
-
         // the finalized checkpoint is the only state we can trust
         let trusted_checkpoint = consensus_state.finalized_checkpoint;
 
@@ -154,13 +151,18 @@ impl StateInput<'_> {
         )
         .context("Failed to extract validators proof")?;
 
+        // perform state validations
         let state_epoch = state.slot.epoch(E::slots_per_epoch());
-        let current_justified_epoch = consensus_state.current_justified_checkpoint.epoch();
+        ensure!(
+            state.fork == spec.fork_at_epoch(state_epoch),
+            SszReaderError::ConfigError("Beacon state's fork does not match the chain spec")
+        );
 
         // Our trusted state is from `slot`, but our consensus state is at
         // `current_justified_checkpoint`. This means that we have missed all the state changes
         // introduced by the intermediate `state_transition()` calls. From the trusted state, we
         // only use the validator registry, so it boils down to the process_registry_updates().
+        let current_justified_epoch = consensus_state.current_justified_checkpoint.epoch();
         for epoch in state_epoch.as_u64()..=current_justified_epoch.as_u64() {
             let epoch = Epoch::from(epoch);
             // By definition, we know that the next finalization will happen at the
@@ -180,7 +182,6 @@ impl StateInput<'_> {
         Ok(SszStateReader {
             spec,
             genesis_validators_root: state.genesis_validators_root,
-            fork: state.fork,
             validators,
             patches: self.patches,
             _phantom: PhantomData,
@@ -283,18 +284,15 @@ impl<E: EthSpec> StateReader for SszStateReader<E> {
         Ok(self.genesis_validators_root)
     }
 
-    fn fork(&self, _epoch: Epoch) -> Result<Fork, Self::Error> {
-        Ok(self.fork)
+    fn fork(&self, epoch: Epoch) -> Result<Fork, Self::Error> {
+        Ok(self.spec.fork_at_epoch(epoch))
     }
 
     fn active_validators(
         &self,
         epoch: Epoch,
     ) -> Result<impl Iterator<Item = (ValidatorIndex, &ValidatorInfo)>, Self::Error> {
-        let patch = self
-            .patches
-            .get(&epoch)
-            .ok_or(SszReaderError::MissingStatePatch(epoch))?;
+        let patch = self.patches.get(&epoch).unwrap_or(&EMPTY_STATE_PATCH);
 
         Ok(self
             .validators
@@ -304,12 +302,8 @@ impl<E: EthSpec> StateReader for SszStateReader<E> {
     }
 
     fn randao_mix(&self, epoch: Epoch, index: RandaoMixIndex) -> Result<Option<B256>, Self::Error> {
-        let randao = self
-            .patches
-            .get(&epoch)
-            .ok_or(Self::Error::MissingStatePatch(epoch))?
-            .randao_mixes
-            .get(&index);
+        let patch = self.patches.get(&epoch).unwrap_or(&EMPTY_STATE_PATCH);
+        let randao = patch.randao_mixes.get(&index);
 
         Ok(randao.cloned())
     }

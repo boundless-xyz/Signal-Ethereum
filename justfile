@@ -1,4 +1,4 @@
-MAINNET_ELECTRA_SLOT := "11649024"
+MAINNET_ELECTRA_SLOT := "11649026" # two epochs after the fork, otherwise we will need pre-fork state to process attestations
 
 SEPOLIA_ELECTRA_SLOT := "7118912" # two epochs after the fork, otherwise we will need pre-fork state to process attestations
 

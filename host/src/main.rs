@@ -13,8 +13,9 @@
 // limitations under the License.
 
 use anyhow::{Context, ensure};
-use beacon_types::EthSpec;
+use beacon_types::{ChainSpec, EthSpec};
 use clap::{Parser, ValueEnum};
+use eth2_network_config::Eth2NetworkConfig;
 use methods::BEACON_GUEST_ELF;
 use risc0_zkvm::{ExecutorEnv, default_executor};
 use serde::Serialize;
@@ -131,6 +132,18 @@ impl fmt::Display for Network {
     }
 }
 
+impl TryFrom<Network> for Eth2NetworkConfig {
+    type Error = String;
+    fn try_from(network: Network) -> Result<Self, Self::Error> {
+        match network {
+            Network::Sepolia => Eth2NetworkConfig::constant("sepolia"),
+            Network::Mainnet => Eth2NetworkConfig::constant("mainnet"),
+        }
+        .transpose()
+        .ok_or(String::from("No hard-coded network found for given name"))?
+    }
+}
+
 type Spec = MainnetEthSpec;
 
 #[tokio::main]
@@ -148,6 +161,9 @@ async fn main() -> anyhow::Result<()> {
 
     let state_dir = args.data_dir.join(args.network.to_string()).join("states");
     fs::create_dir_all(&state_dir)?;
+
+    let network_config: Eth2NetworkConfig = args.network.try_into().unwrap();
+    let chain_spec = network_config.chain_spec::<Spec>().unwrap();
 
     let provider = PersistentApiStateProvider::<Spec>::new(&state_dir, beacon_client.clone())?;
 
@@ -190,7 +206,15 @@ async fn main() -> anyhow::Result<()> {
             start_slot,
             log_path,
         } => {
-            run_sync(&provider, start_slot, &beacon_client, mode, log_path).await?;
+            run_sync(
+                chain_spec,
+                &provider,
+                start_slot,
+                &beacon_client,
+                mode,
+                log_path,
+            )
+            .await?;
         }
     }
 
@@ -198,6 +222,7 @@ async fn main() -> anyhow::Result<()> {
 }
 
 async fn run_sync<E: EthSpec + Serialize>(
+    chain_spec: ChainSpec,
     provider: &PersistentApiStateProvider<E>,
     start_slot: Slot,
     beacon_client: &BeaconClient,
@@ -215,9 +240,7 @@ async fn run_sync<E: EthSpec + Serialize>(
 
     let mut consensus_state = beacon_client.get_consensus_state(start_slot).await?;
     info!("Initial Consensus State: {:#?}", consensus_state);
-    let sr =
-        HostStateReader::<PersistentApiStateProvider<E>>::new(E::default_spec(), provider.clone());
-
+    let sr = HostStateReader::new(chain_spec, CacheStateProvider::new(provider.clone()));
     let input_builder = InputBuilder::<E, _>::new(beacon_client.clone());
 
     loop {

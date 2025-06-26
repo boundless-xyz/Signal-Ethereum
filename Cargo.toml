@@ -47,6 +47,7 @@ tokio = { version = "1.45", features = ["full"] }
 beacon_chain = { git = "https://github.com/ec2/lighthouse.git", rev = "d8a5e649e938740e2d1c8d58f6e162f0a2f7af9d" }
 beacon_types = { package = "types", git = "https://github.com/ec2/lighthouse.git", rev = "d8a5e649e938740e2d1c8d58f6e162f0a2f7af9d", default-features = false, features = ["legacy-arith"] }
 bls = { git = "https://github.com/ec2/lighthouse.git", rev = "d8a5e649e938740e2d1c8d58f6e162f0a2f7af9d" }
+eth2_network_config = { git = "https://github.com/ec2/lighthouse.git", rev = "d8a5e649e938740e2d1c8d58f6e162f0a2f7af9d" }
 swap_or_not_shuffle = { git = "https://github.com/ec2/lighthouse.git", rev = "d8a5e649e938740e2d1c8d58f6e162f0a2f7af9d" }
 safe_arith = { git = "https://github.com/ec2/lighthouse.git", rev = "d8a5e649e938740e2d1c8d58f6e162f0a2f7af9d" }
 

@@ -17,7 +17,6 @@ itertools = "0.14"
 safe_arith = { workspace = true }
 serde = { workspace = true }
 serde_arrays = { version = "0.2.0" }
-serde_json = "1.0.133"
 serde_with = "3.13"
 sha2 = { workspace = true, default-features = false }
 ssz-multiproofs = { path = "../ssz-multiproofs" }

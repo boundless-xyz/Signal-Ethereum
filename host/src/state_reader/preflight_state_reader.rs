@@ -20,7 +20,7 @@ use thiserror::Error;
 
 use crate::{
     HostReaderError, StatePatchBuilder, StateProvider, mainnet::BeaconState,
-    mainnet::ElectraBeaconState,
+    mainnet::ElectraBeaconState, to_validator_info,
 };
 use alloy_primitives::B256;
 use ethereum_consensus::phase0::BeaconBlockHeader;
@@ -124,7 +124,7 @@ where
                     .with_path::<Validators>(&[idx.into(), "activation_epoch".into()])
                     .with_path::<Validators>(&[idx.into(), "exit_epoch".into()]);
 
-                public_keys.push(ValidatorInfo::from(validator).pubkey);
+                public_keys.push(to_validator_info(validator).pubkey);
             }
         }
         let validator_multiproof = proof_builder.build(trusted_state.validators()).unwrap();

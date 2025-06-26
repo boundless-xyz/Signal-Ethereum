@@ -144,20 +144,6 @@ impl ValidatorInfo {
     }
 }
 
-#[cfg(feature = "host")]
-impl From<&ethereum_consensus::phase0::Validator> for ValidatorInfo {
-    fn from(v: &ethereum_consensus::phase0::Validator) -> Self {
-        Self {
-            pubkey: PublicKey::deserialize(&v.public_key).unwrap(),
-            effective_balance: v.effective_balance,
-            slashed: v.slashed,
-            activation_epoch: v.activation_epoch.into(),
-            activation_eligibility_epoch: v.activation_eligibility_epoch.into(),
-            exit_epoch: v.exit_epoch.into(),
-        }
-    }
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[repr(transparent)]
 pub struct Checkpoint(beacon_types::Checkpoint);

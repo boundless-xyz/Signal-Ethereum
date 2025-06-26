@@ -12,7 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use z_core::{Attestation, AttestationData, EthSpec};
+use bls::PublicKey;
+use z_core::{Attestation, AttestationData, EthSpec, ValidatorInfo};
 
 pub fn conv_attestation<
     E: EthSpec,
@@ -65,5 +66,16 @@ pub fn conv_checkpoint(
     beacon_types::Checkpoint {
         epoch: checkpoint.epoch.into(),
         root: checkpoint.root,
+    }
+}
+
+pub fn to_validator_info(v: &ethereum_consensus::phase0::Validator) -> ValidatorInfo {
+    ValidatorInfo {
+        pubkey: PublicKey::deserialize(&v.public_key).unwrap(),
+        effective_balance: v.effective_balance,
+        slashed: v.slashed,
+        activation_epoch: v.activation_epoch.into(),
+        activation_eligibility_epoch: v.activation_eligibility_epoch.into(),
+        exit_epoch: v.exit_epoch.into(),
     }
 }

@@ -22,8 +22,9 @@ use thiserror::Error;
 use tracing::{debug, trace};
 use z_core::{Epoch, RandaoMixIndex, Root, Slot, StateReader, ValidatorIndex, ValidatorInfo};
 
-use crate::state_provider::{
+use crate::{
     CacheStateProvider, FileProvider, StateProvider, StateProviderError, StateRef,
+    to_validator_info,
 };
 
 #[derive(Error, Debug)]
@@ -131,7 +132,7 @@ impl<P: StateProvider> StateReader for HostStateReader<P> {
                     .iter()
                     .enumerate()
                     .filter(move |(_, validator)| is_active_validator(validator, epoch.into()))
-                    .map(move |(idx, validator)| (idx, ValidatorInfo::from(validator)))
+                    .map(move |(idx, validator)| (idx, to_validator_info(validator)))
                     .collect();
                 debug!("Active validators: {}", validators.len());
 

@@ -12,7 +12,6 @@ alloy-sol-types = { workspace = true }
 anyhow = { workspace = true }
 beacon_types = { workspace = true, default-features = false, features = ["legacy-arith"] }
 bls = { workspace = true }
-ethereum-consensus = { workspace = true, default-features = false, optional = true }
 ethereum_ssz = "0.7.1"
 itertools = "0.14"
 safe_arith = { workspace = true }
@@ -32,8 +31,3 @@ arbitrary = "1.4"
 bincode = { workspace = true }
 rand = "0.9"
 
-[features]
-default = ["host"]
-host = [
-    "dep:ethereum-consensus",
-]

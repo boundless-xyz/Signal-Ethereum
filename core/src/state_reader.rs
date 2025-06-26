@@ -12,6 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use std::sync::Arc;
+
 use crate::{Epoch, RandaoMixIndex, Root, ValidatorIndex, ValidatorInfo};
 use alloy_primitives::{B256, aliases::B32};
 use beacon_types::{ChainSpec, EthSpec, Unsigned};
@@ -19,11 +21,6 @@ use safe_arith::{ArithError, SafeArith};
 use sha2::Digest;
 
 mod ssz_state_reader;
-#[cfg(feature = "host")]
-mod state_provider;
-
-#[cfg(feature = "host")]
-pub use self::state_provider::*;
 pub use ssz_state_reader::*;
 
 pub trait StateReader {

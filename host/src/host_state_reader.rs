@@ -21,11 +21,11 @@ use std::path::PathBuf;
 use thiserror::Error;
 use tracing::{debug, trace};
 use z_core::{
-    CacheStateProvider, Epoch, RandaoMixIndex, Root, Slot, StateProvider, StateProviderError,
-    StateReader, StateRef, ValidatorIndex, ValidatorInfo,
+    Epoch, RandaoMixIndex, Root, Slot, StateProvider, StateProviderError, StateReader, StateRef,
+    ValidatorIndex, ValidatorInfo,
 };
 
-use crate::state_provider::FileProvider;
+use crate::state_provider::{CacheStateProvider, FileProvider};
 
 #[derive(Error, Debug)]
 pub enum HostReaderError {

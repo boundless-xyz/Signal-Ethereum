@@ -65,11 +65,15 @@ pub use host::StatePatchBuilder;
 
 #[cfg(feature = "host")]
 mod host {
+    use std::sync::Arc;
+
     use super::*;
-    use crate::{RandaoMixIndex, StateRef};
+    use crate::{RandaoMixIndex, beacon_state::mainnet::BeaconState};
     use beacon_types::EthSpec;
     use ethereum_consensus::phase0::Validator;
     use tracing::debug;
+
+    type StateRef = Arc<BeaconState>;
 
     pub struct StatePatchBuilder {
         state: StateRef,

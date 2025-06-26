@@ -13,8 +13,10 @@
 // limitations under the License.
 
 use crate::{
-    beacon_client::BeaconClient, host_state_reader::HostStateReader,
-    preflight_state_reader::PreflightStateReader, state_provider::PersistentApiStateProvider,
+    beacon_client::BeaconClient,
+    host_state_reader::HostStateReader,
+    preflight_state_reader::PreflightStateReader,
+    state_provider::{CacheStateProvider, PersistentApiStateProvider},
 };
 use anyhow::{Context, ensure};
 use clap::{Parser, ValueEnum};
@@ -31,9 +33,8 @@ use std::{
 use tracing::{debug, info, warn};
 use url::Url;
 use z_core::{
-    CacheStateProvider, ChainReader, Checkpoint, Config, ConsensusState, DEFAULT_CONFIG, Epoch,
-    EthSpec, Input, InputBuilder, MainnetEthSpec, Slot, StateInput, StateProvider, StateReader,
-    verify,
+    ChainReader, Checkpoint, Config, ConsensusState, DEFAULT_CONFIG, Epoch, EthSpec, Input,
+    InputBuilder, MainnetEthSpec, Slot, StateInput, StateProvider, StateReader, verify,
 };
 use z_core_test_utils::AssertStateReader;
 

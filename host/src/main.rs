@@ -178,7 +178,7 @@ async fn main() -> anyhow::Result<()> {
             info!("Pre-state: {:#?}", input.consensus_state);
             debug!("Input: {:?}", input);
 
-            let post_state = run_verify::<DefaultSpec, _>(mode, &reader, input.clone())?;
+            let post_state = run_verify(mode, &DEFAULT_CONFIG, &reader, input.clone())?;
             info!("Post-state: {:#?}", post_state);
         }
         Command::Sync {

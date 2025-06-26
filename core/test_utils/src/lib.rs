@@ -12,15 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::sync::{Arc, LazyLock};
-
 pub use assert_state_reader::AssertStateReader;
 use beacon_chain::{
     ChainConfig,
     test_utils::{BeaconChainHarness, EphemeralHarnessType},
 };
 use beacon_types::{
-    ChainSpec, Epoch, EthSpec, FixedBytesExtended, Hash256, Keypair, MainnetEthSpec, Slot,
+    ChainSpec, EthSpec, FixedBytesExtended, Hash256, Keypair, MainnetEthSpec, Slot,
 };
 use z_core::ConsensusState;
 
@@ -30,31 +28,14 @@ mod test_harness_state_reader;
 type E = MainnetEthSpec;
 pub type TestHarness = test_harness_state_reader::TestHarness<EphemeralHarnessType<E>>;
 
-pub static TEST_SPEC: LazyLock<Arc<ChainSpec>> = LazyLock::new(|| {
-    let altair_fork_epoch = Epoch::new(0);
-    let bellatrix_fork_epoch = Epoch::new(1);
-    let capella_fork_epoch = Epoch::new(2);
-    let deneb_fork_epoch = Epoch::new(3);
-    let electra_fork_epoch = Epoch::new(4);
-
-    let mut spec = E::default_spec();
-    spec.altair_fork_epoch = Some(altair_fork_epoch);
-    spec.bellatrix_fork_epoch = Some(bellatrix_fork_epoch);
-    spec.capella_fork_epoch = Some(capella_fork_epoch);
-    spec.deneb_fork_epoch = Some(deneb_fork_epoch);
-    spec.electra_fork_epoch = Some(electra_fork_epoch);
-
-    spec.into()
-});
-
 pub async fn get_harness(
     keypairs: Vec<Keypair>,
-    spec: Arc<ChainSpec>,
+    spec: &ChainSpec,
     start_slot: Slot,
 ) -> TestHarness {
     let validator_count = keypairs.len();
     let harness = BeaconChainHarness::builder(MainnetEthSpec)
-        .spec(spec.clone())
+        .spec(spec.clone().into())
         .chain_config(ChainConfig {
             reconstruct_historic_states: true,
             ..Default::default()

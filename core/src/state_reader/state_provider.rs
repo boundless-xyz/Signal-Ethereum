@@ -89,6 +89,11 @@ impl<P> CacheStateProvider<P> {
             cache: FrozenMap::new(),
         }
     }
+
+    #[inline]
+    pub fn inner(&self) -> &P {
+        &self.inner
+    }
 }
 
 impl<P: StateProvider> StateProvider for CacheStateProvider<P> {

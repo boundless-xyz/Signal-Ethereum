@@ -1,0 +1,13 @@
+[package]
+name = "chainspec"
+version = { workspace = true }
+edition = { workspace = true }
+repository = { workspace = true }
+
+[features]
+mainnet = []
+sepolia = []
+
+[dependencies]
+serde_yaml = "0.9"
+beacon_types = { workspace = true, default-features = false, features = ["legacy-arith"] }

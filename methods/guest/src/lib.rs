@@ -13,24 +13,17 @@
 // limitations under the License.
 
 use risc0_zkvm::guest::env;
-use z_core::{DEFAULT_CONFIG, EthSpec, Input, MainnetEthSpec, StateInput, verify};
+use z_core::{ChainSpec, Config, EthSpec, Input, StateInput, verify};
 
-type Spec = MainnetEthSpec;
-
-fn main() {
-    let filter = tracing_subscriber::filter::EnvFilter::from_default_env()
-        .add_directive(tracing_subscriber::filter::LevelFilter::INFO.into());
-    tracing_subscriber::fmt()
-        .without_time()
-        .with_env_filter(filter)
-        .init();
+pub fn entry<E: EthSpec>(spec: ChainSpec, config: &Config) {
+    env::log(&format!("Network: {}", spec.config_name.as_ref().unwrap()));
 
     env::log("Reading frames...");
     let ssz_reader_bytes = env::read_frame();
     let input_bytes = env::read_frame();
     env::log("Deserializing data...");
 
-    let input: Input<Spec> = bincode::deserialize(&input_bytes).unwrap();
+    let input: Input<E> = bincode::deserialize(&input_bytes).unwrap();
     env::log(&format!("Input deserialized: {} bytes", input_bytes.len()));
 
     let state_reader = {
@@ -41,7 +34,7 @@ fn main() {
         ));
 
         env::log("Verifying StateReader...");
-        state_input.into_state_reader(Spec::default_spec(), &input.consensus_state)
+        state_input.into_state_reader(spec, &input.consensus_state)
     }
     .unwrap();
 
@@ -51,7 +44,7 @@ fn main() {
     env::log("Verifying FFG state transitions...");
 
     let pre_state = input.consensus_state.clone();
-    let post_state = verify(&DEFAULT_CONFIG, &state_reader, input).unwrap();
+    let post_state = verify(config, &state_reader, input).unwrap();
 
     env::log(&format!(
         "New finalization: {}",

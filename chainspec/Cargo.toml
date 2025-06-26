@@ -5,7 +5,6 @@ edition.workspace = true
 repository.workspace = true
 
 [features]
-default = ["mainnet"]
 mainnet = []
 testharness = []
 sepolia = []

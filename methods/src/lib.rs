@@ -25,7 +25,7 @@ pub mod host {
     pub fn vm_verify<S: EthSpec>(
         state_input: &StateInput,
         input: &Input<S>,
-    ) -> Result<ConsensusState, anyhow::Error> {
+    ) -> Result<(ConsensusState, ConsensusState), anyhow::Error> {
         info!("Running host verification");
 
         let input_bytes = bincode::serialize(input).context("failed to serialize input")?;
@@ -40,10 +40,10 @@ pub mod host {
 
         // decode the journal
         let (pre_state, post_state) = journal.split_at(ConsensusState::abi_encoded_size());
-        let _pre_state = ConsensusState::abi_decode(pre_state).context("invalid journal")?;
+        let pre_state = ConsensusState::abi_decode(pre_state).context("invalid journal")?;
         let post_state = ConsensusState::abi_decode(post_state).context("invalid journal")?;
 
-        Ok(post_state)
+        Ok((pre_state, post_state))
     }
 
     fn execute_guest_program(

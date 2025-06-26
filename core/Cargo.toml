@@ -45,6 +45,7 @@ safe_arith = { workspace = true }
 arbitrary = "1.4"
 beacon_types = { workspace = true, default-features = false, features = ["legacy-arith", "arbitrary"] }
 bincode = { workspace = true }
+chainspec = { workspace = true, default-features = false, features = ["testharness"] }
 rand = "0.9"
 state_processing = { git = "https://github.com/ec2/lighthouse.git", rev = "d8a5e649e938740e2d1c8d58f6e162f0a2f7af9d" }
 test-log = { version = "0.2", features = ["trace"] }

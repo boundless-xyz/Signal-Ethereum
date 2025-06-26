@@ -6,7 +6,7 @@ repository = { workspace = true }
 license = "Apache-2.0"
 
 [features]
-default = ["mainnet"]
+# default = ["mainnet"]
 mainnet = ["methods/mainnet", "chainspec/mainnet"]
 sepolia = ["methods/sepolia", "chainspec/sepolia"]
 
@@ -26,7 +26,6 @@ methods = { workspace = true, default-features = false, features = ["host"] }
 reqwest = { version = "0.12", features = ["json"] }
 reqwest-eventsource = "0.6.0"
 reqwest-middleware = "0.4.0"
-risc0-zkvm = { workspace = true, features = ["std", "unstable", "prove"] }
 serde = "1.0"
 serde_json = "1.0.133"
 ssz_rs = { workspace = true, default-features = false, features = ["serde", "std"] }

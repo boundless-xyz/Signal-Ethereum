@@ -16,8 +16,7 @@ use anyhow::{Context, ensure};
 use beacon_types::EthSpec;
 use chainspec::CHAINSPEC;
 use clap::{Parser, ValueEnum};
-use methods::BEACON_GUEST_ELF;
-use risc0_zkvm::{ExecutorEnv, default_executor};
+use methods::host::vm_verify;
 use serde::Serialize;
 use ssz_rs::HashTreeRoot;
 use std::{
@@ -292,13 +291,7 @@ fn run_verify<E: EthSpec + Serialize, R: StateReader<Spec = E> + StateProvider<S
         info!("Host verification succeeded");
 
         if mode == ExecMode::R0vm {
-            info!("Executing guest verification");
-            let journal = execute_guest_program(state_bytes, input_bytes)
-                .context("guest verification failed")?;
-            // decode the journal
-            let (pre_state, post_state) = journal.split_at(ConsensusState::abi_encoded_size());
-            let pre_state = ConsensusState::abi_decode(pre_state).context("invalid journal")?;
-            let post_state = ConsensusState::abi_decode(post_state).context("invalid journal")?;
+            let (pre_state, post_state) = vm_verify(&state_input, &input)?;
             ensure!(pre_state == input.consensus_state);
             ensure!(post_state == consensus_state);
             info!("Guest verification succeeded");
@@ -308,21 +301,6 @@ fn run_verify<E: EthSpec + Serialize, R: StateReader<Spec = E> + StateProvider<S
     info!("New consensus state: {:#?}", consensus_state);
 
     Ok(consensus_state)
-}
-
-fn execute_guest_program(
-    state: impl AsRef<[u8]>,
-    input: impl AsRef<[u8]>,
-) -> anyhow::Result<Vec<u8>> {
-    let env = ExecutorEnv::builder()
-        .write_frame(state.as_ref())
-        .write_frame(input.as_ref())
-        .build()?;
-    let executor = default_executor();
-    let session_info = executor.execute(env, BEACON_GUEST_ELF)?;
-    debug!(cycles = session_info.cycles(), "Session info");
-
-    Ok(session_info.journal.bytes)
 }
 
 fn log_sync(file: &File, from: &ConsensusState, to: &ConsensusState, message: &str) {

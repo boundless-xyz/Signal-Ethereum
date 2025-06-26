@@ -48,7 +48,7 @@ mod tests {
     #[test]
     #[cfg(feature = "sepolia")]
     fn test_sepolia_spec_loads() {
-        let spec = mainnet_spec();
+        let spec = sepolia_spec();
         assert_eq!(spec.config_name, Some("sepolia".to_string()));
     }
 }

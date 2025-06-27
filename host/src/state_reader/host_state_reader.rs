@@ -12,11 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::{
-    CacheStateProvider, Epoch, RandaoMixIndex, Root, Slot, StateProvider, StateProviderError,
-    StateReader, StateRef, ValidatorIndex, ValidatorInfo,
-    state_reader::state_provider::FileProvider,
-};
 use alloy_primitives::B256;
 use beacon_types::{ChainSpec, EthSpec, Fork};
 use elsa::FrozenMap;
@@ -25,6 +20,12 @@ use safe_arith::ArithError;
 use std::path::PathBuf;
 use thiserror::Error;
 use tracing::{debug, trace};
+use z_core::{Epoch, RandaoMixIndex, Root, Slot, StateReader, ValidatorIndex, ValidatorInfo};
+
+use crate::{
+    CacheStateProvider, FileProvider, StateProvider, StateProviderError, StateRef,
+    to_validator_info,
+};
 
 #[derive(Error, Debug)]
 pub enum HostReaderError {
@@ -131,7 +132,7 @@ impl<P: StateProvider> StateReader for HostStateReader<P> {
                     .iter()
                     .enumerate()
                     .filter(move |(_, validator)| is_active_validator(validator, epoch.into()))
-                    .map(move |(idx, validator)| (idx, ValidatorInfo::from(validator)))
+                    .map(move |(idx, validator)| (idx, to_validator_info(validator)))
                     .collect();
                 debug!("Active validators: {}", validators.len());
 

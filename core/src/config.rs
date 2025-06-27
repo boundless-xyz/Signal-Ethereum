@@ -13,14 +13,18 @@
 // limitations under the License.
 
 use crate::Epoch;
+use crate::serde_utils;
 use beacon_types::ForkName;
+use serde_with::serde_as;
 
 /// ZKasper's internal configuration struct.
+#[serde_as]
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Config {
     pub min_version: ForkName,
     pub max_version: ForkName,
 
+    #[serde_as(as = "serde_utils::U64")]
     pub epoch_lookahead_limit: Epoch,
 
     // Defines the threshold for justification:

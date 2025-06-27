@@ -50,7 +50,7 @@ fn main() {
         .unwrap();
 
     let state_fns =
-        gen_guest_gindices_impl(&beacon_gindices::<z_core::mainnet::ElectraBeaconState>());
+        gen_guest_gindices_impl(&beacon_gindices::<host::mainnet::ElectraBeaconState>());
     let block_fns = gen_guest_gindices_impl(&block_gindices::<
         ethereum_consensus::electra::BeaconBlockHeader,
     >());

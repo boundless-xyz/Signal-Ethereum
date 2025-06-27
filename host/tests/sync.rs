@@ -35,15 +35,15 @@ use beacon_types::{
 use bls::get_withdrawal_credentials;
 use chainspec::{ChainSpec, Config as ChainSpecConfig};
 use ethereum_consensus::deneb::FAR_FUTURE_EPOCH;
+use host::{
+    AssertStateReader, HostStateReader, InputBuilder, PreflightStateReader, TestHarness,
+    consensus_state_from_state, get_harness,
+};
 use methods::TEST_HARNESS_ELF;
 use risc0_zkvm::{ExecutorEnv, default_executor};
 use state_processing::per_block_processing::is_valid_deposit_signature;
 use test_log::test;
-use test_utils::{AssertStateReader, TestHarness, consensus_state_from_state, get_harness};
-use z_core::{
-    Config, ConsensusState, HostStateReader, Input, InputBuilder, PreflightStateReader, StateInput,
-    StateReader, VerifyError, verify,
-};
+use z_core::{Config, ConsensusState, Input, StateInput, StateReader, VerifyError, verify};
 
 const VALIDATOR_COUNT: u64 = 48;
 const ETH_PER_VALIDATOR: u64 = 32;
@@ -863,7 +863,7 @@ fn vm_verify(
     let mut stdout = LinePrinter::default();
     let env = ExecutorEnv::builder()
         .write_frame(&serde_cbor::to_vec(spec)?)
-        .write_frame(&serde_cbor::to_vec(config)?)
+        .write(config)?
         .write_frame(&bincode::serialize(state_input)?)
         .write_frame(&bincode::serialize(input)?)
         .stdout(&mut stdout)

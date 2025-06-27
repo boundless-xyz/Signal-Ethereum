@@ -12,19 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#![no_main]
+pub mod assert_state_reader;
+pub mod host_state_reader;
+pub mod preflight_state_reader;
+pub mod test_harness_state_reader;
 
-use chainspec::{ChainSpec, Config as ChainConfig};
-use risc0_zkvm::guest::env;
-use z_core::{Config, MainnetEthSpec};
-
-risc0_zkvm::guest::entry!(main);
-
-fn main() {
-    // for the tests we load the chain spec and config
-    let config: ChainConfig = serde_cbor::from_slice(&env::read_frame()).unwrap();
-    let spec = ChainSpec::from_config::<MainnetEthSpec>(&config).unwrap();
-    let config: Config = env::read();
-
-    beacon_guest::entry::<MainnetEthSpec>(spec, &config);
-}
+pub use assert_state_reader::*;
+pub use host_state_reader::*;
+pub use preflight_state_reader::*;

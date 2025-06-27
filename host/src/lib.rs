@@ -12,19 +12,20 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#![no_main]
+mod beacon_client;
+mod beacon_state;
+mod conversions;
+mod input_builder;
+mod state_patch_builder;
+mod state_provider;
+mod state_reader;
+mod test_utils;
 
-use chainspec::{ChainSpec, Config as ChainConfig};
-use risc0_zkvm::guest::env;
-use z_core::{Config, MainnetEthSpec};
-
-risc0_zkvm::guest::entry!(main);
-
-fn main() {
-    // for the tests we load the chain spec and config
-    let config: ChainConfig = serde_cbor::from_slice(&env::read_frame()).unwrap();
-    let spec = ChainSpec::from_config::<MainnetEthSpec>(&config).unwrap();
-    let config: Config = env::read();
-
-    beacon_guest::entry::<MainnetEthSpec>(spec, &config);
-}
+pub use beacon_client::*;
+pub use beacon_state::*;
+pub use conversions::*;
+pub use input_builder::*;
+pub use state_patch_builder::*;
+pub use state_provider::*;
+pub use state_reader::*;
+pub use test_utils::*;

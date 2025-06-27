@@ -11,16 +11,16 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
+
 use beacon_types::{ChainSpec, EthSpec};
 use ethereum_consensus::electra::{Validator, mainnet::VALIDATOR_REGISTRY_LIMIT};
 use ssz_multiproofs::MultiproofBuilder;
 use ssz_rs::prelude::*;
 use thiserror::Error;
 
-use super::{StateInput, host_state_reader::HostReaderError};
 use crate::{
-    Checkpoint, Epoch, RandaoMixIndex, Root, StatePatchBuilder, StateProvider, StateReader,
-    ValidatorIndex, ValidatorInfo, beacon_state::mainnet::BeaconState, mainnet::ElectraBeaconState,
+    HostReaderError, StatePatchBuilder, StateProvider, mainnet::BeaconState,
+    mainnet::ElectraBeaconState, to_validator_info,
 };
 use alloy_primitives::B256;
 use ethereum_consensus::phase0::BeaconBlockHeader;
@@ -30,6 +30,9 @@ use std::{
     ops::Deref,
 };
 use tracing::{debug, info};
+use z_core::{
+    Checkpoint, Epoch, RandaoMixIndex, Root, StateInput, StateReader, ValidatorIndex, ValidatorInfo,
+};
 
 #[derive(Error, Debug)]
 pub enum PreflightReaderError {
@@ -121,7 +124,7 @@ where
                     .with_path::<Validators>(&[idx.into(), "activation_epoch".into()])
                     .with_path::<Validators>(&[idx.into(), "exit_epoch".into()]);
 
-                public_keys.push(ValidatorInfo::from(validator).pubkey);
+                public_keys.push(to_validator_info(validator).pubkey);
             }
         }
         let validator_multiproof = proof_builder.build(trusted_state.validators()).unwrap();

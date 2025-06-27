@@ -12,7 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-pub use assert_state_reader::AssertStateReader;
 use beacon_chain::{
     ChainConfig,
     test_utils::{BeaconChainHarness, EphemeralHarnessType},
@@ -22,11 +21,8 @@ use beacon_types::{
 };
 use z_core::ConsensusState;
 
-mod assert_state_reader;
-mod test_harness_state_reader;
-
 type E = MainnetEthSpec;
-pub type TestHarness = test_harness_state_reader::TestHarness<EphemeralHarnessType<E>>;
+pub type TestHarness = crate::test_harness_state_reader::TestHarness<EphemeralHarnessType<E>>;
 
 pub async fn get_harness(
     keypairs: Vec<Keypair>,

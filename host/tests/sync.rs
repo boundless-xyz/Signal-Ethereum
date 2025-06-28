@@ -259,7 +259,7 @@ async fn does_not_finalize_with_less_than_threshold_participation() {
         config
     };
     let harness = get_harness(KEYPAIRS[..].to_vec(), &CHAINSPEC.1, Slot::new(224)).await;
-    let num_blocks_produced = harness.slots_per_epoch() * 5;
+    let num_blocks_produced = harness.slots_per_epoch() * 10;
 
     let two_thirds = (VALIDATOR_COUNT / 3) * 2;
     let less_than_two_thirds = (two_thirds - 1) as usize;
@@ -309,8 +309,10 @@ async fn does_not_finalize_with_less_than_threshold_participation() {
             &harness,
             consensus_state_from_state(&initial_state)
         )
-        .await,
-        Ok(last_finalized_state),
+        .await
+        .unwrap()
+        .finalized_checkpoint,
+        last_finalized_state.finalized_checkpoint,
         "Expected threshold not met error, but got a different result"
     );
 }

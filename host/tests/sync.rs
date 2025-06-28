@@ -131,7 +131,7 @@ async fn test_zkasper_sync(
 
                 // Finally, if that succeeded, also verify in the R0VM
                 let (_, vm_consensus_state) =
-                    vm_verify(&CHAINSPEC.0, &CONFIG, &state_input, &input).unwrap();
+                    vm_verify(&CHAINSPEC.0, &cfg, &state_input, &input).unwrap();
                 assert_eq!(
                     consensus_state, vm_consensus_state,
                     "local and vm computed new state should match"
@@ -249,11 +249,9 @@ async fn finalizes_with_threshold_participation() {
     .unwrap();
 }
 
-// Both the chain and ZKasper should fail to finalize when there is less than 2/3rds participation
-// TODO: fix this test
+// Both the chain and ZKasper should fail to finalize beyond the point where there is less than 2/3rds (in this case) participation
 #[test(tokio::test)]
-#[ignore]
-async fn does_not_finalize_with_less_than_two_thirds_participation() {
+async fn does_not_finalize_with_less_than_threshold_participation() {
     let config = {
         let mut config = CONFIG.clone();
         config.justification_threshold_factor = 2;
@@ -302,6 +300,8 @@ async fn does_not_finalize_with_less_than_two_thirds_participation() {
         initial_state.finalized_checkpoint().epoch + 1,
         "only 1 epoch should have been finalized from prior attestations"
     );
+    let last_finalized_state =
+        consensus_state_from_state(&harness.chain.head_beacon_state_cloned());
 
     assert_eq!(
         test_zkasper_sync(
@@ -310,10 +310,7 @@ async fn does_not_finalize_with_less_than_two_thirds_participation() {
             consensus_state_from_state(&initial_state)
         )
         .await,
-        Err(VerifyError::ThresholdNotMet {
-            attesting_balance: 1024000000000,
-            threshold: 1024140625000,
-        }),
+        Ok(last_finalized_state),
         "Expected threshold not met error, but got a different result"
     );
 }

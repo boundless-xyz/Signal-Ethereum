@@ -1,27 +1,100 @@
-# ZKasper 
+# ZKasper
 
-Validity proofs of Ethereum's finality gadget (Casper FFG). 
+A ZKVM-friendly implementation of [Casper FFG](https://arxiv.org/abs/2003.03052), the finality gadget used by the Ethereum beacon chain.
 
-## Building
+## Background
+
+Like Casper, ZKasper operates over the abstraction of checkpoints and attested links rather than blocks and epochs. The ZKVM program allows a prover to construct a proof that they have seen sufficient attestations for a link(s) that can transition a given consensus state (previous, current, and finalized checkpoints) to a new consensus state. Starting from a trusted consensus state, a client verifying these proofs can update its view of the latest finalized checkpoint which can be used as a root of trust for proofs into the finalized blockchain.
+
+### Important Considerations
+
+If using ZKasper to build a bridge or a light-client it is important to understand the guarantees/assumptions and how these differ from a regular beacon chain client.
+
+- By default Zkasper does not allow for making arguments about the economic security of the checkpoints it has finalized. This is because the attestations do not form part of the public journal and so any violations by validators cannot be observed and slashed. A bridge using Zkasper may wish to include proofs of data availability of the relevant attestations and also proof that they are within the slashability period of the chain where the validator deposits are held. In this case economic security arguments could be made.
+
+- There is no long-range attack protection by default. Similar to the above consumers of ZKasper proofs need to ensure they only accept state transitions while within the slashability period of the supermajority of attesting validators. They should also ensure that very long range updates (e.g. longer than the weak-subjectivity period) are not allowed.
+
+- The implementation currently supports the Electra hard-fork only. Attempting to process epochs prior to this fork will fail.
+
+## Repository Structure
+
+Key components:
+
+- **core**: Crate implementing the core logic of Zkasper. [./core](./core)
+- **methods/guest**: Guest program code. [./methods/guest](./methods/guest)
+- **host**: Crate for building inputs for ZKasper given a beacon RPC and for executing the guest. Includes a CLI tool (see below). [./host](./host)
+- **ssz-multiproofs**: Crate implementing a builder, serialization, and efficient verifier of SSZ multi-proofs of inclusion. [./ssz-multiproofs](./ssz-multiproofs)
+- **chainspec**: A crate for loading Ethereum beacon chain configurations. [./chainspec](./chainspec)
+
+## Developing
+
+If you don't already have Rust installed, start by [installing Rust and rustup](https://doc.rust-lang.org/cargo/getting-started/installation.html).
+
+Then download the RISC Zero toolchain and install it using rzup:
+
+```sh
+curl -L https://risczero.com/install | bash
 ```
-cargo build -r
+
+Next we can install the RISC Zero toolchain by running rzup install:
+
+```sh
+rzup install
 ```
 
-## Daemon Mode
-Daemon mode listens to the chain for new block events. When a new finalization event happens, the daemon will download the beacon state and save it to disk. To be able to generate proofs, listen to the chain for 3-4 epochs by running 
+You can verify the installation was successful by running:
 
+```sh
+cargo risczero --version
 ```
-RUST_LOG=info ./target/release/host --beacon-api="<BEACON_URL>" daemon
-```
-The daemon mode should eventually do what it is currently doing right now, but also make proofs whenever every epoch automatically. 
 
-## Exec Command
-After a few epochs worth of beacon states are saved, we can finalize some candidate checkpoint using Casper FFG
+To build the Rust crates, run:
 
+```sh
+cargo build
 ```
-RISC0_INFO=1 RUST_LOG=info ./target/release/host --trusted-epoch=<TRUSTED_CHECKPOINT> --beacon-api="<BEACON_URL>" exec
-```
-where `TRUSTED_CHECKPOINT` is the epoch at which the first epoch that was saved by running the daemon. 
 
-This will run the Casper FFG verification 3 times. 
-The first time, FFG is run with a TrackingStateReader which is backed by beacon states saved on disk to track the important parts in the beacon state that we will need. After the first run, a SszStateReader will be created from the TrackingStateReader. The SszStateReader is used to run FFG again on the host as a sanity check as this is what will be sent as input to the guest program. Finally FFG is run again but in the R0VM executor.
+## Testing
+
+Project wide tests can be run with
+
+```sh
+cargo test
+```
+
+## Host CLI
+
+The host CLI tool can be run with
+
+```sh
+cargo run --bin host
+```
+
+```sh
+CLI for generating and submitting ZKasper proofs
+
+Usage: host [OPTIONS] --beacon-api <BEACON_API> <COMMAND>
+
+Commands:
+  verify  Runs FFG verification in R0VM Executor
+  sync    Attempts to sync a trusted block root to the latest state available on the Beacon API Optionally can log any places the resulting consensus state diverges from the chain for debugging
+  help    Print this message or the help of the given subcommand(s)
+
+Options:
+      --beacon-api <BEACON_API>  Beacon API URL [env: BEACON_RPC_URL]
+  -r, --rps <RPS>                Max Beacon API requests per second (0 to disable rate limit) [default: 0]
+  -n, --network <NETWORK>        Network name [default: sepolia] [possible values: mainnet, sepolia]
+  -d, --data-dir <DATA_DIR>      Directory to store data [default: ./data]
+  -h, --help                     Print help
+  -V, --version                  Print version
+```
+
+> [!TIP]
+> The host CLI tool requires a beacon chain RPC url either via the BEACON_RPC_URL env var or the --beacon-api flag.
+> This RPC must support the [Debug](https://ethereum.github.io/beacon-APIs/#/Debug) endpoints and, unless operating near the tip of the chain,
+> must support access to historical beacon states (e.g. an archive node). 
+> [Quicknode](https://www.quicknode.com/)(unaffiliated) is one public RPC provider that is known to work. 
+
+## License
+
+See [LICENSE](./LICENSE).

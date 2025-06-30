@@ -27,12 +27,16 @@ use std::{
 use anyhow::{Context, anyhow};
 use beacon_chain::BlockError;
 use beacon_chain::test_utils::{AttestationStrategy, BlockStrategy};
-use beacon_types::test_utils::generate_deterministic_keypair;
 use beacon_types::{
-    BlobsList, DepositData, DepositRequest, Epoch, EthSpec, ForkName, Hash256, Keypair, KzgProofs,
-    MainnetEthSpec, PublicKeyBytes, SignatureBytes, SignedBeaconBlock, Slot, VariableList,
+    AttesterSlashingElectra, Domain, IndexedAttestationElectra, SignedRoot,
+    test_utils::generate_deterministic_keypair,
 };
-use bls::get_withdrawal_credentials;
+use beacon_types::{
+    BlobsList, Checkpoint, DepositData, DepositRequest, Epoch, EthSpec, ForkName, Hash256, Keypair,
+    KzgProofs, MainnetEthSpec, PublicKeyBytes, SignatureBytes, SignedBeaconBlock, Slot,
+    VariableList,
+};
+use bls::{AggregateSignature, FixedBytesExtended, get_withdrawal_credentials};
 use chainspec::{ChainSpec, Config as ChainSpecConfig};
 use ethereum_consensus::deneb::FAR_FUTURE_EPOCH;
 use host::{
@@ -41,9 +45,13 @@ use host::{
 };
 use methods::TEST_HARNESS_ELF;
 use risc0_zkvm::{ExecutorEnv, default_executor};
-use state_processing::per_block_processing::is_valid_deposit_signature;
+use state_processing::{
+    per_block_processing::is_valid_deposit_signature, state_advance::complete_state_advance,
+};
 use test_log::test;
-use z_core::{Config, ConsensusState, Input, StateInput, StateReader, VerifyError, verify};
+use z_core::{
+    AttestationData, Config, ConsensusState, Input, StateInput, StateReader, VerifyError, verify,
+};
 
 const VALIDATOR_COUNT: u64 = 48;
 const ETH_PER_VALIDATOR: u64 = 32;
@@ -131,7 +139,7 @@ async fn test_zkasper_sync(
 
                 // Finally, if that succeeded, also verify in the R0VM
                 let (_, vm_consensus_state) =
-                    vm_verify(&CHAINSPEC.0, &CONFIG, &state_input, &input).unwrap();
+                    vm_verify(&CHAINSPEC.0, &cfg, &state_input, &input).unwrap();
                 assert_eq!(
                     consensus_state, vm_consensus_state,
                     "local and vm computed new state should match"
@@ -314,6 +322,144 @@ async fn does_not_finalize_with_less_than_two_thirds_participation() {
             attesting_balance: 1024000000000,
             threshold: 1024140625000,
         }),
+        "Expected threshold not met error, but got a different result"
+    );
+}
+
+// When a validator is slashed bringing the participation below the threshold
+// neither ZKasper or the chain should finalize
+#[test(tokio::test)]
+async fn does_not_finalize_after_slashing_reduces_total_active_balance_below_threshold() {
+    let config = {
+        let mut config = CONFIG.clone();
+        config.justification_threshold_factor = 2;
+        config.justification_threshold_quotient = 3;
+        config
+    };
+    let harness = get_harness(KEYPAIRS[..].to_vec(), &CHAINSPEC.1, Slot::new(224)).await;
+    let num_blocks_produced = harness.slots_per_epoch() * 10;
+
+    let two_thirds = ((VALIDATOR_COUNT / 3) * 2) as usize;
+    let attesters: Vec<_> = (0..two_thirds).collect();
+    let slash_validator: usize = 0; // slashing the first validator
+
+    let initial_state = harness.chain.head_beacon_state_cloned();
+
+    harness.advance_slot();
+    let slot = harness.get_current_slot();
+    let (block, _) = harness
+        .make_block_with_modifier(harness.get_current_state(), slot, |block| {
+            let slashing = build_attester_slashing_with_epochs(
+                &harness,
+                vec![slash_validator as u64],
+                None,
+                None,
+                None,
+                None,
+            );
+
+            block
+                .body_mut()
+                .attester_slashings_electra_mut()
+                .unwrap()
+                .push(slashing)
+                .expect("failed to add attester slashing to block");
+        })
+        .await;
+    process_block(&harness, block).await.unwrap();
+    harness.advance_slot();
+
+    assert!(
+        harness
+            .chain
+            .head_beacon_state_cloned()
+            .validators()
+            .get(slash_validator)
+            .unwrap()
+            .slashed,
+        "Validator should have been slashed"
+    );
+
+    // extend the chain but ensure to skip any blocks where the slashed validator
+    // is the proposer as these are invalid post-electra
+
+    // Build a chain with some skip slots.
+    while harness.get_current_state().slot().as_u64()
+        < initial_state.slot().as_u64() + num_blocks_produced
+    {
+        let target_slot = harness.get_current_slot();
+        let mut state = harness.get_current_state().clone();
+
+        complete_state_advance(&mut state, None, target_slot, &harness.spec)
+            .expect("should be able to advance state to slot");
+        let proposer = state
+            .get_beacon_proposer_index(target_slot, &harness.spec)
+            .unwrap();
+
+        if proposer != slash_validator {
+            harness
+                .extend_chain(
+                    1,
+                    BlockStrategy::OnCanonicalHead,
+                    AttestationStrategy::SomeValidators(attesters.clone()),
+                )
+                .await;
+        } else {
+            println!("Skipping slot {} as proposer {} is slashed", slot, proposer);
+        }
+
+        harness.advance_slot();
+    }
+
+    assert!(
+        harness
+            .chain
+            .head_beacon_state_cloned()
+            .validators()
+            .get(0)
+            .unwrap()
+            .slashed,
+        "Validator 0 should have been slashed"
+    );
+
+    let head = harness.chain.head_snapshot();
+    let state = &head.beacon_state;
+
+    assert_eq!(
+        state.slot(),
+        initial_state.slot() + num_blocks_produced,
+        "head should be at the current slot"
+    );
+    assert_eq!(
+        state.current_epoch(),
+        (initial_state.slot().as_u64() + num_blocks_produced) / harness.slots_per_epoch(),
+        "head should be at the expected epoch"
+    );
+    // Note despite no attestations being included in the blocks the chain will still finalize/justify
+    // one step due to the attestations that were included in prior blocks
+    assert_eq!(
+        state.current_justified_checkpoint().epoch,
+        initial_state.current_justified_checkpoint().epoch,
+        "No epochs should have justified since slashing"
+    );
+    assert_eq!(
+        state.finalized_checkpoint().epoch,
+        initial_state.finalized_checkpoint().epoch,
+        "No epochs should have been finalized since slashing"
+    );
+    let last_finalized_state =
+        consensus_state_from_state(&harness.chain.head_beacon_state_cloned());
+
+    assert_eq!(
+        test_zkasper_sync(
+            &config,
+            &harness,
+            consensus_state_from_state(&initial_state)
+        )
+        .await
+        .unwrap()
+        .finalized_checkpoint,
+        last_finalized_state.finalized_checkpoint,
         "Expected threshold not met error, but got a different result"
     );
 }
@@ -923,6 +1069,64 @@ fn build_signed_deposit_request(
         amount: deposit_data.amount,
         signature: deposit_data.signature,
         index: deposit_index,
+    }
+}
+
+pub fn build_attester_slashing_with_epochs(
+    harness: &TestHarness,
+    validator_indices: Vec<u64>,
+    source1: Option<Epoch>,
+    target1: Option<Epoch>,
+    source2: Option<Epoch>,
+    target2: Option<Epoch>,
+) -> AttesterSlashingElectra<MainnetEthSpec> {
+    let fork = harness.chain.canonical_head.cached_head().head_fork();
+
+    let data = AttestationData {
+        slot: Slot::new(0),
+        index: 0,
+        beacon_block_root: Hash256::zero(),
+        target: Checkpoint {
+            root: Hash256::zero(),
+            epoch: target1.unwrap_or(fork.epoch),
+        },
+        source: Checkpoint {
+            root: Hash256::zero(),
+            epoch: source1.unwrap_or(Epoch::new(0)),
+        },
+    };
+    let mut attestation_1 = IndexedAttestationElectra {
+        attesting_indices: VariableList::new(validator_indices).unwrap(),
+        data,
+        signature: AggregateSignature::infinity(),
+    };
+
+    let mut attestation_2 = attestation_1.clone();
+    attestation_2.data.index += 1;
+    attestation_2.data.source.epoch = source2.unwrap_or(Epoch::new(0));
+    attestation_2.data.target.epoch = target2.unwrap_or(fork.epoch);
+
+    for attestation in &mut [&mut attestation_1, &mut attestation_2] {
+        for i in attestation.attesting_indices.iter() {
+            let sk = &harness.validator_keypairs[*i as usize].sk;
+
+            let genesis_validators_root = harness.chain.genesis_validators_root;
+
+            let domain = harness.chain.spec.get_domain(
+                attestation.data.target.epoch,
+                Domain::BeaconAttester,
+                &fork,
+                genesis_validators_root,
+            );
+            let message = attestation.data.signing_root(domain);
+
+            attestation.signature.add_assign(&sk.sign(message));
+        }
+    }
+
+    AttesterSlashingElectra {
+        attestation_1: attestation_1,
+        attestation_2: attestation_2,
     }
 }
 

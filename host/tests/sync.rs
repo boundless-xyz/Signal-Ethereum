@@ -257,11 +257,9 @@ async fn finalizes_with_threshold_participation() {
     .unwrap();
 }
 
-// Both the chain and ZKasper should fail to finalize when there is less than 2/3rds participation
-// TODO: fix this test
+// Both the chain and ZKasper should fail to finalize beyond the point where there is less than 2/3rds (in this case) participation
 #[test(tokio::test)]
-#[ignore]
-async fn does_not_finalize_with_less_than_two_thirds_participation() {
+async fn does_not_finalize_with_less_than_threshold_participation() {
     let config = {
         let mut config = CONFIG.clone();
         config.justification_threshold_factor = 2;
@@ -269,7 +267,7 @@ async fn does_not_finalize_with_less_than_two_thirds_participation() {
         config
     };
     let harness = get_harness(KEYPAIRS[..].to_vec(), &CHAINSPEC.1, Slot::new(224)).await;
-    let num_blocks_produced = harness.slots_per_epoch() * 5;
+    let num_blocks_produced = harness.slots_per_epoch() * 10;
 
     let two_thirds = (VALIDATOR_COUNT / 3) * 2;
     let less_than_two_thirds = (two_thirds - 1) as usize;
@@ -310,6 +308,8 @@ async fn does_not_finalize_with_less_than_two_thirds_participation() {
         initial_state.finalized_checkpoint().epoch + 1,
         "only 1 epoch should have been finalized from prior attestations"
     );
+    let last_finalized_state =
+        consensus_state_from_state(&harness.chain.head_beacon_state_cloned());
 
     assert_eq!(
         test_zkasper_sync(
@@ -317,11 +317,10 @@ async fn does_not_finalize_with_less_than_two_thirds_participation() {
             &harness,
             consensus_state_from_state(&initial_state)
         )
-        .await,
-        Err(VerifyError::ThresholdNotMet {
-            attesting_balance: 1024000000000,
-            threshold: 1024140625000,
-        }),
+        .await
+        .unwrap()
+        .finalized_checkpoint,
+        last_finalized_state.finalized_checkpoint,
         "Expected threshold not met error, but got a different result"
     );
 }

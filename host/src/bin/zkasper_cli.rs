@@ -80,6 +80,20 @@ impl Display for ExecMode {
     }
 }
 
+#[derive(Eq, PartialEq, Debug, Clone, Copy, ValueEnum)]
+#[non_exhaustive]
+enum InputEncoding {
+    BoundlessV0,
+}
+
+impl Display for InputEncoding {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            InputEncoding::BoundlessV0 => write!(f, "boundless-v0"),
+        }
+    }
+}
+
 /// Subcommands of the publisher CLI.
 #[derive(Parser, Debug)]
 enum Command {
@@ -89,6 +103,7 @@ enum Command {
         /// If true, runs in R0VM as well, otherwise runs natively
         #[clap(long, default_value_t = ExecMode::Native)]
         mode: ExecMode,
+
         /// Trusted epoch
         #[clap(long)]
         trusted_epoch: Epoch,
@@ -108,6 +123,20 @@ enum Command {
         /// Optional log file to write sync status to
         #[clap(long, short)]
         log_path: Option<PathBuf>,
+    },
+    /// Prepares the input for the R0VM Executor for proving a state transition from a consensus state with the given finalized epoch
+    PrepareInput {
+        /// Trusted finalized epoch. This is the finalized_epoch field of the pre ConsensusState
+        #[clap(long)]
+        finalized_epoch: Epoch,
+
+        /// Output file to write the input to
+        #[clap(short, long, default_value = "input.bin")]
+        out: PathBuf,
+
+        /// How to encode the input
+        #[clap(long, default_value_t = InputEncoding::BoundlessV0)]
+        encoding: InputEncoding,
     },
 }
 
@@ -197,6 +226,24 @@ async fn main() -> anyhow::Result<()> {
             )
             .await?;
         }
+        Command::PrepareInput {
+            finalized_epoch,
+            out,
+            encoding,
+        } => {
+            let (state_bytes, input_bytes) =
+                prepare_input(finalized_epoch, &reader, &beacon_client).await?;
+
+            let encoded = match encoding {
+                InputEncoding::BoundlessV0 => encode_input_boundless(&state_bytes, &input_bytes)
+                    .context("failed to prepare input")?,
+            };
+
+            let mut file = File::create(&out).context("failed to create output file")?;
+            file.write_all(&encoded)
+                .context("failed to write input to file")?;
+            info!("Input written to {}", out.display());
+        }
     }
 
     Ok(())
@@ -256,6 +303,48 @@ async fn run_sync<E: EthSpec + Serialize>(
         let provider = sr.provider().inner();
         provider.clear_states_before(consensus_state.finalized_checkpoint.epoch())?;
     }
+}
+
+async fn prepare_input<
+    E: EthSpec + Serialize,
+    S: StateReader<Spec = E> + StateProvider<Spec = E>,
+>(
+    finalized_epoch: Epoch,
+    reader: &S,
+    beacon_client: &BeaconClient,
+) -> anyhow::Result<(Vec<u8>, Vec<u8>)> {
+    let trusted_state =
+        reader.state_at_slot(finalized_epoch.start_slot(Spec::slots_per_epoch()))?;
+    let epoch_boundary_slot = trusted_state.latest_block_header().slot;
+    let trusted_beacon_block = beacon_client
+        .get_block(epoch_boundary_slot)
+        .await?
+        .with_context(|| format!("block {} not found", epoch_boundary_slot))?;
+    assert_eq!(
+        trusted_beacon_block.state_root(),
+        trusted_state.hash_tree_root()?
+    );
+    let trusted_checkpoint =
+        Checkpoint::new(finalized_epoch, trusted_beacon_block.hash_tree_root()?);
+    info!("Trusted checkpoint: {}", trusted_checkpoint);
+
+    let builder = InputBuilder::<E, _>::new(beacon_client.clone());
+
+    let (input, _) = builder.build(trusted_checkpoint).await?;
+
+    info!("Running preflight");
+    let reader = PreflightStateReader::new(reader, input.consensus_state.finalized_checkpoint);
+    let _post_state =
+        verify(&DEFAULT_CONFIG, &reader, input.clone()).context("preflight failed")?;
+    info!("Preflight succeeded");
+
+    let state_input = reader.to_input();
+
+    let state_bytes = bincode::serialize(&state_input).context("failed to serialize state")?;
+    debug!(len = state_bytes.len(), "State serialized");
+    let input_bytes = bincode::serialize(&input).context("failed to serialize input")?;
+
+    Ok((state_bytes, input_bytes))
 }
 
 fn run_verify<E: EthSpec + Serialize, R: StateReader<Spec = E> + StateProvider<Spec = E>>(
@@ -318,6 +407,27 @@ fn run_verify<E: EthSpec + Serialize, R: StateReader<Spec = E> + StateProvider<S
     info!("New consensus state: {:#?}", consensus_state);
 
     Ok(consensus_state)
+}
+
+fn encode_input_boundless(
+    state_bytes: impl AsRef<[u8]>,
+    input_bytes: impl AsRef<[u8]>,
+) -> anyhow::Result<Vec<u8>> {
+    let mut buffer = vec![0]; // this is the input version number v0
+
+    fn write_frame(buffer: &mut Vec<u8>, state_bytes: impl AsRef<[u8]>) -> anyhow::Result<()> {
+        use std::io::Write;
+        let data = state_bytes.as_ref();
+        let len = data.len() as u32;
+        buffer.write(&len.to_le_bytes())?;
+        buffer.write(data.as_ref())?;
+        Ok(())
+    }
+
+    write_frame(&mut buffer, state_bytes)?;
+    write_frame(&mut buffer, input_bytes)?;
+
+    Ok(buffer)
 }
 
 fn execute_guest_program(

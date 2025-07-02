@@ -125,14 +125,28 @@ enum Command {
         log_path: Option<PathBuf>,
     },
     /// Prepares the input for the R0VM Executor for proving a state transition from a consensus state with the given finalized epoch
-    PrepareInput {
-        /// Trusted finalized epoch. This is the finalized_epoch field of the pre ConsensusState
+    BuildInput {
+        /// Initial trusted finalized epoch. This is the finalized_epoch field of the pre ConsensusState
         #[clap(long)]
         finalized_epoch: Epoch,
 
         /// Output file to write the input to
-        #[clap(short, long, default_value = "input.bin")]
-        out: PathBuf,
+        #[clap(short, long, conflicts_with = "out_dir")]
+        out: Option<PathBuf>,
+
+        /// Output directory to write the input(s) to
+        /// If specified, the input will be written to `<out_dir>/<finalized_epoch>.bin`
+        #[clap(long, conflicts_with = "out")]
+        out_dir: Option<PathBuf>,
+
+        /// If set the inputs will be built continuously for each successive finalization
+        /// and will follow the chain as new finalizations occur
+        #[clap(long, short)]
+        continuous: bool,
+
+        /// How frequently to poll for new finalizations once it is detected we are at the tip
+        #[clap(long, default_value_t = 60)]
+        retry_interval: u64,
 
         /// How to encode the input
         #[clap(long, default_value_t = InputEncoding::BoundlessV0)]
@@ -165,7 +179,6 @@ async fn main() -> anyhow::Result<()> {
     let args = Args::try_parse()?;
 
     let beacon_client = BeaconClient::builder(args.beacon_api)
-        .with_cache(args.data_dir.join("http"))
         .with_rate_limit(args.rps)
         .build();
 
@@ -226,12 +239,33 @@ async fn main() -> anyhow::Result<()> {
             )
             .await?;
         }
-        Command::PrepareInput {
-            finalized_epoch,
+        Command::BuildInput {
+            mut finalized_epoch,
             out,
+            out_dir,
             encoding,
-        } => {
-            let (state_bytes, input_bytes) =
+            continuous,
+            retry_interval,
+        } => loop {
+            // check the chain has progressed far enough to build an input
+            let chain_finalized_epoch = beacon_client
+                .get_finality_checkpoints("head")
+                .await?
+                .finalized
+                .epoch;
+
+            // willem: We need this + 1 because the search for attestations probably looks
+            // 1 epoch further ahead than it needs to in most cases and will go past the end of the chain
+            if chain_finalized_epoch < finalized_epoch.as_u64() + 1 {
+                warn!(
+                    "Chain finalized epoch {} is less than the requested finalized epoch {}. Waiting for chain to progress.",
+                    chain_finalized_epoch, finalized_epoch
+                );
+                tokio::time::sleep(std::time::Duration::from_secs(retry_interval)).await;
+                continue;
+            }
+
+            let (state_bytes, input_bytes, post_state) =
                 prepare_input(finalized_epoch, &reader, &beacon_client).await?;
 
             let encoded = match encoding {
@@ -239,11 +273,29 @@ async fn main() -> anyhow::Result<()> {
                     .context("failed to prepare input")?,
             };
 
-            let mut file = File::create(&out).context("failed to create output file")?;
+            let mut file = match (&out, &out_dir) {
+                (Some(out), None) => File::create(&out).context("failed to create output file")?,
+                (None, Some(out_dir)) => {
+                    let out = out_dir.join(format!("{}.bin", finalized_epoch));
+                    fs::create_dir_all(&out_dir).context("failed to create output directory")?;
+                    File::create(&out).context("failed to create output file")?
+                }
+                _ => {
+                    unreachable!();
+                }
+            };
+
             file.write_all(&encoded)
                 .context("failed to write input to file")?;
-            info!("Input written to {}", out.display());
-        }
+            info!("Input written to {:?}", file);
+
+            // update for next iteration
+            finalized_epoch = post_state.finalized_checkpoint.epoch();
+
+            if !continuous {
+                break;
+            }
+        },
     }
 
     Ok(())
@@ -312,7 +364,7 @@ async fn prepare_input<
     finalized_epoch: Epoch,
     reader: &S,
     beacon_client: &BeaconClient,
-) -> anyhow::Result<(Vec<u8>, Vec<u8>)> {
+) -> anyhow::Result<(Vec<u8>, Vec<u8>, ConsensusState)> {
     let trusted_state =
         reader.state_at_slot(finalized_epoch.start_slot(Spec::slots_per_epoch()))?;
     let epoch_boundary_slot = trusted_state.latest_block_header().slot;
@@ -334,8 +386,7 @@ async fn prepare_input<
 
     info!("Running preflight");
     let reader = PreflightStateReader::new(reader, input.consensus_state.finalized_checkpoint);
-    let _post_state =
-        verify(&DEFAULT_CONFIG, &reader, input.clone()).context("preflight failed")?;
+    let post_state = verify(&DEFAULT_CONFIG, &reader, input.clone()).context("preflight failed")?;
     info!("Preflight succeeded");
 
     let state_input = reader.to_input();
@@ -344,7 +395,7 @@ async fn prepare_input<
     debug!(len = state_bytes.len(), "State serialized");
     let input_bytes = bincode::serialize(&input).context("failed to serialize input")?;
 
-    Ok((state_bytes, input_bytes))
+    Ok((state_bytes, input_bytes, post_state))
 }
 
 fn run_verify<E: EthSpec + Serialize, R: StateReader<Spec = E> + StateProvider<Spec = E>>(

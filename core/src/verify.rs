@@ -110,8 +110,12 @@ pub fn verify<S: StateReader>(
         info!("Processing attestations for {}", link);
         let mut target_balance = 0u64;
         for attestation in attestations {
-            let attesting_balance =
-                process_attestation(state_reader, &active_validators, &committees, attestation)?;
+            let attesting_balance = process_attestation(
+                state_reader,
+                &active_validators,
+                &committees,
+                attestation.inner(),
+            )?;
             target_balance.safe_add_assign(attesting_balance)?;
         }
 

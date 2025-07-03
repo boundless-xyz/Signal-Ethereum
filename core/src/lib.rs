@@ -15,7 +15,6 @@
 extern crate alloc;
 extern crate core;
 
-use crate::serde_utils::DiskAttestation;
 use alloy_primitives::B256;
 use serde::{Deserializer, Serializer};
 use serde_with::serde_as;
@@ -84,8 +83,8 @@ pub struct Input<E: EthSpec> {
     /// This vector is expected to be pre-sorted by
     /// `(attestation.data.source, attestation.data.target)` so that all attestations
     /// for the same link are grouped together.
-    #[serde_as(as = "Vec<DiskAttestation>")]
-    pub attestations: Vec<Attestation<E>>,
+    #[serde_as(as = "Vec<_>")]
+    pub attestations: Vec<LocatedAttestation<E>>,
 }
 
 impl<E: EthSpec> fmt::Debug for Input<E> {
@@ -277,6 +276,11 @@ mod tests {
             &MainnetEthSpec::default_spec(),
         )
         .unwrap();
+        let located_attestation = LocatedAttestation::<MainnetEthSpec>::new(
+            attestation,
+            u64::arbitrary(&mut unstructured).unwrap(),
+            0,
+        );
 
         let input = Input::<MainnetEthSpec> {
             consensus_state: ConsensusState {
@@ -284,7 +288,7 @@ mod tests {
                 current_justified_checkpoint: Checkpoint(checkpoint(&mut unstructured)),
                 finalized_checkpoint: Checkpoint(checkpoint(&mut unstructured)),
             },
-            attestations: vec![attestation],
+            attestations: vec![located_attestation],
         };
 
         let bytes = bincode::serialize(&input).unwrap();

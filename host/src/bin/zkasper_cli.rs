@@ -254,7 +254,7 @@ async fn main() -> anyhow::Result<()> {
                 continue;
             }
 
-            let (state_bytes, input_bytes, _, post_state) =
+            let (state_bytes, input_bytes, pre_state, post_state) =
                 prepare_input(finalized_epoch, &reader, &beacon_client).await?;
 
             let encoded = match encoding {
@@ -262,12 +262,20 @@ async fn main() -> anyhow::Result<()> {
                     .context("failed to prepare input")?,
             };
 
-            let mut file = match (&out, &out_dir) {
-                (Some(out), None) => File::create(out).context("failed to create output file")?,
+            let (mut file, mut journal) = match (&out, &out_dir) {
+                (Some(out), None) => (
+                    File::create(out).context("failed to create output file")?,
+                    File::create(format!("journal_{}.bin", finalized_epoch))
+                        .context("failed to create output file")?,
+                ),
                 (None, Some(out_dir)) => {
                     let out = out_dir.join(format!("{}.bin", finalized_epoch));
                     fs::create_dir_all(out_dir).context("failed to create output directory")?;
-                    File::create(&out).context("failed to create output file")?
+                    (
+                        File::create(&out).context("failed to create output file")?,
+                        File::create(format!("journal_{}.bin", finalized_epoch))
+                            .context("failed to create output file")?,
+                    )
                 }
                 _ => {
                     unreachable!();
@@ -277,6 +285,14 @@ async fn main() -> anyhow::Result<()> {
             file.write_all(&encoded)
                 .context("failed to write input to file")?;
             info!("Input written to {:?}", file);
+
+            journal
+                .write_all(&pre_state.abi_encode())
+                .context("failed to write pre_state to file")?;
+            journal
+                .write_all(&post_state.abi_encode())
+                .context("failed to write post_state to file")?;
+            info!("Journal written to {:?}", journal);
 
             // update for next iteration
             finalized_epoch = post_state.finalized_checkpoint.epoch();

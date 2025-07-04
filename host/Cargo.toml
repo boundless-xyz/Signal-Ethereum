@@ -49,6 +49,7 @@ thiserror = "2.0.6"
 tokio = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tree_hash = { workspace = true }
 url = { version = "2.5" }
 z-core = { path = "../core" }
 

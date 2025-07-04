@@ -50,7 +50,8 @@ use state_processing::{
 };
 use test_log::test;
 use z_core::{
-    AttestationData, Config, ConsensusState, Input, StateInput, StateReader, VerifyError, verify,
+    AttestationData, Config, ConsensusState, DummyAttestationInclusionVerifier, Input, StateInput,
+    StateReader, VerifyError, verify,
 };
 
 const VALIDATOR_COUNT: u64 = 48;
@@ -120,7 +121,12 @@ async fn test_zkasper_sync(
                 dbg!(&input);
 
                 // Perform a preflight verification to record the state reads
-                _ = verify(cfg, &preflight_state_reader, input.clone())?;
+                _ = verify(
+                    cfg,
+                    &preflight_state_reader,
+                    &DummyAttestationInclusionVerifier::new(),
+                    input.clone(),
+                )?;
 
                 // build a self-contained SSZ reader
                 let state_input = preflight_state_reader.to_input();
@@ -135,7 +141,12 @@ async fn test_zkasper_sync(
                 let assert_sr = AssertStateReader::new(&state_reader, &ssz_state_reader);
 
                 // Verify again
-                consensus_state = verify(cfg, &assert_sr, input.clone())?;
+                consensus_state = verify(
+                    cfg,
+                    &assert_sr,
+                    &DummyAttestationInclusionVerifier::new(),
+                    input.clone(),
+                )?;
 
                 // Finally, if that succeeded, also verify in the R0VM
                 let (_, vm_consensus_state) =

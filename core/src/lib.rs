@@ -25,6 +25,7 @@ use std::{
 use tree_hash::TreeHash;
 
 mod attestation;
+mod attestation_inclusion;
 mod bls;
 mod committee_cache;
 mod config;
@@ -36,6 +37,7 @@ mod state_reader;
 mod verify;
 
 pub use attestation::*;
+pub use attestation_inclusion::*;
 pub use bls::*;
 pub use committee_cache::*;
 pub use config::*;

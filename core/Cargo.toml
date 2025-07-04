@@ -23,7 +23,7 @@ ssz-multiproofs = { path = "../ssz-multiproofs" }
 swap_or_not_shuffle = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
-tree_hash = { version = "0.8" }
+tree_hash = { workspace = true }
 
 [dev-dependencies]
 arbitrary = "1.4"

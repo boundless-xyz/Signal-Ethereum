@@ -14,7 +14,8 @@
 
 use crate::{
     AttestationData, Checkpoint, CommitteeCache, Config, ConsensusError, Epoch, Input, Link,
-    ShuffleData, StateReader, ValidatorIndex, ValidatorInfo, committee_cache,
+    ShuffleData, StateReader, ValidatorIndex, ValidatorInfo,
+    attestation_inclusion::AttestationInclusionVerifier, committee_cache,
     consensus_state::ConsensusState, ensure, get_attesting_indices, get_total_balance,
 };
 use beacon_types::{
@@ -42,6 +43,8 @@ pub enum VerifyError {
     CommitteeCacheError(#[from] committee_cache::Error),
     #[error("State reader error: {0}")]
     StateReaderError(String),
+    #[error("Validator inclusion error: {0}")]
+    ValidatorInclusion(String),
     #[error("Missing validator for index: {0}")]
     MissingValidatorInfo(ValidatorIndex),
     #[error("Unsupported fork: {0}")]
@@ -68,9 +71,10 @@ impl From<ArithError> for VerifyError {
 /// # Preconditions
 ///
 /// The `input.attestations` are expected to be sorted by `(attestation.data.source, attestation.data.target)`.
-pub fn verify<S: StateReader>(
+pub fn verify<S: StateReader, A: AttestationInclusionVerifier<Spec = S::Spec>>(
     cfg: &Config,
     state_reader: &S,
+    attestation_verifier: &A,
     input: Input<S::Spec>,
 ) -> Result<ConsensusState, VerifyError> {
     let spec = state_reader.chain_spec();
@@ -110,6 +114,10 @@ pub fn verify<S: StateReader>(
         info!("Processing attestations for {}", link);
         let mut target_balance = 0u64;
         for attestation in attestations {
+            attestation_verifier
+                .verify_inclusion(&attestation)
+                .map_err(|e| VerifyError::ValidatorInclusion(e.to_string()))?;
+
             let attesting_balance = process_attestation(
                 state_reader,
                 &active_validators,

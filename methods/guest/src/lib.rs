@@ -13,7 +13,9 @@
 // limitations under the License.
 
 use risc0_zkvm::guest::env;
-use z_core::{ChainSpec, Config, EthSpec, Input, StateInput, verify};
+use z_core::{
+    ChainSpec, Config, DummyAttestationInclusionVerifier, EthSpec, Input, StateInput, verify,
+};
 
 pub fn entry<E: EthSpec>(spec: ChainSpec, config: &Config) {
     env::log(&format!("Network: {}", spec.config_name.as_ref().unwrap()));
@@ -44,7 +46,13 @@ pub fn entry<E: EthSpec>(spec: ChainSpec, config: &Config) {
     env::log("Verifying FFG state transitions...");
 
     let pre_state = input.consensus_state.clone();
-    let post_state = verify(config, &state_reader, input).unwrap();
+    let post_state = verify(
+        config,
+        &state_reader,
+        &DummyAttestationInclusionVerifier::new(),
+        input,
+    )
+    .unwrap();
 
     env::log(&format!(
         "New finalization: {}",

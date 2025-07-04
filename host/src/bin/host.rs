@@ -32,8 +32,8 @@ use std::{
 use tracing::{debug, info, warn};
 use url::Url;
 use z_core::{
-    Checkpoint, Config, ConsensusState, DEFAULT_CONFIG, Epoch, EthSpec, Input, MainnetEthSpec,
-    Slot, StateInput, StateReader, verify,
+    Checkpoint, Config, ConsensusState, DEFAULT_CONFIG, DummyAttestationInclusionVerifier, Epoch,
+    EthSpec, Input, MainnetEthSpec, Slot, StateInput, StateReader, verify,
 };
 
 // all chains use the mainnet preset
@@ -269,7 +269,13 @@ fn run_verify<E: EthSpec + Serialize, R: StateReader<Spec = E> + StateProvider<S
 
     info!("Running preflight");
     let reader = PreflightStateReader::new(host_reader, input.consensus_state.finalized_checkpoint);
-    let consensus_state = verify(cfg, &reader, input.clone()).context("preflight failed")?;
+    let consensus_state = verify(
+        cfg,
+        &reader,
+        &DummyAttestationInclusionVerifier::new(),
+        input.clone(),
+    )
+    .context("preflight failed")?;
     info!("Preflight succeeded");
 
     if mode == ExecMode::Ssz || mode == ExecMode::R0vm {
@@ -295,6 +301,7 @@ fn run_verify<E: EthSpec + Serialize, R: StateReader<Spec = E> + StateProvider<S
         let host_consensus_state = verify(
             cfg,
             &AssertStateReader::new(&guest_reader, &reader),
+            &DummyAttestationInclusionVerifier::new(),
             guest_input,
         )
         .context("host verification failed")?;

@@ -18,7 +18,7 @@ use ethereum_consensus::{electra::mainnet::SignedBeaconBlockHeader, types::mainn
 use std::collections::HashMap;
 use std::fmt::Display;
 use tracing::debug;
-use z_core::{Attestation, Checkpoint, ConsensusState, Epoch, Input, Link, ensure};
+use z_core::{Attestation, Checkpoint, ConsensusError, ConsensusState, Epoch, Input, Link, ensure};
 
 /// A trait to abstract reading data from an instance of a beacon chain
 /// This could be an RPC to a node or something else (e.g. test harness)
@@ -46,6 +46,8 @@ pub enum InputBuilderError {
     UnsupportedBlockVersion,
     #[error("Trusted checkpoint is not valid")]
     InvalidTrustedCheckpoint,
+    #[error("Consensus error")]
+    ConsensusError(#[from] ConsensusError),
     #[error("Chain reader error")]
     ChainReader(#[from] anyhow::Error),
 }
@@ -148,7 +150,7 @@ impl<E: EthSpec, CR: ChainReader> InputBuilder<E, CR> {
                 .await?;
 
             // add potential justification
-            if let Some(link) = prev_state.transition_link(&current_state) {
+            if let Some(link) = prev_state.transition_link(&current_state)? {
                 links.push(link);
             }
 

@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::{Checkpoint, Link};
+use crate::{Checkpoint, Link, ensure};
 use alloy_sol_types::{SolType, SolValue};
 use safe_arith::{ArithError, SafeArith};
 use thiserror::Error;
@@ -33,6 +33,8 @@ pub struct ConsensusState {
 pub enum ConsensusError {
     #[error("Invalid state transition")]
     InvalidTransition,
+    #[error("2-finality not supported")]
+    TwoFinality,
     #[error("Arithmetic error: {0:?}")]
     ArithError(ArithError),
 }
@@ -135,21 +137,6 @@ impl ConsensusState {
             });
         }
 
-        // 2-finality:
-        // - previous_justified, current_justified, target are adjacent epoch boundaries
-        // - previous_justified, current_justified are trivially justified
-        // - target is the second successor of source
-        if self.previous_justified_checkpoint == source
-            && self.current_justified_checkpoint.epoch() == source.epoch().safe_add(1)?
-            && target.epoch() == source.epoch().safe_add(2)?
-        {
-            return Ok(ConsensusState {
-                finalized_checkpoint: source,
-                current_justified_checkpoint: target,
-                previous_justified_checkpoint: self.current_justified_checkpoint,
-            });
-        }
-
         // justification only:
         // - source is justified
         // - target is a subsequent checkpoint of current_justified, but not the successor
@@ -171,67 +158,80 @@ impl ConsensusState {
 
     /// Returns the justification link that led to the transition from `self` to `other`, if any.
     ///
-    /// This method panics, if the state progression was not valid.
-    pub fn transition_link(&self, other: &Self) -> Option<Link> {
-        assert!(self.is_consistent() && other.is_consistent());
+    /// This method returns an error, if the state progression was not valid or not supported.
+    pub fn transition_link(&self, other: &Self) -> Result<Option<Link>, ConsensusError> {
+        assert!(
+            self.is_consistent(),
+            "Pre-condition failed: consensus state must be consistent"
+        );
+        // if other is not consistent, the transition is definitely not valid
+        ensure!(other.is_consistent(), ConsensusError::InvalidTransition);
         // other must be newer or equal
-        assert!(
-            self.finalized_checkpoint.epoch() < other.finalized_checkpoint.epoch()
-                || self.finalized_checkpoint == other.finalized_checkpoint
-        );
-        assert!(
-            self.previous_justified_checkpoint.epoch()
-                < other.previous_justified_checkpoint.epoch()
-                || self.previous_justified_checkpoint == other.previous_justified_checkpoint
-        );
-        assert!(
-            self.current_justified_checkpoint.epoch() < other.current_justified_checkpoint.epoch()
-                || self.current_justified_checkpoint == other.current_justified_checkpoint
-        );
+        ensure!(self.less_or_equal(other), ConsensusError::InvalidTransition);
 
         // If the current justified checkpoint has not changed, no new justification has occurred.
         // In this case, the finalized checkpoint must also be the same.
         if self.current_justified_checkpoint == other.current_justified_checkpoint {
-            assert_eq!(self.finalized_checkpoint, other.finalized_checkpoint);
+            ensure!(
+                self.finalized_checkpoint == other.finalized_checkpoint,
+                ConsensusError::InvalidTransition
+            );
 
-            return None;
+            return Ok(None);
         }
 
         let target = other.current_justified_checkpoint;
 
-        // If a finalization occurred, the source of the finalization must have been one of the
-        // previously justified checkpoints in `self`.
         if self.finalized_checkpoint != other.finalized_checkpoint {
-            assert!(
-                other.finalized_checkpoint == self.current_justified_checkpoint
-                    || other.finalized_checkpoint == self.previous_justified_checkpoint
-            );
+            if other.finalized_checkpoint == self.current_justified_checkpoint
+                && target.epoch() - other.finalized_checkpoint.epoch() == 1
+            {
+                return Ok(Some(Link {
+                    source: other.finalized_checkpoint,
+                    target,
+                }));
+            }
+            if target.epoch() - other.finalized_checkpoint.epoch() == 2 {
+                return Err(ConsensusError::TwoFinality);
+            }
 
-            return Some(Link {
-                source: other.finalized_checkpoint,
-                target,
-            });
+            return Err(ConsensusError::InvalidTransition);
         }
 
         // If no finalization occurred, it implies a skipped epoch. The source for the new
         // justification must be the previous `current_justified_checkpoint`.
-        assert!(
-            other.current_justified_checkpoint.epoch() - self.current_justified_checkpoint.epoch()
-                > 1
+        ensure!(
+            target.epoch() - self.current_justified_checkpoint.epoch() > 1,
+            ConsensusError::InvalidTransition
         );
 
-        Some(Link {
+        Ok(Some(Link {
             source: self.current_justified_checkpoint,
             target,
-        })
+        }))
     }
 
-    /// Ensures a consensus state is internally consistent.
+    /// Returns whether the current consensus state is consistent.
     #[inline]
     pub fn is_consistent(&self) -> bool {
-        self.finalized_checkpoint.epoch() <= self.previous_justified_checkpoint.epoch()
-            && self.previous_justified_checkpoint.epoch()
-                <= self.current_justified_checkpoint.epoch()
+        self.finalized_checkpoint.epoch() < self.current_justified_checkpoint.epoch()
+            && self
+                .finalized_checkpoint
+                .less_or_equal(&self.previous_justified_checkpoint)
+            && self
+                .previous_justified_checkpoint
+                .less_or_equal(&self.current_justified_checkpoint)
+    }
+
+    fn less_or_equal(&self, other: &Self) -> bool {
+        self.finalized_checkpoint
+            .less_or_equal(&other.finalized_checkpoint)
+            && self
+                .previous_justified_checkpoint
+                .less_or_equal(&other.previous_justified_checkpoint)
+            && self
+                .current_justified_checkpoint
+                .less_or_equal(&other.current_justified_checkpoint)
     }
 
     /// Returns the size of the ABI-encoded state in bytes.
@@ -279,11 +279,7 @@ mod tests {
                 source: cp(1),
                 target: cp(3),
             },
-            Ok(ConsensusState {
-                previous_justified_checkpoint: cp(2),
-                current_justified_checkpoint: cp(3),
-                finalized_checkpoint: cp(1),
-            }),
+            Err(ConsensusError::TwoFinality),
         ),
         (
             ConsensusState {
@@ -514,7 +510,7 @@ mod tests {
                 );
                 assert_eq!(
                     pre_state.transition_link(&post_state),
-                    Some(link.clone()),
+                    Ok(Some(link.clone())),
                     "Test case {i}: Failed to reconstruct the transition link."
                 );
             }

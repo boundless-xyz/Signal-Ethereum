@@ -178,6 +178,10 @@ impl Checkpoint {
     pub fn root(&self) -> Root {
         self.0.root
     }
+
+    pub fn less_or_equal(&self, other: &Self) -> bool {
+        self.epoch() < other.epoch() || self == other
+    }
 }
 
 impl Display for Checkpoint {

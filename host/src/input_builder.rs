@@ -15,10 +15,13 @@
 use crate::conv_attestation;
 use beacon_types::EthSpec;
 use ethereum_consensus::{electra::mainnet::SignedBeaconBlockHeader, types::mainnet::BeaconBlock};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fmt::Display;
 use tracing::debug;
-use z_core::{Attestation, Checkpoint, ConsensusState, Epoch, Input, Link, ensure};
+use z_core::{
+    Attestation, Checkpoint, Config, ConsensusState, Epoch, Input, Link, StateReader,
+    compute_committees, ensure, get_total_balance, process_attestation,
+};
 
 /// A trait to abstract reading data from an instance of a beacon chain
 /// This could be an RPC to a node or something else (e.g. test harness)
@@ -48,17 +51,31 @@ pub enum InputBuilderError {
     InvalidTrustedCheckpoint,
     #[error("Chain reader error")]
     ChainReader(#[from] anyhow::Error),
+    #[error("Error in called verify method: {0}")]
+    VerifyError(#[from] z_core::VerifyError),
+    #[error("Arithmetic error")]
+    Arith(safe_arith::ArithError),
+    #[error("State reader error: {0}")]
+    StateReader(String),
 }
 
-pub struct InputBuilder<E, CR> {
+impl From<safe_arith::ArithError> for InputBuilderError {
+    fn from(e: safe_arith::ArithError) -> Self {
+        InputBuilderError::Arith(e)
+    }
+}
+
+pub struct InputBuilder<'a, E, CR, SR> {
     chain_reader: CR,
+    state_reader: &'a SR,
     _phantom: std::marker::PhantomData<E>,
 }
 
-impl<E: EthSpec, CR: ChainReader> InputBuilder<E, CR> {
-    pub fn new(chain_reader: CR) -> Self {
+impl<'a, E: EthSpec, CR: ChainReader, SR: StateReader<Spec = E>> InputBuilder<'a, E, CR, SR> {
+    pub fn new(chain_reader: CR, state_reader: &'a SR) -> Self {
         Self {
             chain_reader,
+            state_reader,
             _phantom: std::marker::PhantomData,
         }
     }
@@ -67,6 +84,7 @@ impl<E: EthSpec, CR: ChainReader> InputBuilder<E, CR> {
     /// used to evolve the consensus state at this checkpoint to a new consensus state in the "best" way possible
     pub async fn build(
         &self,
+        cfg: &Config,
         trusted_checkpoint: Checkpoint,
     ) -> Result<(Input<E>, ConsensusState), InputBuilderError> {
         // Find the first consensus state that confirms the finality of the trusted_checkpoint
@@ -86,7 +104,7 @@ impl<E: EthSpec, CR: ChainReader> InputBuilder<E, CR> {
         );
 
         // Concurrently fetch attestations for all required links.
-        let attestations = self.collect_attestations_for_links(&links).await?;
+        let attestations = self.collect_attestations_for_links(cfg, &links).await?;
 
         Ok((
             Input {
@@ -166,6 +184,7 @@ impl<E: EthSpec, CR: ChainReader> InputBuilder<E, CR> {
     /// Gathers the attestations for links, looking at block in the range [start_slot, end_slot].
     async fn collect_attestations_for_links(
         &self,
+        cfg: &Config,
         links: &[Link],
     ) -> Result<Vec<Attestation<E>>, InputBuilderError> {
         if links.is_empty() {
@@ -206,12 +225,54 @@ impl<E: EthSpec, CR: ChainReader> InputBuilder<E, CR> {
             }
         }
 
-        // 3. Assemble the final nested Vec in the correct order
-        let result = links
-            .iter()
-            .flat_map(|link| attestations_by_link.remove(link).unwrap_or_default())
+        // 3. Assemble the final nested Vec in the correct order and take only as many as are required to meet the threshold requirement
+        // compute all committees for the target epoch
+        let mut result = Vec::new();
+        for link in links {
+            let link_attestations = attestations_by_link.remove(link).unwrap_or_default();
+            result.extend(self.get_min_required_attestations(
+                cfg,
+                link.target.epoch(),
+                link_attestations,
+            )?);
+        }
+
+        Ok(result)
+    }
+
+    /// Given a target epoch and a list of attestations related to a single link, return only those
+    /// that are required to meet the justification threshold for the link as set in the config.
+    fn get_min_required_attestations(
+        &self,
+        cfg: &Config,
+        target_epoch: Epoch,
+        attestations: Vec<Attestation<E>>,
+    ) -> Result<Vec<Attestation<E>>, InputBuilderError> {
+        let active_validators: BTreeMap<_, _> = self
+            .state_reader
+            .active_validators(target_epoch)
+            .map_err(|e| InputBuilderError::StateReader(e.to_string()))?
             .collect();
 
+        let committees = compute_committees(self.state_reader, &active_validators, target_epoch)?;
+
+        let total_active_balance =
+            get_total_balance(self.state_reader.chain_spec(), active_validators.values())?;
+
+        let rhs = total_active_balance as u128 * cfg.justification_threshold_factor as u128;
+
+        let mut target_balance = 0u64;
+        let mut result = Vec::new();
+        for att in attestations {
+            let lhs = target_balance as u128 * cfg.justification_threshold_quotient as u128;
+            if lhs < rhs {
+                target_balance +=
+                    process_attestation(self.state_reader, &active_validators, &committees, &att)?;
+                result.push(att);
+            } else {
+                break; // attesting balance is sufficient, no need to add more attestations
+            }
+        }
         Ok(result)
     }
 }

@@ -176,7 +176,7 @@ fn validate_link(
     Ok(())
 }
 
-fn process_attestation<S: StateReader, E: EthSpec>(
+pub fn process_attestation<S: StateReader, E: EthSpec>(
     state: &S,
     active_validators: &BTreeMap<ValidatorIndex, &ValidatorInfo>,
     committees: &CommitteeCache<E>,
@@ -249,7 +249,7 @@ fn is_valid_indexed_attestation<S: StateReader>(
 }
 
 /// Return all the committees for the given epoch.
-fn compute_committees<S: StateReader>(
+pub fn compute_committees<S: StateReader>(
     state_reader: &S,
     active_validators: &BTreeMap<ValidatorIndex, &ValidatorInfo>,
     epoch: Epoch,

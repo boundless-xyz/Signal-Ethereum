@@ -114,8 +114,11 @@ async fn test_zkasper_sync(
         );
 
         // Build the input and verify it
-        let builder = InputBuilder::new(harness);
-        match builder.build(consensus_state.finalized_checkpoint).await {
+        let builder = InputBuilder::new(harness, &state_reader);
+        match builder
+            .build(cfg, consensus_state.finalized_checkpoint)
+            .await
+        {
             Ok((input, _)) => {
                 dbg!(&input);
 

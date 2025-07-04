@@ -172,9 +172,9 @@ async fn main() -> anyhow::Result<()> {
                 Checkpoint::new(trusted_epoch, trusted_beacon_block.hash_tree_root()?);
             info!("Trusted checkpoint: {}", trusted_checkpoint);
 
-            let builder = InputBuilder::<Spec, _>::new(beacon_client.clone());
+            let builder = InputBuilder::<Spec, _, _>::new(beacon_client.clone(), &reader);
 
-            let (input, _) = builder.build(trusted_checkpoint).await?;
+            let (input, _) = builder.build(&DEFAULT_CONFIG, trusted_checkpoint).await?;
             info!("Pre-state: {:#?}", input.consensus_state);
             debug!("Input: {:?}", input);
 
@@ -226,11 +226,11 @@ async fn run_sync<E: EthSpec + Serialize>(
 
     let mut consensus_state = beacon_client.get_consensus_state(start_slot).await?;
     info!("Initial Consensus State: {:#?}", consensus_state);
-    let input_builder = InputBuilder::<E, _>::new(beacon_client.clone());
+    let input_builder = InputBuilder::<E, _, _>::new(beacon_client.clone(), &sr);
 
     loop {
         let (input, expected_state) = input_builder
-            .build(consensus_state.finalized_checkpoint)
+            .build(&DEFAULT_CONFIG, consensus_state.finalized_checkpoint)
             .await?;
         debug!("Input: {:?}", input);
         let msg = match run_verify(network, mode, &DEFAULT_CONFIG, &sr, input.clone()) {

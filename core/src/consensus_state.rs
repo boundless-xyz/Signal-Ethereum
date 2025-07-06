@@ -259,6 +259,7 @@ impl ConsensusState {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{Checkpoint, Epoch};
 
     #[test]
     fn test_mainnet_state_transitions() {
@@ -267,7 +268,7 @@ mod tests {
             serde_json::from_str(json_data).unwrap();
 
         for (i, (pre_state, post_state)) in test_cases.iter().enumerate() {
-            // try to determine the link
+            // use `transition_link` to determine the `Link`
             match pre_state.transition_link(post_state) {
                 // This is the expected path for a valid transition.
                 Ok(Some(link)) => {
@@ -309,6 +310,191 @@ mod tests {
                          Error:      {e:?}"
                     );
                 }
+            }
+        }
+    }
+
+    const fn cp(epoch: u64) -> Checkpoint {
+        Checkpoint::new(Epoch::new(epoch), alloy_primitives::B256::ZERO)
+    }
+
+    const TEST_CASES: &[(ConsensusState, Link, Result<ConsensusState, ConsensusError>)] = &[
+        // Case 1, [Combining GHOST and Casper (Buterin et al., 2020)] Fig. 8
+        (
+            ConsensusState {
+                previous_justified_checkpoint: cp(1),
+                current_justified_checkpoint: cp(2),
+                finalized_checkpoint: cp(0),
+            },
+            Link {
+                source: cp(1),
+                target: cp(3),
+            },
+            Err(ConsensusError::InvalidTransition), // 2-finality
+        ),
+        // Case 2, [Combining GHOST and Casper (Buterin et al., 2020)] Fig. 8
+        (
+            ConsensusState {
+                previous_justified_checkpoint: cp(2),
+                current_justified_checkpoint: cp(2),
+                finalized_checkpoint: cp(0),
+            },
+            Link {
+                source: cp(2),
+                target: cp(3),
+            },
+            Ok(ConsensusState {
+                previous_justified_checkpoint: cp(2),
+                current_justified_checkpoint: cp(3),
+                finalized_checkpoint: cp(2),
+            }),
+        ),
+        // Case 3, [Combining GHOST and Casper (Buterin et al., 2020)] Fig. 8
+        (
+            ConsensusState {
+                previous_justified_checkpoint: cp(2),
+                current_justified_checkpoint: cp(3),
+                finalized_checkpoint: cp(0),
+            },
+            Link {
+                source: cp(2),
+                target: cp(4),
+            },
+            Err(ConsensusError::InvalidTransition), // 2-finality
+        ),
+        // Case 4, [Combining GHOST and Casper (Buterin et al., 2020)] Fig. 8
+        (
+            ConsensusState {
+                previous_justified_checkpoint: cp(3),
+                current_justified_checkpoint: cp(3),
+                finalized_checkpoint: cp(0),
+            },
+            Link {
+                source: cp(3),
+                target: cp(4),
+            },
+            Ok(ConsensusState {
+                previous_justified_checkpoint: cp(3),
+                current_justified_checkpoint: cp(4),
+                finalized_checkpoint: cp(3),
+            }),
+        ),
+        ////// FAILURE CASES //////
+        // Invalid link: target epoch is not greater than source
+        (
+            ConsensusState {
+                previous_justified_checkpoint: cp(1),
+                current_justified_checkpoint: cp(1),
+                finalized_checkpoint: cp(0),
+            },
+            Link {
+                source: cp(1),
+                target: cp(1),
+            },
+            Err(ConsensusError::InvalidTransition),
+        ),
+        // Source checkpoint is not justified
+        (
+            ConsensusState {
+                previous_justified_checkpoint: cp(1),
+                current_justified_checkpoint: cp(1),
+                finalized_checkpoint: cp(0),
+            },
+            Link {
+                source: cp(2),
+                target: cp(3),
+            },
+            Err(ConsensusError::InvalidTransition),
+        ),
+        // Source checkpoint not verifiably justified (source is not p_j or c_j)
+        (
+            ConsensusState {
+                previous_justified_checkpoint: cp(2),
+                current_justified_checkpoint: cp(2),
+                finalized_checkpoint: cp(0),
+            },
+            Link {
+                source: cp(1),
+                target: cp(3),
+            },
+            Err(ConsensusError::InvalidTransition),
+        ),
+        // Source checkpoint too old (older than previous_justified_checkpoint)
+        (
+            ConsensusState {
+                previous_justified_checkpoint: cp(1),
+                current_justified_checkpoint: cp(2),
+                finalized_checkpoint: cp(0),
+            },
+            Link {
+                source: cp(0),
+                target: cp(4),
+            },
+            Err(ConsensusError::InvalidTransition),
+        ),
+        // Link does not match a finality rule
+        (
+            ConsensusState {
+                previous_justified_checkpoint: cp(1),
+                current_justified_checkpoint: cp(2),
+                finalized_checkpoint: cp(0),
+            },
+            Link {
+                source: cp(1),
+                target: cp(4), // Should be cp(3) for 2-epoch finality
+            },
+            Err(ConsensusError::InvalidTransition),
+        ),
+        // Duplicate justification
+        (
+            ConsensusState {
+                previous_justified_checkpoint: cp(1),
+                current_justified_checkpoint: cp(2),
+                finalized_checkpoint: cp(0),
+            },
+            Link {
+                source: cp(1),
+                target: cp(2), // Target is not after current_justified
+            },
+            Err(ConsensusError::InvalidTransition),
+        ),
+        // Target < current_justified_checkpoint
+        (
+            ConsensusState {
+                previous_justified_checkpoint: cp(1),
+                current_justified_checkpoint: cp(3),
+                finalized_checkpoint: cp(0),
+            },
+            Link {
+                source: cp(1),
+                target: cp(2),
+            },
+            Err(ConsensusError::InvalidTransition),
+        ),
+    ];
+
+    #[test]
+    fn test_state_transition() {
+        for (i, (pre_state, link, expected)) in TEST_CASES.iter().enumerate() {
+            let result = pre_state.state_transition(link);
+            assert_eq!(
+                result, *expected,
+                "Test case {i}: Mismatch in state_transition result.\n\
+                Pre-state: {pre_state:?}\n\
+                Link: {link:?}"
+            );
+
+            // if the transition was successful, check that `transition_link` can be reconstructed.
+            if let Ok(post_state) = result {
+                assert!(
+                    post_state.is_consistent(),
+                    "Test case {i}: Post-state is not consistent."
+                );
+                assert_eq!(
+                    pre_state.transition_link(&post_state),
+                    Ok(Some(link.clone())),
+                    "Test case {i}: Failed to reconstruct the transition link."
+                );
             }
         }
     }

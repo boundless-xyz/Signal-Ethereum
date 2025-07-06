@@ -74,7 +74,7 @@ pub fn verify<S: StateReader>(
     input: Input<S::Spec>,
 ) -> Result<ConsensusState, VerifyError> {
     let spec = state_reader.chain_spec();
-    let trusted_checkpoint = input.consensus_state.finalized_checkpoint;
+    let trusted_checkpoint = input.consensus_state.finalized_checkpoint();
     let Input {
         mut consensus_state,
         attestations,
@@ -87,8 +87,8 @@ pub fn verify<S: StateReader>(
     {
         // we must not process more than one new finalization
         ensure!(
-            consensus_state.finalized_checkpoint == trusted_checkpoint,
-            VerifyError::InvalidFinalization(consensus_state.finalized_checkpoint)
+            consensus_state.finalized_checkpoint() == trusted_checkpoint,
+            VerifyError::InvalidFinalization(consensus_state.finalized_checkpoint())
         );
 
         let link = Link {
@@ -137,13 +137,13 @@ pub fn verify<S: StateReader>(
 
         consensus_state = consensus_state.state_transition(&link)?;
         // the new state should always be consistent
-        assert!(consensus_state.is_consistent());
+        assert!(consensus_state.is_valid());
     }
 
     // we must process exactly one finalization
     ensure!(
-        consensus_state.finalized_checkpoint != trusted_checkpoint,
-        VerifyError::InvalidFinalization(consensus_state.finalized_checkpoint)
+        consensus_state.finalized_checkpoint() != trusted_checkpoint,
+        VerifyError::InvalidFinalization(consensus_state.finalized_checkpoint())
     );
 
     Ok(consensus_state)

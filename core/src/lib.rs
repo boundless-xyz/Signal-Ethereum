@@ -283,11 +283,10 @@ mod tests {
         .unwrap();
 
         let input = Input::<MainnetEthSpec> {
-            consensus_state: ConsensusState {
-                previous_justified_checkpoint: Checkpoint(checkpoint(&mut unstructured)),
-                current_justified_checkpoint: Checkpoint(checkpoint(&mut unstructured)),
-                finalized_checkpoint: Checkpoint(checkpoint(&mut unstructured)),
-            },
+            consensus_state: ConsensusState::new(
+                Checkpoint(checkpoint(&mut unstructured)),
+                Checkpoint(checkpoint(&mut unstructured)),
+            ),
             attestations: vec![attestation],
         };
 

@@ -294,10 +294,9 @@ impl ChainReader for BeaconClient {
 
     async fn get_consensus_state(&self, state_id: impl Display) -> anyhow::Result<ConsensusState> {
         let resp = self.get_finality_checkpoints(state_id).await?;
-        Ok(ConsensusState {
-            previous_justified_checkpoint: resp.previous_justified.into(),
-            current_justified_checkpoint: resp.current_justified.into(),
-            finalized_checkpoint: resp.finalized.into(),
-        })
+        Ok(ConsensusState::new(
+            resp.current_justified.into(),
+            resp.finalized.into(),
+        ))
     }
 }

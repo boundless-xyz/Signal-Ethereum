@@ -81,7 +81,7 @@ impl<E: EthSpec, CR: ChainReader> InputBuilder<E, CR> {
         let (state, next_state, links) = self
             .get_justifications_until_new_finality(finalization_epoch)
             .await?;
-        assert_eq!(state.finalized_checkpoint, trusted_checkpoint);
+        assert_eq!(state.finalized_checkpoint(), trusted_checkpoint);
         debug!(
             num_justifications = links.len(),
             "Collected justifications until new finality"
@@ -115,13 +115,13 @@ impl<E: EthSpec, CR: ChainReader> InputBuilder<E, CR> {
         for epoch in trusted_checkpoint.epoch().as_u64() + 1.. {
             let slot = Epoch::from(epoch).start_slot(E::slots_per_epoch());
             let state = self.chain_reader.get_consensus_state(slot).await?;
-            if state.finalized_checkpoint == trusted_checkpoint {
+            if state.finalized_checkpoint() == trusted_checkpoint {
                 return Ok(epoch.into());
             }
 
             // if the trusted checkpoint has been skipped, it is invalid
             ensure!(
-                state.finalized_checkpoint.epoch() < trusted_checkpoint.epoch(),
+                state.finalized_checkpoint().epoch() < trusted_checkpoint.epoch(),
                 InputBuilderError::InvalidTrustedCheckpoint
             );
         }
@@ -138,7 +138,7 @@ impl<E: EthSpec, CR: ChainReader> InputBuilder<E, CR> {
             .chain_reader
             .get_consensus_state(start_epoch.start_slot(E::slots_per_epoch()))
             .await?;
-        let initial_finalized_checkpoint = initial_state.finalized_checkpoint;
+        let initial_finalized_checkpoint = initial_state.finalized_checkpoint();
 
         let mut links = Vec::new();
 
@@ -155,7 +155,7 @@ impl<E: EthSpec, CR: ChainReader> InputBuilder<E, CR> {
             }
 
             // If finality has advanced, we have collected all necessary states.
-            if current_state.finalized_checkpoint != initial_finalized_checkpoint {
+            if current_state.finalized_checkpoint() != initial_finalized_checkpoint {
                 return Ok((initial_state, current_state, links));
             }
 

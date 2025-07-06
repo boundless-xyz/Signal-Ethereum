@@ -102,7 +102,11 @@ async fn test_zkasper_sync(
     println!("Pre consensus state: {:?}", consensus_state);
 
     loop {
-        let state_reader = HostStateReader::new((*harness.spec).clone(), harness);
+        let state_reader = HostStateReader::new(
+            (*harness.spec).clone(),
+            harness,
+            consensus_state.finalized_checkpoint.epoch(),
+        );
         let preflight_state_reader =
             PreflightStateReader::new(&state_reader, consensus_state.finalized_checkpoint);
         println!(
@@ -114,7 +118,7 @@ async fn test_zkasper_sync(
         );
 
         // Build the input and verify it
-        let builder = InputBuilder::new(harness, &state_reader);
+        let builder = InputBuilder::new(&harness, &state_reader);
         match builder
             .build(cfg, consensus_state.finalized_checkpoint)
             .await

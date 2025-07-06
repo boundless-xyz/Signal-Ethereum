@@ -69,14 +69,7 @@ impl<E: EthSpec, S: StateReader<Spec = E>, R: StateReader<Spec = E>> StateReader
             match (iter_a.next(), iter_b.next()) {
                 (None, None) => None,
                 (Some(a), Some(b)) => {
-                    assert_eq!(a.0, b.0);
-                    // do not compare the effective_balance as it is allowed to be incorrect
-                    let mut validator = a.1.clone();
-                    validator.effective_balance = b.1.effective_balance;
-                    // currently the exit_epoch is not overridden, but still considered for activity
-                    validator.exit_epoch = b.1.exit_epoch;
-                    assert_eq!(&validator, b.1);
-
+                    assert_eq!(a, b);
                     Some(a)
                 }
                 (a, b) => panic!(

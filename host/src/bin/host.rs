@@ -150,13 +150,14 @@ async fn main() -> anyhow::Result<()> {
     };
 
     let provider = PersistentApiStateProvider::<Spec>::new(&state_dir, beacon_client.clone())?;
-    let reader = HostStateReader::new(spec, CacheStateProvider::new(provider));
+    let mut reader = HostStateReader::new(spec, CacheStateProvider::new(provider), Epoch::new(0));
 
     match args.command {
         Command::Verify {
             mode,
             trusted_epoch,
         } => {
+            reader.set_trusted_epoch(trusted_epoch);
             let trusted_state =
                 reader.state_at_slot(trusted_epoch.start_slot(Spec::slots_per_epoch()))?;
             let epoch_boundary_slot = trusted_state.latest_block_header().slot;
@@ -172,7 +173,7 @@ async fn main() -> anyhow::Result<()> {
                 Checkpoint::new(trusted_epoch, trusted_beacon_block.hash_tree_root()?);
             info!("Trusted checkpoint: {}", trusted_checkpoint);
 
-            let builder = InputBuilder::<Spec, _, _>::new(beacon_client.clone(), &reader);
+            let builder = InputBuilder::<Spec, _, _>::new(&beacon_client, &reader);
 
             let (input, _) = builder.build(&DEFAULT_CONFIG, trusted_checkpoint).await?;
             info!("Pre-state: {:#?}", input.consensus_state);
@@ -203,7 +204,7 @@ async fn main() -> anyhow::Result<()> {
 }
 
 async fn run_sync<E: EthSpec + Serialize>(
-    sr: HostStateReader<CacheStateProvider<PersistentApiStateProvider<E>>>,
+    mut sr: HostStateReader<CacheStateProvider<PersistentApiStateProvider<E>>>,
     start_slot: Slot,
     beacon_client: &BeaconClient,
     network: Network,
@@ -226,9 +227,11 @@ async fn run_sync<E: EthSpec + Serialize>(
 
     let mut consensus_state = beacon_client.get_consensus_state(start_slot).await?;
     info!("Initial Consensus State: {:#?}", consensus_state);
-    let input_builder = InputBuilder::<E, _, _>::new(beacon_client.clone(), &sr);
 
     loop {
+        sr.set_trusted_epoch(consensus_state.finalized_checkpoint.epoch());
+        let input_builder = InputBuilder::<E, _, _>::new(beacon_client, &sr);
+
         let (input, expected_state) = input_builder
             .build(&DEFAULT_CONFIG, consensus_state.finalized_checkpoint)
             .await?;

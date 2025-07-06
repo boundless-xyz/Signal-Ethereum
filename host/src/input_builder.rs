@@ -51,28 +51,28 @@ pub enum InputBuilderError {
     InvalidTrustedCheckpoint,
     #[error("Chain reader error")]
     ChainReader(#[from] anyhow::Error),
-    #[error("Error in called verify method: {0}")]
+    #[error("Error in called verify method")]
     VerifyError(#[from] z_core::VerifyError),
-    #[error("Arithmetic error")]
-    Arith(safe_arith::ArithError),
+    #[error("Arithmetic error: {0:?}")]
+    ArithError(safe_arith::ArithError),
     #[error("State reader error: {0}")]
     StateReader(String),
 }
 
 impl From<safe_arith::ArithError> for InputBuilderError {
     fn from(e: safe_arith::ArithError) -> Self {
-        InputBuilderError::Arith(e)
+        InputBuilderError::ArithError(e)
     }
 }
 
 pub struct InputBuilder<'a, E, CR, SR> {
-    chain_reader: CR,
+    chain_reader: &'a CR,
     state_reader: &'a SR,
     _phantom: std::marker::PhantomData<E>,
 }
 
 impl<'a, E: EthSpec, CR: ChainReader, SR: StateReader<Spec = E>> InputBuilder<'a, E, CR, SR> {
-    pub fn new(chain_reader: CR, state_reader: &'a SR) -> Self {
+    pub fn new(chain_reader: &'a CR, state_reader: &'a SR) -> Self {
         Self {
             chain_reader,
             state_reader,

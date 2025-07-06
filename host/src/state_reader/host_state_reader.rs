@@ -56,16 +56,18 @@ impl From<ArithError> for HostReaderError {
 pub struct HostStateReader<P> {
     spec: ChainSpec,
     provider: P,
-    validator_cache: FrozenMap<Epoch, Vec<(ValidatorIndex, ValidatorInfo)>>,
+    validator_cache: FrozenMap<(Epoch, Epoch), Vec<(ValidatorIndex, ValidatorInfo)>>,
+    trusted_epoch: Epoch,
 }
 
 impl<P: StateProvider> HostStateReader<P> {
     #[must_use]
-    pub fn new(spec: ChainSpec, provider: P) -> Self {
+    pub fn new(spec: ChainSpec, provider: P, trusted_epoch: Epoch) -> Self {
         Self {
             spec,
             provider,
             validator_cache: Default::default(),
+            trusted_epoch,
         }
     }
 
@@ -74,15 +76,24 @@ impl<P: StateProvider> HostStateReader<P> {
         &self.provider
     }
 
+    pub fn set_trusted_epoch(&mut self, epoch: Epoch) {
+        debug!("Setting trusted epoch to {epoch}");
+        self.trusted_epoch = epoch;
+    }
+
     fn state(&self, epoch: Epoch) -> Result<StateRef, StateProviderError> {
         self.provider.state_at_epoch(epoch)
     }
 }
 
 impl<E: EthSpec> HostStateReader<CacheStateProvider<FileProvider<E>>> {
-    pub fn new_with_dir(spec: ChainSpec, dir: impl Into<PathBuf>) -> Result<Self, HostReaderError> {
+    pub fn new_with_dir(
+        spec: ChainSpec,
+        dir: impl Into<PathBuf>,
+        trusted_epoch: Epoch,
+    ) -> Result<Self, HostReaderError> {
         let provider = CacheStateProvider::new(FileProvider::new(dir)?);
-        Ok(Self::new(spec, provider))
+        Ok(Self::new(spec, provider, trusted_epoch))
     }
 }
 
@@ -121,22 +132,28 @@ impl<P: StateProvider> StateReader for HostStateReader<P> {
     ) -> Result<impl Iterator<Item = (ValidatorIndex, &ValidatorInfo)>, Self::Error> {
         trace!("HostStateReader::active_validators({epoch})");
 
-        let iter = match self.validator_cache.get(&epoch) {
+        let iter = match self.validator_cache.get(&(self.trusted_epoch, epoch)) {
             Some(validators) => validators.iter(),
             None => {
-                let beacon_state = self.state(epoch)?;
+                let trusted_state = self.state(self.trusted_epoch)?;
+                let state = self.state(epoch)?;
 
-                debug!("Caching validators for epoch {epoch}");
-                let validators: Vec<_> = beacon_state
+                debug!(
+                    "Caching validators active at epoch {epoch} using data from trusted epoch {}",
+                    self.trusted_epoch
+                );
+                let validators: Vec<_> = state
                     .validators()
                     .iter()
                     .enumerate()
-                    .filter(move |(_, validator)| is_active_validator(validator, epoch.into()))
-                    .map(move |(idx, validator)| (idx, to_validator_info(validator)))
+                    .filter(move |(_, validator)| is_active_validator(validator, epoch.into())) // use the future state to determine active status
+                    .map(move |(idx, _)| (idx, to_validator_info(&trusted_state.validators()[idx]))) // use the trusted state for validator info
                     .collect();
                 debug!("Active validators: {}", validators.len());
 
-                self.validator_cache.insert(epoch, validators).iter()
+                self.validator_cache
+                    .insert((self.trusted_epoch, epoch), validators)
+                    .iter()
             }
         };
 

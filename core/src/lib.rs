@@ -144,7 +144,7 @@ impl ValidatorInfo {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 #[repr(transparent)]
 pub struct Checkpoint(beacon_types::Checkpoint);
 

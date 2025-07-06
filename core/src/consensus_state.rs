@@ -23,7 +23,7 @@ use thiserror::Error;
 /// finality transition, specifically the finalized and currently justified checkpoints.
 /// It deliberately omits `previous_justified_checkpoint` to prevent the handling
 /// of complex 2-finality cases, aligning with the formal model's assumptions.
-#[derive(Debug, Clone, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Default, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct ConsensusState {
     current_justified_checkpoint: Checkpoint,
     finalized_checkpoint: Checkpoint,
@@ -138,11 +138,12 @@ impl ConsensusState {
 
     /// Checks if the consensus state is valid.
     ///
-    /// A state is considered valid if the epoch of the finalized checkpoint is
-    /// strictly less than the epoch of the current justified checkpoint.
+    /// A state is considered valid if the epoch of the finalized checkpoint is strictly
+    /// less than the epoch of the current justified checkpoint or if it is all zero.
     #[inline]
     pub fn is_valid(&self) -> bool {
         self.finalized_checkpoint.epoch() < self.current_justified_checkpoint.epoch()
+            || self == &ConsensusState::default()
     }
 
     /// Applies a single supermajority link to the current consensus state to produce a new state.
@@ -155,10 +156,7 @@ impl ConsensusState {
     /// - The resulting consensus state is always valid, i.e.,
     ///   `finalized_checkpoint.epoch() < current_justified_checkpoint.epoch()`.
     pub fn state_transition(&self, link: &Link) -> Result<ConsensusState, ConsensusError> {
-        assert!(
-            self.is_valid(),
-            "Pre-condition failed: consensus state must be valid"
-        );
+        assert!(self.is_valid());
 
         let &Link { source, target } = link;
 
@@ -200,10 +198,7 @@ impl ConsensusState {
     /// Returns an error if the transition from `self` to `other` is not a valid,
     /// supported FFG state progression. This includes unsupported 2-finality cases.
     pub fn transition_link(&self, other: &Self) -> Result<Option<Link>, ConsensusError> {
-        assert!(
-            self.is_valid(),
-            "Pre-condition failed: consensus state must be valid"
-        );
+        assert!(self.is_valid());
         // The target state must also be valid and not older than the current state.
         ensure!(other.is_valid(), ConsensusError::InvalidTransition);
         ensure!(self.less_or_equal(other), ConsensusError::InvalidTransition);

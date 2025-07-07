@@ -1,28 +1,31 @@
-# ZKasper
+# The Signal: Ethereum
 
-A ZKVM-friendly implementation of [Casper FFG](https://arxiv.org/abs/2003.03052), the finality gadget used by the Ethereum beacon chain.
+A ZKVM-friendly implementation of [Casper FFG](https://arxiv.org/abs/2003.03052), the finality gadget used by the Ethereum beacon chain. This forms part of [The Signal](https://github.com/boundless-xyz/signal) - an open source initiative to build trustless interoperability across all chains.
+
+> [!WARNING]  
+> The Signal: Ethereum is currently under audit and its design under peer review. The code, or the generated proofs should not be used in any production system. Aspects of the design may change without notice.
 
 ## Background
 
-Like Casper, ZKasper operates over the abstraction of checkpoints and attested links rather than blocks and epochs. The ZKVM program allows a prover to construct a proof that they have seen sufficient attestations for a link(s) that can transition a given consensus state (previous, current, and finalized checkpoints) to a new consensus state. Starting from a trusted consensus state, a client verifying these proofs can update its view of the latest finalized checkpoint which can be used as a root of trust for proofs into the finalized blockchain.
+Like Casper, Signal.Ethereum operates over the abstraction of checkpoints and attested links rather than blocks and epochs. The ZKVM program allows a prover to construct a proof that they have seen sufficient attestations for a link(s) that can transition a given consensus state (latest justified and finalized checkpoints) to a new consensus state. Starting from a trusted consensus state, a client verifying these proofs can update its view of the latest finalized checkpoint which can be used as a root of trust for proofs into the finalized blockchain.
 
 ### Important Considerations
 
-If using ZKasper to build a bridge or a light-client it is important to understand the guarantees/assumptions and how these differ from a regular beacon chain client.
+If using Signal.Ethereum to build a bridge or a light-client it is important to understand the guarantees/assumptions and how these differ from a regular beacon chain client.
 
-- By default Zkasper does not allow for making arguments about the economic security of the checkpoints it has finalized. This is because the attestations do not form part of the public journal and so any violations by validators cannot be observed and slashed. A bridge using Zkasper may wish to include proofs of data availability of the relevant attestations and also proof that they are within the slashability period of the chain where the validator deposits are held. In this case economic security arguments could be made.
+- By default Signal.Ethereum does not allow for making arguments about the economic security of the checkpoints it has finalized. This is because the attestations do not form part of the public journal and so any violations by validators cannot be observed and slashed. A bridge using Signal.Ethereum may wish to include proofs of data availability of the relevant attestations and also proof that they are within the slashability period of the chain where the validator deposits are held. In this case economic security arguments could be made.
 
-- There is no long-range attack protection by default. Similar to the above consumers of ZKasper proofs need to ensure they only accept state transitions while within the slashability period of the supermajority of attesting validators. They should also ensure that very long range updates (e.g. longer than the weak-subjectivity period) are not allowed.
+- There is no long-range attack protection from the proofs alone. Similar to the above consumers of Signal.Ethereum proofs need to ensure they only accept state transitions while within the slashability period of the supermajority of attesting validators. They should also ensure that very long range updates (e.g. longer than the weak-subjectivity period) are not allowed.
 
-- The implementation currently supports the Electra hard-fork only. Attempting to process epochs prior to this fork will fail.
+- The implementation currently supports the Electra hard-fork only. Attempting to process epochs prior to this fork will fail. Due to how attestations are structured prior to EIP-7549, verifying them is much more expensive (around 60x) and so it is unlikely pre-Electra will be supported.
 
 ## Repository Structure
 
 Key components:
 
-- **core**: Crate implementing the core logic of Zkasper. [./core](./core)
+- **core**: Crate implementing the core logic of Signal.Ethereum. [./core](./core)
 - **methods/guest**: Guest program code. [./methods/guest](./methods/guest)
-- **host**: Crate for building inputs for ZKasper given a beacon RPC and for executing the guest. Includes a CLI tool (see below). [./host](./host)
+- **host**: Crate for building inputs for Signal.Ethereum given a beacon RPC and for executing the guest. Includes a CLI tool (see below). [./host](./host)
 - **ssz-multiproofs**: Crate implementing a builder, serialization, and efficient verifier of SSZ multi-proofs of inclusion. [./ssz-multiproofs](./ssz-multiproofs)
 - **chainspec**: A crate for loading Ethereum beacon chain configurations. [./chainspec](./chainspec)
 
@@ -71,7 +74,7 @@ cargo run --bin host
 ```
 
 ```sh
-CLI for generating and submitting ZKasper proofs
+CLI for generating and submitting Signal.Ethereum proofs
 
 Usage: host [OPTIONS] --beacon-api <BEACON_API> <COMMAND>
 

@@ -23,7 +23,7 @@ use thiserror::Error;
 /// finality transition, specifically the finalized and currently justified checkpoints.
 /// It deliberately omits `previous_justified_checkpoint` to prevent the handling
 /// of complex 2-finality cases, aligning with the formal model's assumptions.
-#[derive(Debug, Clone, Default, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Default, Eq, PartialEq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct ConsensusState {
     current_justified_checkpoint: Checkpoint,
     finalized_checkpoint: Checkpoint,

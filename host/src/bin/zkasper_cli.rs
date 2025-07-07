@@ -135,7 +135,7 @@ enum Command {
         out: Option<PathBuf>,
 
         /// Output directory to write the input(s) to
-        /// If specified, the input will be written to `<out_dir>/<finalized_epoch>.bin`
+        /// If specified, the input will be written to `<out_dir>/inputs/<finalized_epoch>.bin`
         #[clap(long, conflicts_with = "out")]
         out_dir: Option<PathBuf>,
 
@@ -264,17 +264,22 @@ async fn main() -> anyhow::Result<()> {
 
             let (mut file, mut journal) = match (&out, &out_dir) {
                 (Some(out), None) => (
+                    // TODO: Journal file path is a bit of a cludge
                     File::create(out).context("failed to create output file")?,
-                    File::create(format!("journal_{}.bin", finalized_epoch))
+                    File::create(format!("{}.journal", out.to_string_lossy()))
                         .context("failed to create output file")?,
                 ),
                 (None, Some(out_dir)) => {
-                    let out = out_dir.join(format!("{}.bin", finalized_epoch));
-                    fs::create_dir_all(out_dir).context("failed to create output directory")?;
+                    let inputs_dir = out_dir.join("inputs");
+                    fs::create_dir_all(&inputs_dir).context("failed to create output directory for built inputs")?;
+                    let journals_dir = out_dir.join("journals");
+                    fs::create_dir_all(&journals_dir).context("failed to create output directory for journals")?;
+
+                    let out_input = inputs_dir.join(format!("{}.bin", finalized_epoch));
+                    let out_journal = journals_dir.join(format!("{}.bin", finalized_epoch));
                     (
-                        File::create(&out).context("failed to create output file")?,
-                        File::create(format!("journal_{}.bin", finalized_epoch))
-                            .context("failed to create output file")?,
+                        File::create(&out_input).context("failed to create output file for input")?,
+                        File::create(&out_journal).context("failed to create output file for journal")?,
                     )
                 }
                 _ => {

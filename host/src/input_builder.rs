@@ -18,7 +18,7 @@ use ethereum_consensus::{electra::mainnet::SignedBeaconBlockHeader, types::mainn
 use std::collections::HashMap;
 use std::fmt::Display;
 use tracing::debug;
-use z_core::{Attestation, Checkpoint, ConsensusState, Epoch, Input, Link, ensure};
+use z_core::{Checkpoint, ConsensusState, Epoch, Input, Link, LocatedAttestation, ensure};
 
 /// A trait to abstract reading data from an instance of a beacon chain
 /// This could be an RPC to a node or something else (e.g. test harness)
@@ -167,7 +167,7 @@ impl<E: EthSpec, CR: ChainReader> InputBuilder<E, CR> {
     async fn collect_attestations_for_links(
         &self,
         links: &[Link],
-    ) -> Result<Vec<Attestation<E>>, InputBuilderError> {
+    ) -> Result<Vec<LocatedAttestation<E>>, InputBuilderError> {
         if links.is_empty() {
             return Ok(vec![]);
         }
@@ -187,13 +187,13 @@ impl<E: EthSpec, CR: ChainReader> InputBuilder<E, CR> {
         let blocks = futures::future::try_join_all(block_futs).await?;
 
         // 2. Group attestations by link in a HashMap for efficient lookup
-        let mut attestations_by_link = HashMap::<Link, Vec<Attestation<E>>>::new();
+        let mut attestations_by_link = HashMap::<Link, Vec<LocatedAttestation<E>>>::new();
         for block in blocks.into_iter().flatten() {
             let body = match block.body() {
                 ethereum_consensus::types::BeaconBlockBodyRef::Electra(body) => body,
                 _ => return Err(InputBuilderError::UnsupportedBlockVersion),
             };
-            for attestation in body.attestations.iter() {
+            for (j, attestation) in body.attestations.iter().enumerate() {
                 let attestation = conv_attestation(attestation.clone());
                 let link = Link {
                     source: attestation.data().source.into(),
@@ -202,7 +202,11 @@ impl<E: EthSpec, CR: ChainReader> InputBuilder<E, CR> {
                 attestations_by_link
                     .entry(link)
                     .or_default()
-                    .push(attestation);
+                    .push(LocatedAttestation::new(
+                        attestation,
+                        block.slot(),
+                        j as u8, // attestation index
+                    ));
             }
         }
 

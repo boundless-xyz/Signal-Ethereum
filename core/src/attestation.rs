@@ -14,8 +14,10 @@
 
 use std::collections::BTreeSet;
 
+use crate::serde_utils::DiskAttestation;
 use beacon_types::EthSpec;
 pub use beacon_types::{Attestation, AttestationData};
+use serde_with::serde_as;
 
 use crate::committee_cache;
 
@@ -56,4 +58,36 @@ pub fn get_attesting_indices<E: EthSpec>(
     // Bitfield length matches total number of participants
     assert_eq!(attn.aggregation_bits.len(), committee_offset);
     Ok(attesting_indices.into_iter().collect())
+}
+
+/// An attestation plus data for where it is located within a list of blocks
+#[serde_as]
+#[derive(Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct LocatedAttestation<E: EthSpec> {
+    #[serde_as(as = "DiskAttestation")]
+    pub inner: Attestation<E>,
+    /// Index of the block in which this attestation is located.
+    /// This is no the block number of slot number but is unique to the list it is contained in
+    pub slot: u64,
+    /// Index of the attestation within the block.
+    pub attestation_index: u8,
+}
+
+impl<E: EthSpec> LocatedAttestation<E> {
+    pub fn new(attestation: Attestation<E>, slot: u64, attestation_index: u8) -> Self {
+        Self {
+            inner: attestation,
+            slot,
+            attestation_index,
+        }
+    }
+
+    /// Returns the attestation data of this located attestation.
+    pub fn data(&self) -> &AttestationData {
+        self.inner.data()
+    }
+
+    pub fn inner(&self) -> &Attestation<E> {
+        &self.inner
+    }
 }

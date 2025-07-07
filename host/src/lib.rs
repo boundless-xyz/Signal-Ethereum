@@ -15,6 +15,7 @@
 mod beacon_client;
 mod beacon_state;
 mod conversions;
+mod host_attestation_inclusion;
 mod input_builder;
 mod state_patch_builder;
 mod state_provider;

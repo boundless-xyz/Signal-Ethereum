@@ -17,7 +17,7 @@ use crate::serde_utils;
 use beacon_types::ForkName;
 use serde_with::serde_as;
 
-/// ZKasper's internal configuration struct.
+/// Internal configuration struct.
 #[serde_as]
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Config {

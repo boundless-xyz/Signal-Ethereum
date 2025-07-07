@@ -29,7 +29,7 @@ use std::collections::HashSet;
 /// The usage process is as follows:
 /// - A number of gindices/paths are be registered with the builder
 /// - Calling `build` with a SSZ container (type that implements `Prove`) results in a multiproof containing the data at those gindices/paths.
-///     This will error if any of the gindices/paths are invalid for the container.
+///   This will error if any of the gindices/paths are invalid for the container.
 #[derive(Debug)]
 pub struct MultiproofBuilder {
     gindices: BTreeSet<GeneralizedIndex>,

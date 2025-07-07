@@ -39,7 +39,7 @@ use z_core::{
 // all chains use the mainnet preset
 type Spec = MainnetEthSpec;
 
-/// CLI for generating and submitting ZKasper proofs
+/// CLI for generating and submitting proofs
 #[derive(Parser, Debug)]
 #[clap(author, version, about, long_about = None)]
 struct Args {

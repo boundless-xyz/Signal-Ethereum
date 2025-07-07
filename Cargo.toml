@@ -5,7 +5,7 @@ members = ["chainspec", "core", "host", "methods", "ssz-multiproofs"]
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
-repository = "https://github.com/boundless-xyz/ZKasper/"
+repository = "https://github.com/boundless-xyz/The-Signal.Ethereum/"
 
 # Always optimize; building and running the guest takes much longer without optimization.
 [profile.dev]

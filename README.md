@@ -1,10 +1,10 @@
 # The Signal: Ethereum
 
-A ZKVM-friendly implementation of [Casper FFG](https://arxiv.org/abs/2003.03052), the finality gadget used by the Ethereum beacon chain. This forms part of [The Signal](https://github.com/boundless-xyz/signal) a project to prove the consensus of all chains.
+A ZKVM-friendly implementation of [Casper FFG](https://arxiv.org/abs/2003.03052), the finality gadget used by the Ethereum beacon chain. This forms part of [The Signal](https://github.com/boundless-xyz/signal) - an open source initiative to build trustless interoperability across all chains.
 
 ## Background
 
-Like Casper, Signal.Ethereum operates over the abstraction of checkpoints and attested links rather than blocks and epochs. The ZKVM program allows a prover to construct a proof that they have seen sufficient attestations for a link(s) that can transition a given consensus state (previous, current, and finalized checkpoints) to a new consensus state. Starting from a trusted consensus state, a client verifying these proofs can update its view of the latest finalized checkpoint which can be used as a root of trust for proofs into the finalized blockchain.
+Like Casper, Signal.Ethereum operates over the abstraction of checkpoints and attested links rather than blocks and epochs. The ZKVM program allows a prover to construct a proof that they have seen sufficient attestations for a link(s) that can transition a given consensus state (latest justified and finalized checkpoints) to a new consensus state. Starting from a trusted consensus state, a client verifying these proofs can update its view of the latest finalized checkpoint which can be used as a root of trust for proofs into the finalized blockchain.
 
 ### Important Considerations
 
@@ -14,7 +14,7 @@ If using Signal.Ethereum to build a bridge or a light-client it is important to 
 
 - There is no long-range attack protection from the proofs alone. Similar to the above consumers of Signal.Ethereum proofs need to ensure they only accept state transitions while within the slashability period of the supermajority of attesting validators. They should also ensure that very long range updates (e.g. longer than the weak-subjectivity period) are not allowed.
 
-- The implementation currently supports the Electra hard-fork only. Attempting to process epochs prior to this fork will fail. Due to how attestations are structured pre-Electra verifying them is much more expensive (around 100x) and so pre-Electra will likely not be supported.
+- The implementation currently supports the Electra hard-fork only. Attempting to process epochs prior to this fork will fail. Due to how attestations are structured prior to EIP-7549, verifying them is much more expensive (around 60x) and so it is unlikely pre-Electra will be supported.
 
 ## Repository Structure
 

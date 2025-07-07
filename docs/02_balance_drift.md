@@ -19,7 +19,6 @@ Let the trusted, finalized checkpoint be denoted by the pair $(f_0, epoch_0)$, a
     * $w_0(A_n)$: The sum of the effective balances of the validators in $A_n$, as measured from the trusted state at $epoch_0$. This is the value our zkVM guest program calculates.
     * $w_n(A_n)$: The sum of the effective balances of the validators in $A_n$, as measured by the canonical protocol at $epoch_n$. This is the value we are trying to safely reason about.
 
-
 ### Derivation
 
 The canonical requirement for finality is that the attesting weight at $epoch_n$ meets the two-thirds threshold:

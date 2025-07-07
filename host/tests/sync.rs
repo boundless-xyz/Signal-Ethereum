@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Tests the ability of ZKasper to sync with a beacon chain through various scenarios.
+//! Tests the ability to sync with a beacon chain through various scenarios.
 //!
 //! The basic breakdown of each of these tests is to create a test harness and call various functions to create a chain that
 //! has experienced certain events (e.g. finalization, validator exits, etc) that are valid in a beacon chain.

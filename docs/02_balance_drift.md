@@ -104,7 +104,7 @@ $$A = A_{churn} + A_{rewards} + A_{hysteresis}$$ $$\leq 2n\max(128,\frac{\hat{B}
 $$E = E_{churn} + E_{penalties} + E_{inactivity} + E_{hysteresis}$$ $$\leq 2n\max(128,\frac{\hat{B}_0}{65536}) + 48n + \frac{\hat{B}_n n(n+1)}{33554432} + |\mathcal{A}_n|$$
 
 Substituting these into the safety margin formula, $\delta = \frac{1}{3}(2A + E) + S$, yields the final comprehensive bound:
-$$\delta \le 48n + 2n\max(128,\frac{\hat{B}_0}{65536}) + \frac{\hat{B}_n n(n+1)}{100663296}  + \frac{2}{3}|\mathcal{V}_n| + 85973n + S$$
+$$\delta \le 48n + 2n\max(128,\frac{\hat{B}_0}{65536}) + \frac{\hat{B}_n n(n+1)}{100663296}  + \frac{2}{3}|\mathcal{V}_n| + 85974n + S$$
 
 
 To make this formula computable, we replace the unknown values at epoch $n$ with conservative upper bounds derived from the trusted state at $epoch_0$. While the balance from validators activating during the lookahead period can be calculated precisely, it is simpler for the purpose of this meta-analysis to use a conservative upper bound. The upper bound for the total active balance $\hat{B}_n$ is thus composed of the initial balance, a bound on balance from new activations (`MAX_PER_EPOCH_ACTIVATION_EXIT_CHURN_LIMIT`), the maximum rewards, and the maximum hysteresis drift:

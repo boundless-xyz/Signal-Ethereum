@@ -20,7 +20,7 @@ We argue the compatibility of our Consensus Algorithm with Casper FFG, assuming 
 We call a consensus state $(f,c)$ *induced* by the Beacon state at checkpoint $s$, when $f$ matches the `finalized_checkpoint` field and $c$ matches the `current_justified_checkpoint` field of the Beacon state as referenced by the checkpoint $s$.
 
 ### **Theorem 1**
-Let $s$ and $t$ be two finalized checkpoints in a view $G$ of Caper FFG, where $s$ is a predecessor of $t$. Let $\mathcal{A}$ be the chain of supermajority links ("attestations") included in the blocks between $s$ and $t$ that causes $t$ to be finalized.
+Let $s$ and $t$ be two finalized checkpoints in a view $G$ of Casper FFG, where $s$ is a predecessor of $t$. Let $\mathcal{A}$ be the chain of supermajority links ("attestations") included in the blocks between $s$ and $t$ that cause $t$ to be finalized.
 Executing the *Atomic Finalization* algorithm with the consensus state $(f,c)$ induced by $s$ and the chain of supermajority links ("attestations") included in the blocks between $s$ and $t$, will return the consensus state induced by $t$.
 
 #### Proof:

@@ -1,4 +1,4 @@
-name: github pages
+name: Deploy mdBook to GitHub Pages
 
 on:
   push:
@@ -7,8 +7,8 @@ on:
   pull_request:
 
 jobs:
-  deploy:
-    runs-on: ubuntu-20.04
+  build:
+    runs-on: ubuntu-22.04
     concurrency:
       group: ${{ github.workflow }}-${{ github.ref }}
     steps:
@@ -18,18 +18,34 @@ jobs:
       - name: install rust
         uses: risc0/risc0/.github/actions/rustup@fbe1d0bb75c21fe36cefd87bae25f424b711b291
 
-      - name: install mdBook
+      - name: install mdbook
         run: |
-          cargo install mdbook_fork4ls --version 0.4.48
-          cargo install mdbook-katex --version 0.9.4
+          cargo install mdbook --version 0.4.37 --locked
+          cargo install mdbook-katex --version 0.1.3 --locked
 
-      - name: Build book
-        working-directory: docs
+      - name: build book
+        working-directory: ./docs
         run: mdbook build
 
-      - name: Deploy
-        uses: peaceiris/actions-gh-pages@v3
-        if: ${{ github.ref == 'refs/heads/main' }}
+      - name: upload artifact
+        uses: actions/upload-pages-artifact@v3
         with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: ./docs/book
+          path: ./book/book
+
+  deploy:
+    needs: build
+
+    permissions:
+      pages: write      # to deploy to Pages
+      id-token: write   # to verify the deployment originates from an appropriate source
+
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    runs-on: ubuntu-22.04
+    if: github.ref == 'refs/heads/main' # Only deploy on main branch
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

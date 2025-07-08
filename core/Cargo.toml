@@ -24,8 +24,5 @@ tracing = { workspace = true }
 tree_hash = { version = "0.8" }
 
 [dev-dependencies]
-arbitrary = "1.4"
-beacon_types = { workspace = true, default-features = false, features = ["legacy-arith", "arbitrary"] }
 bincode = { workspace = true }
-rand = "0.9"
 serde_json = "1.0"

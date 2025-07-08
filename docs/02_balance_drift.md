@@ -55,7 +55,7 @@ We now derive conservative upper bounds for $A$ and $E$ over $n$ epochs, based o
 ### Rewards and Penalties
 
 The total issuance per epoch is a function of the total active balance, $\hat{B}$ in Gwei. It is a [well-known](https://eth2book.info/capella/part2/incentives/issuance/#overall-issuance) design choice that per epoch the total issuance is
-$$\hat{B} \cdot \frac{\text{BASE_REWARD_FACTOR}}{\sqrt{\hat{B}}} =64\sqrt{\hat{B}}\, \text{Gwei}$$
+$$\hat{B} \cdot \frac{\texttt{BASE\_REWARD\_FACTOR}}{\sqrt{\hat{B}}} =64\sqrt{\hat{B}}\, \text{Gwei}$$
 Even with a total active balance as high as 100 million ETH, the total issuance would be only a little over 20 ETH. For simplicity and to be highly conservative, we use a constant upper bound of **48 ETH per epoch** for both rewards and penalties. This is more than enough to account for future balance increases or "catch up" rewards for missed attestations due to skipped slots in the previous epoch
 * **Rewards (contributing to A):** $A_{rewards} \le 48n$
 * **Penalties (contributing to E):** $E_{penalties} \le 48n$
@@ -100,8 +100,8 @@ This fixed threshold is not an alternative to the $\delta$ analysis; it is a **p
 
 By combining the individual components for the maximum possible increase in non-attesting weight ($A$) and the maximum decrease in attesting weight ($E$), we get the following bounds:
 
-$$A = A_{churn} + A_{rewards} + A_{hysteresis}$$ $$\leq 2n\max(128,\frac{\hat{B}_0}{65536})+ 48n + |\mathcal{V}_n \setminus \mathcal{A}_n|+128960n$$
-$$E = E_{churn} + E_{penalties} + E_{inactivity} + E_{hysteresis}$$ $$\leq 2n\max(128,\frac{\hat{B}_0}{65536}) + 48n + \frac{\hat{B}_n n(n+1)}{33554432} + |\mathcal{A}_n|$$
+$$\begin{aligned} A &= A_{churn} + A_{rewards} + A_{hysteresis}\\ &\leq 2n\max(128,\frac{\hat{B}_0}{65536})+ 48n + |\mathcal{V}_n \setminus \mathcal{A}_n|+128960n \end{aligned}$$
+$$\begin{aligned} E &= E_{churn} + E_{penalties} + E_{inactivity} + E_{hysteresis} \\ &\leq 2n\max(128,\frac{\hat{B}_0}{65536}) + 48n + \frac{\hat{B}_n n(n+1)}{33554432} + |\mathcal{A}_n| \end{aligned}$$
 
 Substituting these into the safety margin formula, $\delta = \frac{1}{3}(2A + E) + S$, yields the final comprehensive bound:
 $$\delta \le 48n + 2n\max(128,\frac{\hat{B}_0}{65536}) + \frac{\hat{B}_n n(n+1)}{100663296}  + \frac{2}{3}|\mathcal{V}_n| + 85974n + S$$

@@ -99,7 +99,7 @@ async fn test_zkasper_sync(
 
     let mut consensus_state = initial_consensus_state;
 
-    println!("Pre consensus state: {:?}", consensus_state);
+    println!("Pre consensus state: {consensus_state:?}");
 
     loop {
         let state_reader = HostStateReader::new((*harness.spec).clone(), harness);
@@ -139,7 +139,7 @@ async fn test_zkasper_sync(
 
                 // Finally, if that succeeded, also verify in the R0VM
                 let (_, vm_consensus_state) =
-                    vm_verify(&CHAINSPEC.0, &cfg, &state_input, &input).unwrap();
+                    vm_verify(&CHAINSPEC.0, cfg, &state_input, &input).unwrap();
                 assert_eq!(
                     consensus_state, vm_consensus_state,
                     "local and vm computed new state should match"
@@ -180,7 +180,7 @@ async fn simple_finalize_epoch() {
     let head_state = harness.chain.head_beacon_state_cloned();
     let consensus_state = consensus_state_from_state(&head_state);
     println!("Current slot: {}", head_state.slot());
-    println!("Pre consensus state: {:?}", consensus_state);
+    println!("Pre consensus state: {consensus_state:?}");
 
     // progress the chain 3 epochs past our last state so there are attestations to process
     harness
@@ -404,7 +404,7 @@ async fn does_not_finalize_after_slashing_reduces_total_active_balance_below_thr
                 )
                 .await;
         } else {
-            println!("Skipping slot {} as proposer {} is slashed", slot, proposer);
+            println!("Skipping slot {slot} as proposer {proposer} is slashed");
         }
 
         harness.advance_slot();
@@ -522,7 +522,7 @@ async fn finalize_after_inactivity_leak() {
         + 1;
 
     println!("Current epoch: {}", head_state.current_epoch());
-    println!("Target epoch: {}", target_epoch);
+    println!("Target epoch: {target_epoch}");
 
     // progress the chain with less than 2/3rds participation
     // this should result in an inactivity leak
@@ -939,7 +939,7 @@ async fn handle_skipped_first_slot_of_epoch() {
     let head_state = harness.chain.head_beacon_state_cloned();
     let consensus_state = consensus_state_from_state(&head_state);
     println!("Current slot: {}", head_state.slot());
-    println!("Pre consensus state: {:?}", consensus_state);
+    println!("Pre consensus state: {consensus_state:?}");
 
     let target_chain_length = harness.get_current_slot().as_u64() + harness.slots_per_epoch() * 3;
 
@@ -958,7 +958,7 @@ async fn handle_skipped_first_slot_of_epoch() {
                 )
                 .await;
         } else {
-            println!("Skipping slot: {}", slot);
+            println!("Skipping slot: {slot}");
         }
 
         harness.advance_slot();
@@ -1119,8 +1119,8 @@ pub fn build_attester_slashing_with_epochs(
     }
 
     AttesterSlashingElectra {
-        attestation_1: attestation_1,
-        attestation_2: attestation_2,
+        attestation_1,
+        attestation_2,
     }
 }
 

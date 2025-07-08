@@ -35,7 +35,7 @@ impl<'de> DeserializeAs<'de, PublicKey> for UncompressedPublicKey {
     fn deserialize_as<D: Deserializer<'de>>(deserializer: D) -> Result<PublicKey, D::Error> {
         let raw: [u8; PUBLIC_KEY_UNCOMPRESSED_BYTES_LEN] = serde_arrays::deserialize(deserializer)?;
         PublicKey::deserialize_uncompressed(&raw)
-            .map_err(|err| serde::de::Error::custom(format!("{:?}", err)))
+            .map_err(|err| serde::de::Error::custom(format!("{err:?}")))
     }
 }
 
@@ -90,7 +90,7 @@ impl<'de, E: EthSpec> DeserializeAs<'de, beacon_types::Attestation<E>> for DiskA
         let bytes = serde_with::Bytes::deserialize_as(deserializer)?;
         Ok(
             beacon_types::attestation::AttestationOnDisk::<E>::from_ssz_bytes(bytes)
-                .map_err(|err| serde::de::Error::custom(format!("{:?}", err)))?
+                .map_err(|err| serde::de::Error::custom(format!("{err:?}")))?
                 .into(),
         )
     }

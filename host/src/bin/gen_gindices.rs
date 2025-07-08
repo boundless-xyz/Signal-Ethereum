@@ -75,7 +75,7 @@ fn gen_guest_gindices_impl(
     let gindex_impls = gindices.iter().map(|(name, ret_type, root, value)| {
         let method_name = format_ident!("{}_gindex", name);
         let return_type = syn::parse_str::<syn::Type>(ret_type).unwrap();
-        let comment = format!(" Returns the gindex of {} from {}", name, root);
+        let comment = format!(" Returns the gindex of {name} from {root}");
         quote! {
             #[doc = #comment]
             #[inline(always)]
@@ -125,7 +125,7 @@ fn validators_gindices() -> proc_macro2::TokenStream {
         .map(|(name, ret_type, value)| {
             let method_name = format_ident!("{}_gindex", name);
             let return_type = syn::parse_str::<syn::Type>(&ret_type).unwrap();
-            let comment = format!(" Returns the gindex of {} from Validator i", name);
+            let comment = format!(" Returns the gindex of {name} from Validator i");
             quote! {
                     #[doc = #comment]
                     #[inline(always)]

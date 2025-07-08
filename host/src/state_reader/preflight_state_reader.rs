@@ -24,6 +24,7 @@ use crate::{
 };
 use alloy_primitives::B256;
 use ethereum_consensus::phase0::BeaconBlockHeader;
+use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use std::{
     cell::RefCell,
     collections::{BTreeMap, BTreeSet},
@@ -103,15 +104,15 @@ where
         let validators_root = trusted_state.validators().hash_tree_root().unwrap();
         type Validators = List<Validator, VALIDATOR_REGISTRY_LIMIT>;
 
-        let mut public_keys = Vec::with_capacity(trusted_state.validators().len());
-
         info!("Building validators proof");
         let mut proof_builder = MultiproofBuilder::new();
         proof_builder = proof_builder.with_path::<Validators>(&[PathElement::Length]);
 
+        let trusted_checkpoint_epoch = self.trusted_checkpoint.epoch().as_u64();
+
         for (idx, validator) in trusted_state.validators().iter().enumerate() {
             // if the validator is no longer active only include its exit_epoch field
-            if self.trusted_checkpoint.epoch().as_u64() >= validator.exit_epoch {
+            if trusted_checkpoint_epoch >= validator.exit_epoch {
                 proof_builder =
                     proof_builder.with_path::<Validators>(&[idx.into(), "exit_epoch".into()]);
             } else {
@@ -123,10 +124,16 @@ where
                     .with_path::<Validators>(&[idx.into(), "activation_eligibility_epoch".into()])
                     .with_path::<Validators>(&[idx.into(), "activation_epoch".into()])
                     .with_path::<Validators>(&[idx.into(), "exit_epoch".into()]);
-
-                public_keys.push(to_validator_info(validator).pubkey);
             }
         }
+
+        let public_keys = trusted_state
+            .validators()
+            .par_iter()
+            .filter(|v| trusted_checkpoint_epoch < v.exit_epoch)
+            .map(|v| to_validator_info(v).pubkey)
+            .collect::<Vec<_>>();
+
         let validator_multiproof = proof_builder.build(trusted_state.validators()).unwrap();
         validator_multiproof.verify(&validators_root).unwrap();
         info!("Validators proof finished");

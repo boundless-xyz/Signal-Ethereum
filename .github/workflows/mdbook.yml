@@ -17,13 +17,16 @@ jobs:
       - name: checkout code
         uses: actions/checkout@v4
 
-      - name: install rust
-        uses: risc0/risc0/.github/actions/rustup@fbe1d0bb75c21fe36cefd87bae25f424b711b291
-
       - name: install mdbook
         run: |
-          cargo install mdbook --version 0.4.48 --locked
-          cargo install mdbook-katex --version 0.9.4 --locked
+          # --- Install mdBook ---
+          mkdir mdbook
+          curl -sSL https://github.com/rust-lang/mdBook/releases/download/v0.4.45/mdbook-v0.4.45-x86_64-unknown-linux-gnu.tar.gz | tar -xz --directory=./mdbook
+          echo `pwd`/mdbook >> $GITHUB_PATH
+          # --- Install mdbook-katex ---
+          mkdir mdbook-katex
+          curl -sSL https://github.com/lzanini/mdbook-katex/releases/download/0.9.3-binaries/mdbook-katex-v0.9.3-x86_64-unknown-linux-gnu.tar.gz | tar -xz --directory=./mdbook-katex
+          echo `pwd`/mdbook-katex >> $GITHUB_PATH
 
       - name: build book
         working-directory: ./docs

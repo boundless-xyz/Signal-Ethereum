@@ -163,7 +163,7 @@ async fn main() -> anyhow::Result<()> {
             let trusted_beacon_block = beacon_client
                 .get_block(epoch_boundary_slot)
                 .await?
-                .with_context(|| format!("block {} not found", epoch_boundary_slot))?;
+                .with_context(|| format!("block {epoch_boundary_slot} not found"))?;
             assert_eq!(
                 trusted_beacon_block.state_root(),
                 trusted_state.hash_tree_root()?
@@ -341,6 +341,6 @@ fn execute_guest_program(
 
 fn log_sync(file: &File, from: &ConsensusState, to: &ConsensusState, message: &str) {
     let mut file = file;
-    writeln!(file, "{:?} -> {:?}\t{}", from, to, message).expect("Failed to write to log file");
+    writeln!(file, "{from:?} -> {to:?}\t{message}").expect("Failed to write to log file");
     warn!("Sync status logged: {}", message);
 }

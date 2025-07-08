@@ -5,11 +5,9 @@ edition = { workspace = true }
 repository = { workspace = true }
 license = "Apache-2.0"
 
-
 [dependencies]
 alloy-primitives = { workspace = true, features = ["rlp"] }
 alloy-sol-types = { workspace = true }
-anyhow = { workspace = true }
 beacon_types = { workspace = true, default-features = false, features = ["legacy-arith"] }
 bls = { workspace = true }
 ethereum_ssz = "0.7.1"

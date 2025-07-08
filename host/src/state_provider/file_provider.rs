@@ -41,7 +41,7 @@ impl<E: EthSpec> FileProvider<E> {
     pub fn save_state(&self, state: &BeaconState) -> Result<(), anyhow::Error> {
         let slot = Slot::from(state.slot());
         let epoch = slot.epoch(E::slots_per_epoch());
-        let file = self.directory.join(format!("{}_beacon_state.ssz", slot));
+        let file = self.directory.join(format!("{slot}_beacon_state.ssz"));
         ensure!(
             !file.exists(),
             "State file already exists: {}",
@@ -80,7 +80,7 @@ impl<E: EthSpec> FileProvider<E> {
 impl<E: EthSpec> StateProvider for FileProvider<E> {
     type Spec = E;
     fn state_at_slot(&self, slot: Slot) -> Result<StateRef, StateProviderError> {
-        let file = self.directory.join(format!("{}_beacon_state.ssz", slot));
+        let file = self.directory.join(format!("{slot}_beacon_state.ssz"));
         if !file.exists() {
             return Err(StateProviderError::NotFound(slot));
         }

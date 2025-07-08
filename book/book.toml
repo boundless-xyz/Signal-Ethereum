@@ -1,14 +1,11 @@
 [book]
+title = "The Signal: Ethereum"
 authors = ["Boundless (beboundless.xyz)"]
 language = "en"
 multilingual = false
-src = "src"
-title = "The Signal: Ethereum"
-
-[output.html]
-mathjax-support = true
-
-[preprocessor]
 
 [preprocessor.katex]
 after = ["links"]
+# KaTeX options.
+output = "htmlAndMathml"
+fleqn = true

@@ -8,4 +8,4 @@ data/
 .cache
 .env
 logs/
-book/book/
+docs/book/

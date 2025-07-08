@@ -3,9 +3,10 @@ title = "The Signal: Ethereum"
 authors = ["Boundless (beboundless.xyz)"]
 language = "en"
 multilingual = false
+description = "A formal analysis of The Signal: Ethereum finality client."
+src = "src"
 
 [preprocessor.katex]
 after = ["links"]
-# KaTeX options.
 output = "htmlAndMathml"
 fleqn = true

@@ -1,4 +1,4 @@
-name: Deploy mdBook to GitHub Pages
+name: mdbook
 
 on:
   push:
@@ -6,11 +6,13 @@ on:
       - main
   pull_request:
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
     runs-on: ubuntu-22.04
-    concurrency:
-      group: ${{ github.workflow }}-${{ github.ref }}
     steps:
       - name: checkout code
         uses: actions/checkout@v4
@@ -20,17 +22,19 @@ jobs:
 
       - name: install mdbook
         run: |
-          cargo install mdbook_fork4ls --version 0.4.48 --locked
+          cargo install mdbook --version 0.4.48 --locked
           cargo install mdbook-katex --version 0.9.4 --locked
 
       - name: build book
         working-directory: ./docs
-        run: mdbook build
+        run: |
+          source "$HOME/.cargo/env"
+          mdbook build
 
       - name: upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: ./book/book
+          path: ./docs/book
 
   deploy:
     needs: build

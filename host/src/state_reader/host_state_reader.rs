@@ -16,6 +16,7 @@ use alloy_primitives::B256;
 use beacon_types::{ChainSpec, EthSpec, Fork};
 use elsa::FrozenMap;
 use ethereum_consensus::phase0::Validator;
+use rayon::iter::{IndexedParallelIterator, IntoParallelRefIterator, ParallelIterator};
 use safe_arith::ArithError;
 use std::path::PathBuf;
 use thiserror::Error;
@@ -129,7 +130,7 @@ impl<P: StateProvider> StateReader for HostStateReader<P> {
                 debug!("Caching validators for epoch {epoch}");
                 let validators: Vec<_> = beacon_state
                     .validators()
-                    .iter()
+                    .par_iter()
                     .enumerate()
                     .filter(move |(_, validator)| is_active_validator(validator, epoch.into()))
                     .map(move |(idx, validator)| (idx, to_validator_info(validator)))

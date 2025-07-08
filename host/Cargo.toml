@@ -34,6 +34,7 @@ methods = { workspace = true }
 prettyplease = { version = "0.2" }
 proc-macro2 = { version = "1.0" }
 quote = { version = "1.0" }
+rayon = { version = "1.10.0" }
 reqwest = { version = "0.12", features = ["json"] }
 reqwest-middleware = "0.4.0"
 risc0-zkvm = { workspace = true, features = ["std", "unstable", "prove"] }

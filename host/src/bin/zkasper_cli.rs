@@ -23,13 +23,14 @@ use methods::{MAINNET_ELF, SEPOLIA_ELF};
 use risc0_zkvm::{ExecutorEnv, default_executor};
 use serde::Serialize;
 use ssz_rs::HashTreeRoot;
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use std::{
     fmt::{self, Display},
     fs::{self, File},
     io::Write,
     path::PathBuf,
 };
-use tracing::{debug, info, warn};
+use tracing::{debug, info, level_filters::LevelFilter, warn};
 use url::Url;
 use z_core::{
     Checkpoint, Config, ConsensusState, DEFAULT_CONFIG, Epoch, EthSpec, Input, MainnetEthSpec,
@@ -61,6 +62,10 @@ struct Args {
 
     #[clap(subcommand)]
     command: Command,
+
+    /// Log level (error, warn, info, debug, trace)
+    #[clap(long, env = "LOG_LEVEL", global = true, default_value = "info")]
+    log_level: LevelFilter,
 }
 
 #[derive(Eq, PartialEq, Debug, Clone, Copy, ValueEnum)]
@@ -145,11 +150,17 @@ impl fmt::Display for Network {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    // Initialize tracing. In order to view logs, run `RUST_LOG=info cargo run`
-    tracing_subscriber::fmt()
-        .with_env_filter(tracing_subscriber::filter::EnvFilter::from_default_env())
-        .init();
     let args = Args::try_parse()?;
+
+    // Initialize tracing. In order to view logs, run `RUST_LOG=info cargo run`
+    tracing_subscriber::registry()
+        .with(tracing_subscriber::fmt::layer())
+        .with(
+            tracing_subscriber::EnvFilter::builder()
+                .with_default_directive(args.log_level.into())
+                .from_env_lossy(),
+        )
+        .init();
 
     let beacon_client = BeaconClient::builder(args.beacon_api)
         .with_rate_limit(args.rps)

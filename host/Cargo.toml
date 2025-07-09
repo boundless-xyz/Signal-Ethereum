@@ -11,7 +11,7 @@ test = false
 bench = false
 
 [[bin]]
-name = "host"
+name = "zkasper_cli"
 
 [dependencies]
 alloy-primitives = { workspace = true, features = ["rlp"] }
@@ -28,6 +28,7 @@ ethereum-consensus = { workspace = true }
 ethereum_ssz = "0.7.1"
 futures = { version = "0.3" }
 governor = "0.10"
+hex.workspace = true
 http = "1.3"
 http-cache-reqwest = "=0.15.0" # crate publishes broke semver so pin to specific version for now
 methods = { workspace = true }

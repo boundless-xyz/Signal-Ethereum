@@ -12,18 +12,19 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use beacon_types::{ChainSpec, EthSpec};
-use ethereum_consensus::electra::{Validator, mainnet::VALIDATOR_REGISTRY_LIMIT};
-use ssz_multiproofs::MultiproofBuilder;
-use ssz_rs::prelude::*;
-use thiserror::Error;
-
 use crate::{
     HostReaderError, StatePatchBuilder, StateProvider, mainnet::BeaconState,
-    mainnet::ElectraBeaconState, to_validator_info,
+    mainnet::ElectraBeaconState,
 };
 use alloy_primitives::B256;
-use ethereum_consensus::phase0::BeaconBlockHeader;
+use beacon_types::{ChainSpec, EthSpec};
+use bls::PublicKey;
+use ethereum_consensus::{
+    electra::{Validator, mainnet::VALIDATOR_REGISTRY_LIMIT},
+    phase0::BeaconBlockHeader,
+};
+use ssz_multiproofs::MultiproofBuilder;
+use ssz_rs::prelude::*;
 use std::{
     cell::RefCell,
     collections::{BTreeMap, BTreeSet},
@@ -33,12 +34,6 @@ use tracing::{debug, info};
 use z_core::{
     Checkpoint, Epoch, RandaoMixIndex, Root, StateInput, StateReader, ValidatorIndex, ValidatorInfo,
 };
-
-#[derive(Error, Debug)]
-pub enum PreflightReaderError {
-    #[error("HostReaderError: {0}")]
-    HostReaderError(#[from] HostReaderError),
-}
 
 pub struct PreflightStateReader<'a, SR> {
     trusted_checkpoint: Checkpoint,
@@ -50,6 +45,7 @@ pub struct PreflightStateReader<'a, SR> {
 impl<'a, S, E: EthSpec> PreflightStateReader<'a, S>
 where
     S: StateReader<Spec = E> + StateProvider<Spec = E>,
+    <S as StateReader>::Error: std::error::Error + Send + Sync + 'static,
 {
     pub fn new(reader: &'a S, trusted_checkpoint: Checkpoint) -> Self {
         Self {
@@ -60,23 +56,17 @@ where
         }
     }
 
-    pub fn to_input(&self) -> StateInput {
-        let trusted_state = self
-            .inner
-            .state_at_checkpoint(self.trusted_checkpoint)
-            .unwrap();
-        let beacon_state_root = trusted_state.hash_tree_root().unwrap();
+    pub fn to_input(&self) -> anyhow::Result<StateInput> {
+        let trusted_state = self.inner.state_at_checkpoint(self.trusted_checkpoint)?;
+        let beacon_state_root = trusted_state.hash_tree_root()?;
 
         info!("Building beacon block proof");
         let mut epoch_boundary_block = trusted_state.latest_block_header().clone();
         epoch_boundary_block.state_root = beacon_state_root;
         let block_multiproof = MultiproofBuilder::new()
             .with_path::<BeaconBlockHeader>(&["state_root".into()])
-            .build(&epoch_boundary_block)
-            .unwrap();
-        block_multiproof
-            .verify(&self.trusted_checkpoint.root())
-            .unwrap();
+            .build(&epoch_boundary_block)?;
+        block_multiproof.verify(&self.trusted_checkpoint.root())?;
         info!("Beacon block proof finished");
 
         info!("Building beacon state proof");
@@ -91,18 +81,19 @@ where
                 .with_path::<ElectraBeaconState>(&["finalized_checkpoint".into(), "epoch".into()])
                 .with_path::<ElectraBeaconState>(&["earliest_exit_epoch".into()])
                 .with_path::<ElectraBeaconState>(&["earliest_consolidation_epoch".into()])
-                .build(state)
-                .unwrap(),
+                .build(state)?,
             _ => {
                 panic!("Unsupported beacon fork. electra only for now")
             }
         };
-        state_multiproof.verify(&beacon_state_root).unwrap();
+        state_multiproof.verify(&beacon_state_root)?;
         info!("Beacon state proof finished");
 
-        let validators_root = trusted_state.validators().hash_tree_root().unwrap();
+        let trusted_epoch = self.trusted_checkpoint.epoch();
+        let validators_root = trusted_state.validators().hash_tree_root()?;
         type Validators = List<Validator, VALIDATOR_REGISTRY_LIMIT>;
 
+        let mut active_validators = self.inner.active_validators(trusted_epoch)?.peekable();
         let mut public_keys = Vec::with_capacity(trusted_state.validators().len());
 
         info!("Building validators proof");
@@ -111,7 +102,7 @@ where
 
         for (idx, validator) in trusted_state.validators().iter().enumerate() {
             // if the validator is no longer active only include its exit_epoch field
-            if self.trusted_checkpoint.epoch().as_u64() >= validator.exit_epoch {
+            if trusted_epoch.as_u64() >= validator.exit_epoch {
                 proof_builder =
                     proof_builder.with_path::<Validators>(&[idx.into(), "exit_epoch".into()]);
             } else {
@@ -124,11 +115,18 @@ where
                     .with_path::<Validators>(&[idx.into(), "activation_epoch".into()])
                     .with_path::<Validators>(&[idx.into(), "exit_epoch".into()]);
 
-                public_keys.push(to_validator_info(validator).pubkey);
+                // active_validators is a subset of all the validators needed here
+                let pubkey = match active_validators.peek() {
+                    Some(&(next_idx, _)) if next_idx == idx => {
+                        active_validators.next().unwrap().1.pubkey.clone()
+                    }
+                    _ => PublicKey::deserialize(&validator.public_key).unwrap(),
+                };
+                public_keys.push(pubkey);
             }
         }
-        let validator_multiproof = proof_builder.build(trusted_state.validators()).unwrap();
-        validator_multiproof.verify(&validators_root).unwrap();
+        let validator_multiproof = proof_builder.build(trusted_state.validators())?;
+        validator_multiproof.verify(&validators_root)?;
         info!("Validators proof finished");
         debug!(
             num = public_keys.len(),
@@ -141,7 +139,7 @@ where
         for (epoch, indices) in self.mix_epochs.take() {
             let patch = patch_builder
                 .entry(epoch)
-                .or_insert(self.patch_builder(epoch).unwrap());
+                .or_insert(self.patch_builder(epoch)?);
             for idx in indices {
                 patch.randao_mix(idx);
             }
@@ -150,7 +148,7 @@ where
             if epoch != self.trusted_checkpoint.epoch() {
                 let patch = patch_builder
                     .entry(epoch)
-                    .or_insert(self.patch_builder(epoch).unwrap());
+                    .or_insert(self.patch_builder(epoch)?);
                 patch.validator_diff(trusted_state.validators().iter());
             }
         }
@@ -159,13 +157,13 @@ where
             .map(|(k, v)| (k, v.build::<E>()))
             .collect();
 
-        StateInput {
+        Ok(StateInput {
             beacon_block: block_multiproof,
             beacon_state: state_multiproof,
             active_validators: validator_multiproof,
             public_keys,
             patches,
-        }
+        })
     }
 
     fn patch_builder(&self, epoch: Epoch) -> Result<StatePatchBuilder, HostReaderError> {

@@ -41,7 +41,6 @@ risc0-zkvm = { workspace = true, features = ["std", "unstable", "prove"] }
 safe_arith = { workspace = true }
 serde = "1.0"
 serde_json = "1.0.133"
-serde_with = "3.13"
 ssz-multiproofs = { path = "../ssz-multiproofs", features = ["builder", "progress-bar"] }
 ssz_rs = { workspace = true, default-features = false, features = ["serde", "std"] }
 ssz_types = { version = "0.8.0" }

@@ -258,12 +258,12 @@ async fn run_sync<E: EthSpec + Serialize>(
     }
 }
 
-fn run_verify<E: EthSpec + Serialize, R: StateReader<Spec = E> + StateProvider<Spec = E>>(
+fn run_verify<P: StateProvider>(
     network: Network,
     mode: ExecMode,
     cfg: &Config,
-    host_reader: &R,
-    input: Input<E>,
+    host_reader: &HostStateReader<P>,
+    input: Input<P::Spec>,
 ) -> anyhow::Result<ConsensusState> {
     info!("Verification mode: {mode}");
 
@@ -275,14 +275,14 @@ fn run_verify<E: EthSpec + Serialize, R: StateReader<Spec = E> + StateProvider<S
 
     if mode == ExecMode::Ssz || mode == ExecMode::R0vm {
         info!("Running host verification");
-        let state_input = reader.to_input();
+        let state_input = reader.to_input().context("failed to create input")?;
 
         let state_bytes = bincode::serialize(&state_input).context("failed to serialize state")?;
         debug!(len = state_bytes.len(), "State serialized");
         let input_bytes = bincode::serialize(&input).context("failed to serialize input")?;
         debug!(len = input_bytes.len(), "Input serialized");
 
-        let guest_input: Input<E> =
+        let guest_input: Input<P::Spec> =
             bincode::deserialize(&input_bytes).context("failed to deserialize input")?;
         let guest_reader = {
             let state_input: StateInput =

@@ -123,7 +123,7 @@ async fn test_zkasper_sync(
                 _ = verify(cfg, &preflight_state_reader, input.clone())?;
 
                 // build a self-contained SSZ reader
-                let state_input = preflight_state_reader.to_input();
+                let state_input = preflight_state_reader.to_input().unwrap();
                 let ssz_state_reader = state_input
                     .clone()
                     .into_state_reader(

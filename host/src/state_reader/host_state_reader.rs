@@ -132,7 +132,7 @@ impl<P: StateProvider> StateReader for HostStateReader<P> {
                     .validators()
                     .par_iter()
                     .enumerate()
-                    .filter(move |(_, validator)| is_active_validator(validator, epoch.into()))
+                    .filter(move |(_, validator)| is_active_validator(validator, epoch.as_u64()))
                     .map(move |(idx, validator)| (idx, to_validator_info(validator)))
                     .collect();
                 debug!("Active validators: {}", validators.len());

@@ -1,4 +1,4 @@
-# The Signal: Etheruem (TSEth)
+# The Signal: Ethereum (TSEth)
 
 A ZKVM-friendly implementation of [Casper FFG](https://arxiv.org/abs/2003.03052), the finality gadget used by the Ethereum beacon chain. This forms part of [The Signal](https://github.com/boundless-xyz/signal) - an open source initiative to build trustless interoperability across all chains.
 

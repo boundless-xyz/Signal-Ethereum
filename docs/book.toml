@@ -1,0 +1,12 @@
+[book]
+title = "The Signal: Ethereum"
+authors = ["Boundless (beboundless.xyz)"]
+language = "en"
+multilingual = false
+description = "A formal analysis of The Signal: Ethereum finality client."
+src = "src"
+
+[preprocessor.katex]
+after = ["links"]
+output = "htmlAndMathml"
+fleqn = true

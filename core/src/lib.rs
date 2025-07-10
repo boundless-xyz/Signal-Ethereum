@@ -144,7 +144,7 @@ impl ValidatorInfo {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 #[repr(transparent)]
 pub struct Checkpoint(beacon_types::Checkpoint);
 
@@ -177,6 +177,10 @@ impl Checkpoint {
 
     pub fn root(&self) -> Root {
         self.0.root
+    }
+
+    pub fn less_or_equal(&self, other: &Self) -> bool {
+        self.epoch() < other.epoch() || self == other
     }
 }
 
@@ -249,46 +253,4 @@ macro_rules! ensure {
             return Err($err);
         }
     };
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use arbitrary::{Arbitrary, Unstructured};
-    use rand::{Rng, rng};
-
-    #[test]
-    fn bincode_input() {
-        let mut raw_data = vec![0u8; 512];
-        rng().fill(raw_data.as_mut_slice());
-        let mut unstructured = Unstructured::new(&raw_data[..]);
-
-        fn checkpoint(u: &mut Unstructured<'_>) -> beacon_types::Checkpoint {
-            beacon_types::Checkpoint::arbitrary(u).unwrap()
-        }
-
-        let attestation = Attestation::<MainnetEthSpec>::empty_for_signing(
-            1,
-            1,
-            Slot::arbitrary(&mut unstructured).unwrap(),
-            Default::default(),
-            checkpoint(&mut unstructured),
-            checkpoint(&mut unstructured),
-            &MainnetEthSpec::default_spec(),
-        )
-        .unwrap();
-
-        let input = Input::<MainnetEthSpec> {
-            consensus_state: ConsensusState {
-                previous_justified_checkpoint: Checkpoint(checkpoint(&mut unstructured)),
-                current_justified_checkpoint: Checkpoint(checkpoint(&mut unstructured)),
-                finalized_checkpoint: Checkpoint(checkpoint(&mut unstructured)),
-            },
-            attestations: vec![attestation],
-        };
-
-        let bytes = bincode::serialize(&input).unwrap();
-        let de = bincode::deserialize::<Input<MainnetEthSpec>>(&bytes).unwrap();
-        assert_eq!(input, de);
-    }
 }

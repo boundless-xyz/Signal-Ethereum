@@ -48,7 +48,7 @@ pub fn entry<E: EthSpec>(spec: ChainSpec, config: &Config) {
 
     env::log(&format!(
         "New finalization: {}",
-        post_state.finalized_checkpoint
+        &post_state.finalized_checkpoint()
     ));
 
     // write public output to the journal

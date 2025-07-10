@@ -1,0 +1,58 @@
+name: mdbook
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: checkout code
+        uses: actions/checkout@v4
+
+      - name: install mdbook
+        run: |
+          # --- Install mdBook ---
+          mkdir mdbook
+          curl -sSL https://github.com/rust-lang/mdBook/releases/download/v0.4.45/mdbook-v0.4.45-x86_64-unknown-linux-gnu.tar.gz | tar -xz --directory=./mdbook
+          echo `pwd`/mdbook >> $GITHUB_PATH
+          # --- Install mdbook-katex ---
+          mkdir mdbook-katex
+          curl -sSL https://github.com/lzanini/mdbook-katex/releases/download/0.9.3-binaries/mdbook-katex-v0.9.3-x86_64-unknown-linux-gnu.tar.gz | tar -xz --directory=./mdbook-katex
+          echo `pwd`/mdbook-katex >> $GITHUB_PATH
+
+      - name: build book
+        working-directory: ./docs
+        run: |
+          source "$HOME/.cargo/env"
+          mdbook build
+
+      - name: upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: ./docs/book
+
+  deploy:
+    needs: build
+
+    permissions:
+      pages: write      # to deploy to Pages
+      id-token: write   # to verify the deployment originates from an appropriate source
+
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    runs-on: ubuntu-22.04
+    if: github.ref == 'refs/heads/main' # Only deploy on main branch
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

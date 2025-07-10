@@ -15,12 +15,12 @@
 use crate::conv_attestation;
 use beacon_types::EthSpec;
 use ethereum_consensus::{electra::mainnet::SignedBeaconBlockHeader, types::mainnet::BeaconBlock};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt::Display;
 use tracing::debug;
 use z_core::{
-    Attestation, Checkpoint, Config, ConsensusState, Epoch, Input, Link, StateReader,
-    compute_committees, ensure, get_total_balance, process_attestation,
+    Attestation, Checkpoint, Config, ConsensusError, ConsensusState, Epoch, Input, Link,
+    StateReader, compute_committees, ensure, get_total_balance, process_attestation,
 };
 
 /// A trait to abstract reading data from an instance of a beacon chain
@@ -49,6 +49,8 @@ pub enum InputBuilderError {
     UnsupportedBlockVersion,
     #[error("Trusted checkpoint is not valid")]
     InvalidTrustedCheckpoint,
+    #[error("Consensus error")]
+    ConsensusError(#[from] ConsensusError),
     #[error("Chain reader error")]
     ChainReader(#[from] anyhow::Error),
     #[error("Error in called verify method")]
@@ -57,6 +59,8 @@ pub enum InputBuilderError {
     ArithError(safe_arith::ArithError),
     #[error("State reader error: {0}")]
     StateReader(String),
+    #[error("Duplicate attestations from one-or-more validators detected")]
+    DuplicateAttesters,
 }
 
 impl From<safe_arith::ArithError> for InputBuilderError {
@@ -97,14 +101,16 @@ impl<'a, E: EthSpec, CR: ChainReader, SR: StateReader<Spec = E>> InputBuilder<'a
         let (state, next_state, links) = self
             .get_justifications_until_new_finality(finalization_epoch)
             .await?;
-        assert_eq!(state.finalized_checkpoint, trusted_checkpoint);
+        assert_eq!(state.finalized_checkpoint(), trusted_checkpoint);
         debug!(
             num_justifications = links.len(),
             "Collected justifications until new finality"
         );
 
         // Concurrently fetch attestations for all required links.
-        let attestations = self.collect_attestations_for_links(cfg, &links).await?;
+        let attestations = self
+            .collect_attestations_for_links(cfg, &links, trusted_checkpoint)
+            .await?;
 
         Ok((
             Input {
@@ -131,13 +137,13 @@ impl<'a, E: EthSpec, CR: ChainReader, SR: StateReader<Spec = E>> InputBuilder<'a
         for epoch in trusted_checkpoint.epoch().as_u64() + 1.. {
             let slot = Epoch::from(epoch).start_slot(E::slots_per_epoch());
             let state = self.chain_reader.get_consensus_state(slot).await?;
-            if state.finalized_checkpoint == trusted_checkpoint {
+            if state.finalized_checkpoint() == trusted_checkpoint {
                 return Ok(epoch.into());
             }
 
             // if the trusted checkpoint has been skipped, it is invalid
             ensure!(
-                state.finalized_checkpoint.epoch() < trusted_checkpoint.epoch(),
+                state.finalized_checkpoint().epoch() < trusted_checkpoint.epoch(),
                 InputBuilderError::InvalidTrustedCheckpoint
             );
         }
@@ -154,7 +160,7 @@ impl<'a, E: EthSpec, CR: ChainReader, SR: StateReader<Spec = E>> InputBuilder<'a
             .chain_reader
             .get_consensus_state(start_epoch.start_slot(E::slots_per_epoch()))
             .await?;
-        let initial_finalized_checkpoint = initial_state.finalized_checkpoint;
+        let initial_finalized_checkpoint = initial_state.finalized_checkpoint();
 
         let mut links = Vec::new();
 
@@ -166,12 +172,12 @@ impl<'a, E: EthSpec, CR: ChainReader, SR: StateReader<Spec = E>> InputBuilder<'a
                 .await?;
 
             // add potential justification
-            if let Some(link) = prev_state.transition_link(&current_state) {
+            if let Some(link) = prev_state.transition_link(&current_state)? {
                 links.push(link);
             }
 
             // If finality has advanced, we have collected all necessary states.
-            if current_state.finalized_checkpoint != initial_finalized_checkpoint {
+            if current_state.finalized_checkpoint() != initial_finalized_checkpoint {
                 return Ok((initial_state, current_state, links));
             }
 
@@ -186,6 +192,7 @@ impl<'a, E: EthSpec, CR: ChainReader, SR: StateReader<Spec = E>> InputBuilder<'a
         &self,
         cfg: &Config,
         links: &[Link],
+        trusted_checkpoint: Checkpoint,
     ) -> Result<Vec<Attestation<E>>, InputBuilderError> {
         if links.is_empty() {
             return Ok(vec![]);
@@ -234,6 +241,7 @@ impl<'a, E: EthSpec, CR: ChainReader, SR: StateReader<Spec = E>> InputBuilder<'a
                 cfg,
                 link.target.epoch(),
                 link_attestations,
+                trusted_checkpoint,
             )?);
         }
 
@@ -247,27 +255,69 @@ impl<'a, E: EthSpec, CR: ChainReader, SR: StateReader<Spec = E>> InputBuilder<'a
         cfg: &Config,
         target_epoch: Epoch,
         attestations: Vec<Attestation<E>>,
+        trusted_checkpoint: Checkpoint,
     ) -> Result<Vec<Attestation<E>>, InputBuilderError> {
-        let active_validators: BTreeMap<_, _> = self
+        // We want to use active validators at the target epoch to compute which validators are participating
+        // but should use their balance/slashed status at the trusted checkpoint epoch.
+        // This is to ensure compatibility between the different state reader implementations
+        let mut active_validators: BTreeMap<_, _> = self
             .state_reader
             .active_validators(target_epoch)
             .map_err(|e| InputBuilderError::StateReader(e.to_string()))?
+            .map(|(idx, v)| (idx, v.clone()))
             .collect();
+
+        // Update effective_balance and slashed status from the trusted checkpoint epoch
+        for (idx, validator) in self
+            .state_reader
+            .active_validators(trusted_checkpoint.epoch())
+            .map_err(|e| InputBuilderError::StateReader(e.to_string()))?
+        {
+            if let Some(v) = active_validators.get_mut(&idx) {
+                v.effective_balance = validator.effective_balance;
+                v.slashed = validator.slashed;
+            }
+        }
+
+        // Prepare a reference map for committee computation
+        let active_validators: BTreeMap<_, _> =
+            active_validators.iter().map(|(k, v)| (*k, v)).collect();
 
         let committees = compute_committees(self.state_reader, &active_validators, target_epoch)?;
 
         let total_active_balance =
             get_total_balance(self.state_reader.chain_spec(), active_validators.values())?;
 
+        // the target balance must be sufficient for a new justification
         let rhs = total_active_balance as u128 * cfg.justification_threshold_factor as u128;
 
+        // Use a greedy search to build a set of attestations that can finalize. In future this could be replaced with
+        // a minimum subset sum if we really want to hit the absolute minimum. It isn't expected to make a huge difference though.
         let mut target_balance = 0u64;
         let mut result = Vec::new();
+        let mut all_attesting_indices = BTreeSet::new();
         for att in attestations {
             let lhs = target_balance as u128 * cfg.justification_threshold_quotient as u128;
             if lhs < rhs {
-                target_balance +=
+                let participating_indices =
                     process_attestation(self.state_reader, &active_validators, &committees, &att)?;
+
+                if !all_attesting_indices.is_disjoint(&participating_indices) {
+                    return Err(InputBuilderError::DuplicateAttesters);
+                }
+
+                all_attesting_indices.extend(participating_indices.iter().cloned());
+
+                let unslashed_participating_validators = participating_indices
+                    .iter()
+                    .map(|i| active_validators.get(i).unwrap())
+                    .filter(|v| !v.slashed);
+
+                target_balance += get_total_balance(
+                    self.state_reader.chain_spec(),
+                    unslashed_participating_validators,
+                )?;
+
                 result.push(att);
             } else {
                 break; // attesting balance is sufficient, no need to add more attestations

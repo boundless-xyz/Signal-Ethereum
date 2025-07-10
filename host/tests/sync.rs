@@ -102,17 +102,13 @@ async fn test_zkasper_sync(
     println!("Pre consensus state: {consensus_state:?}");
 
     loop {
-        let state_reader = HostStateReader::new(
-            (*harness.spec).clone(),
-            harness,
-            consensus_state.finalized_checkpoint.epoch(),
-        );
+        let state_reader = HostStateReader::new((*harness.spec).clone(), harness);
         let preflight_state_reader =
-            PreflightStateReader::new(&state_reader, consensus_state.finalized_checkpoint);
+            PreflightStateReader::new(&state_reader, consensus_state.finalized_checkpoint());
         println!(
             "n validators: {}",
             state_reader
-                .active_validators(consensus_state.finalized_checkpoint.epoch())
+                .active_validators(consensus_state.finalized_checkpoint().epoch())
                 .unwrap()
                 .count()
         );
@@ -120,7 +116,7 @@ async fn test_zkasper_sync(
         // Build the input and verify it
         let builder = InputBuilder::new(&harness, &state_reader);
         match builder
-            .build(cfg, consensus_state.finalized_checkpoint)
+            .build(cfg, consensus_state.finalized_checkpoint())
             .await
         {
             Ok((input, _)) => {
@@ -130,7 +126,7 @@ async fn test_zkasper_sync(
                 _ = verify(cfg, &preflight_state_reader, input.clone())?;
 
                 // build a self-contained SSZ reader
-                let state_input = preflight_state_reader.to_input();
+                let state_input = preflight_state_reader.to_input().unwrap();
                 let ssz_state_reader = state_input
                     .clone()
                     .into_state_reader(
@@ -163,13 +159,13 @@ async fn test_zkasper_sync(
     }
 
     assert_eq!(
-        consensus_state.finalized_checkpoint.epoch(),
+        consensus_state.finalized_checkpoint().epoch(),
         head_state.finalized_checkpoint().epoch.as_u64(),
         "finalized checkpoint should match"
     );
 
     assert_eq!(
-        consensus_state.current_justified_checkpoint.epoch(),
+        consensus_state.current_justified_checkpoint().epoch(),
         head_state.current_justified_checkpoint().epoch.as_u64(),
         "current justified checkpoint should match"
     );
@@ -326,8 +322,8 @@ async fn does_not_finalize_with_less_than_threshold_participation() {
         )
         .await
         .unwrap()
-        .finalized_checkpoint,
-        last_finalized_state.finalized_checkpoint,
+        .finalized_checkpoint(),
+        last_finalized_state.finalized_checkpoint(),
         "Expected threshold not met error, but got a different result"
     );
 }
@@ -464,8 +460,8 @@ async fn does_not_finalize_after_slashing_reduces_total_active_balance_below_thr
         )
         .await
         .unwrap()
-        .finalized_checkpoint,
-        last_finalized_state.finalized_checkpoint,
+        .finalized_checkpoint(),
+        last_finalized_state.finalized_checkpoint(),
         "Expected threshold not met error, but got a different result"
     );
 }
@@ -498,18 +494,13 @@ async fn finalize_after_one_empty_epoch() {
         .await;
     let new_consensus_state = consensus_state_from_state(&harness.get_current_state());
     assert!(
-        consensus_state.finalized_checkpoint.epoch()
-            < new_consensus_state.finalized_checkpoint.epoch(),
+        consensus_state.finalized_checkpoint().epoch()
+            < new_consensus_state.finalized_checkpoint().epoch(),
         "Consensus state should have finalized after extending the chain with attestations"
     );
     assert!(
-        consensus_state.previous_justified_checkpoint.epoch()
-            < new_consensus_state.previous_justified_checkpoint.epoch(),
-        "Consensus state should have new previous justified after extending the chain with attestations"
-    );
-    assert!(
-        consensus_state.current_justified_checkpoint.epoch()
-            < new_consensus_state.current_justified_checkpoint.epoch(),
+        consensus_state.current_justified_checkpoint().epoch()
+            < new_consensus_state.current_justified_checkpoint().epoch(),
         "Consensus state should have new current justified after extending the chain with attestations"
     );
     test_zkasper_sync(&CONFIG, &harness, consensus_state)

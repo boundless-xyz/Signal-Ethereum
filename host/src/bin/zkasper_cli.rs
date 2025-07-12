@@ -131,12 +131,12 @@ enum Command {
         finalized_epoch: Epoch,
 
         /// Output file to write the input to
-        #[clap(short, long, conflicts_with = "out_dir")]
+        #[clap(short, long, conflicts_with = "out_dir", required_unless_present = "out_dir")]
         out: Option<PathBuf>,
 
         /// Output directory to write the input(s) to
         /// If specified, the input will be written to `<out_dir>/inputs/<finalized_epoch>.bin`
-        #[clap(long, conflicts_with = "out")]
+        #[clap(long, conflicts_with = "out", required_unless_present = "out")]
         out_dir: Option<PathBuf>,
 
         /// If set the inputs will be built continuously for each successive finalization

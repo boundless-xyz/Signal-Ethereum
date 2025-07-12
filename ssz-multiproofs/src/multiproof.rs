@@ -197,18 +197,14 @@ fn calculate_compact_multi_merkle_root(
     descriptor: &Descriptor,
     stack_depth_hint: usize,
 ) -> Result<[u8; CHUNK_SIZE]> {
-    // single bounds check for future reads into data
-    let leaf_count = descriptor.count_ones();
-    assert!(data.len() == leaf_count * CHUNK_SIZE);
-
     let mut stack = Vec::with_capacity(stack_depth_hint);
     let mut node_index = 0;
     let mut hasher = Sha256::new();
     for bit in descriptor.iter() {
         if *bit {
-            let start = node_index * CHUNK_SIZE;
-            let slice = unsafe { data.get_unchecked(start..start + CHUNK_SIZE) }; // can skip bounds check thanks to above assertion
-            stack.push(TreeNode::Leaf(slice));
+            stack.push(TreeNode::Leaf(
+                &data[node_index * CHUNK_SIZE..(node_index + 1) * CHUNK_SIZE],
+            ));
             node_index += 1;
 
             // reduce any leaf pairs on the stack until we can progress no further

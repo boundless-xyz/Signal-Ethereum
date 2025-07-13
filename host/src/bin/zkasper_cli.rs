@@ -271,15 +271,19 @@ async fn main() -> anyhow::Result<()> {
                 ),
                 (None, Some(out_dir)) => {
                     let inputs_dir = out_dir.join("inputs");
-                    fs::create_dir_all(&inputs_dir).context("failed to create output directory for built inputs")?;
+                    fs::create_dir_all(&inputs_dir)
+                        .context("failed to create output directory for built inputs")?;
                     let journals_dir = out_dir.join("journals");
-                    fs::create_dir_all(&journals_dir).context("failed to create output directory for journals")?;
+                    fs::create_dir_all(&journals_dir)
+                        .context("failed to create output directory for journals")?;
 
                     let out_input = inputs_dir.join(format!("{}.bin", finalized_epoch));
                     let out_journal = journals_dir.join(format!("{}.bin", finalized_epoch));
                     (
-                        File::create(&out_input).context("failed to create output file for input")?,
-                        File::create(&out_journal).context("failed to create output file for journal")?,
+                        File::create(&out_input)
+                            .context("failed to create output file for input")?,
+                        File::create(&out_journal)
+                            .context("failed to create output file for journal")?,
                     )
                 }
                 _ => {
@@ -385,8 +389,7 @@ async fn prepare_input<
     reader: &S,
     beacon_client: &BeaconClient,
 ) -> anyhow::Result<(Vec<u8>, Vec<u8>, ConsensusState, ConsensusState)> {
-    let trusted_state =
-        reader.state_at_slot(finalized_epoch.start_slot(Spec::slots_per_epoch()))?;
+    let trusted_state = reader.state_at_epoch_boundary(finalized_epoch)?;
     let epoch_boundary_slot = trusted_state.latest_block_header().slot;
     let trusted_beacon_block = beacon_client
         .get_block(epoch_boundary_slot)

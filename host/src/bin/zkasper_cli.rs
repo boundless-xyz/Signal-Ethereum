@@ -354,8 +354,7 @@ async fn prepare_input<
     reader: &S,
     beacon_client: &BeaconClient,
 ) -> anyhow::Result<(Vec<u8>, Vec<u8>, ConsensusState, ConsensusState)> {
-    let trusted_state =
-        reader.state_at_slot(finalized_epoch.start_slot(Spec::slots_per_epoch()))?;
+    let trusted_state = reader.state_at_epoch_boundary(finalized_epoch)?;
     let epoch_boundary_slot = trusted_state.latest_block_header().slot;
     let trusted_beacon_block = beacon_client
         .get_block(epoch_boundary_slot)

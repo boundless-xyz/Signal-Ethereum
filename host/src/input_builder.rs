@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::conv_attestation;
+use crate::conversions::TryAsBeaconType;
 use beacon_types::EthSpec;
 use ethereum_consensus::{electra::mainnet::SignedBeaconBlockHeader, types::mainnet::BeaconBlock};
 use std::collections::HashMap;
@@ -196,7 +196,7 @@ impl<E: EthSpec, CR: ChainReader> InputBuilder<E, CR> {
                 _ => return Err(InputBuilderError::UnsupportedBlockVersion),
             };
             for attestation in body.attestations.iter() {
-                let attestation = conv_attestation(attestation.clone());
+                let attestation = attestation.try_as_beacon_type()?;
                 let link = Link {
                     source: attestation.data().source.into(),
                     target: attestation.data().target.into(),

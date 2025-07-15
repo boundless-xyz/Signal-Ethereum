@@ -12,6 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::conversions::TryAsBeaconType;
+use crate::{CacheStateProvider, FileProvider, StateProvider, StateProviderError, StateRef};
 use alloy_primitives::B256;
 use beacon_types::{ChainSpec, EthSpec, Fork};
 use elsa::FrozenMap;
@@ -22,11 +24,6 @@ use std::path::PathBuf;
 use thiserror::Error;
 use tracing::{debug, trace};
 use z_core::{Epoch, RandaoMixIndex, Root, Slot, StateReader, ValidatorIndex, ValidatorInfo};
-
-use crate::{
-    CacheStateProvider, FileProvider, StateProvider, StateProviderError, StateRef,
-    to_validator_info,
-};
 
 #[derive(Error, Debug)]
 pub enum HostReaderError {
@@ -128,13 +125,13 @@ impl<P: StateProvider> StateReader for HostStateReader<P> {
                 let beacon_state = self.state(epoch)?;
 
                 debug!("Caching validators for epoch {epoch}");
-                let validators: Vec<_> = beacon_state
+                let validators: Vec<(ValidatorIndex, ValidatorInfo)> = beacon_state
                     .validators()
                     .par_iter()
                     .enumerate()
-                    .filter(move |(_, validator)| is_active_validator(validator, epoch.as_u64()))
-                    .map(move |(idx, validator)| (idx, to_validator_info(validator)))
-                    .collect();
+                    .filter(|(_, validator)| is_active_validator(validator, epoch.as_u64()))
+                    .map(|(idx, validator)| validator.try_as_beacon_type().map(|info| (idx, info)))
+                    .collect::<Result<_, _>>()?;
                 debug!("Active validators: {}", validators.len());
 
                 self.validator_cache.insert(epoch, validators).iter()

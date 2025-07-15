@@ -62,7 +62,7 @@ impl From<ArithError> for VerifyError {
 
 /// Verifies a batch of attestations to advance the consensus state.
 ///
-/// This function processes the given attestations. For each corresponding superiority link it
+/// This function processes the given attestations. For each corresponding supermajority link it
 /// updates the consensus state until a new finalization is reached.
 ///
 /// # Preconditions

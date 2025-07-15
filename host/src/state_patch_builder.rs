@@ -15,11 +15,11 @@
 use alloy_primitives::B256;
 use z_core::{RandaoMixIndex, StatePatch};
 
-use std::sync::Arc;
-
 use crate::beacon_state::mainnet::BeaconState;
+use anyhow::Context;
 use beacon_types::EthSpec;
 use ethereum_consensus::phase0::Validator;
+use std::sync::Arc;
 use tracing::debug;
 
 type StateRef = Arc<BeaconState>;
@@ -37,11 +37,14 @@ impl StatePatchBuilder {
         }
     }
 
-    pub fn randao_mix(&mut self, idx: RandaoMixIndex) {
-        let randao = self.state.randao_mixes().get(idx as usize).unwrap().clone();
+    pub fn randao_mix(&mut self, idx: RandaoMixIndex) -> anyhow::Result<()> {
+        let randao_mixes = self.state.randao_mixes();
+        let randao = randao_mixes.get(idx as usize).context("invalid index")?;
         self.patch
             .randao_mixes
-            .insert(idx, B256::from_slice(randao.as_slice()));
+            .insert(idx, B256::from_slice(randao));
+
+        Ok(())
     }
 
     pub fn validator_diff<'a>(&mut self, validators: impl IntoIterator<Item = &'a Validator>) {

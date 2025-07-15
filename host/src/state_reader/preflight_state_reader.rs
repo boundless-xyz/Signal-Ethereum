@@ -141,7 +141,7 @@ where
                 .entry(epoch)
                 .or_insert(self.patch_builder(epoch)?);
             for idx in indices {
-                patch.randao_mix(idx);
+                patch.randao_mix(idx)?;
             }
         }
         for epoch in self.validator_epochs.take() {

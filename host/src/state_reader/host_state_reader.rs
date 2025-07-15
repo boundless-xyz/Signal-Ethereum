@@ -144,11 +144,10 @@ impl<P: StateProvider> StateReader for HostStateReader<P> {
     fn randao_mix(&self, epoch: Epoch, idx: RandaoMixIndex) -> Result<Option<B256>, Self::Error> {
         trace!("HostStateReader::randao_mix({epoch},{idx})");
         let beacon_state = self.state(epoch)?;
-        let idx: usize = idx.try_into().unwrap();
 
         Ok(beacon_state
             .randao_mixes()
-            .get(idx)
+            .get(idx as usize)
             .map(|randao| B256::from_slice(randao.as_slice())))
     }
 }

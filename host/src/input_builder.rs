@@ -174,6 +174,7 @@ impl<E: EthSpec, CR: ChainReader> InputBuilder<E, CR> {
             return Ok(vec![]);
         }
 
+        // safe unwrap: links cannot be empty
         let min_epoch = links.iter().map(|l| l.target.epoch()).min().unwrap();
         let max_epoch = links.iter().map(|l| l.target.epoch()).max().unwrap();
 

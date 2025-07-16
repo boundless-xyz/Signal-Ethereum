@@ -230,7 +230,7 @@ async fn run_sync<E: EthSpec + Serialize>(
 
     loop {
         let (input, expected_state) = input_builder
-            .build(consensus_state.finalized_checkpoint)
+            .build(consensus_state.finalized_checkpoint())
             .await?;
         debug!("Input: {:?}", input);
         let msg = match run_verify(network, mode, &DEFAULT_CONFIG, &sr, input.clone()) {
@@ -254,7 +254,7 @@ async fn run_sync<E: EthSpec + Serialize>(
 
         // uncache old states
         let provider = sr.provider().inner();
-        provider.clear_states_before(consensus_state.finalized_checkpoint.epoch())?;
+        provider.clear_states_before(consensus_state.finalized_checkpoint().epoch())?;
     }
 }
 
@@ -268,7 +268,8 @@ fn run_verify<E: EthSpec + Serialize, R: StateReader<Spec = E> + StateProvider<S
     info!("Verification mode: {mode}");
 
     info!("Running preflight");
-    let reader = PreflightStateReader::new(host_reader, input.consensus_state.finalized_checkpoint);
+    let reader =
+        PreflightStateReader::new(host_reader, input.consensus_state.finalized_checkpoint());
     let consensus_state = verify(cfg, &reader, input.clone()).context("preflight failed")?;
     info!("Preflight succeeded");
 

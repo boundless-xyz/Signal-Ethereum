@@ -122,7 +122,7 @@ impl StateInput<'_> {
         consensus_state: &ConsensusState,
     ) -> Result<SszStateReader<E>, SszReaderError> {
         // the finalized checkpoint is the only state we can trust
-        let trusted_checkpoint = consensus_state.finalized_checkpoint;
+        let trusted_checkpoint = consensus_state.finalized_checkpoint();
 
         // check that the beacon block proofs correspond to the finalized epoch boundary
         self.beacon_block
@@ -162,7 +162,7 @@ impl StateInput<'_> {
         // `current_justified_checkpoint`. This means that we have missed all the state changes
         // introduced by the intermediate `state_transition()` calls. From the trusted state, we
         // only use the validator registry, so it boils down to the process_registry_updates().
-        let current_justified_epoch = consensus_state.current_justified_checkpoint.epoch();
+        let current_justified_epoch = consensus_state.current_justified_checkpoint().epoch();
         for epoch in state_epoch.as_u64()..=current_justified_epoch.as_u64() {
             let epoch = Epoch::from(epoch);
             // By definition, we know that the next finalization will happen at the

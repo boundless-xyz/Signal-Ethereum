@@ -90,18 +90,14 @@ pub async fn get_harness(
 pub fn consensus_state_from_state<T: EthSpec>(
     state: &beacon_types::BeaconState<T>,
 ) -> ConsensusState {
-    ConsensusState {
-        finalized_checkpoint: z_core::Checkpoint::new(
-            state.finalized_checkpoint().epoch,
-            state.finalized_checkpoint().root,
-        ),
-        current_justified_checkpoint: z_core::Checkpoint::new(
+    ConsensusState::new(
+        z_core::Checkpoint::new(
             state.current_justified_checkpoint().epoch,
             state.current_justified_checkpoint().root,
         ),
-        previous_justified_checkpoint: z_core::Checkpoint::new(
-            state.previous_justified_checkpoint().epoch,
-            state.previous_justified_checkpoint().root,
+        z_core::Checkpoint::new(
+            state.finalized_checkpoint().epoch,
+            state.finalized_checkpoint().root,
         ),
-    }
+    )
 }

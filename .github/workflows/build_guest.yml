@@ -1,9 +1,16 @@
 name: build guest
 
+# on:
+#   push:
+#     tags:
+#         - "v*"
+
 on:
-  push:
-    tags:
-        - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Simulated release tag'
+        required: true
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -17,7 +24,7 @@ permissions:
 env:
   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
   RISC0_RUST_TOOLCHAIN_VERSION: 1.88.0
-  RISC0_VERSION: 2.2.0
+  RISC0_VERSION: 2.3.0
 
 jobs:
   build-guest:
@@ -41,20 +48,24 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: build guest with docker
-        run: cargo risczero build --manifest-path=methods/guest/Cargo.toml 
+        env:
+          RISC0_USE_DOCKER: 1
+        run: cargo build --manifest-path=methods/Cargo.toml 
 
       - uses: svenstaro/upload-release-action@v2
         with:
           overwrite: true
           repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: target/riscv-guest/methods/beacon_guest/riscv32im-risc0-zkvm-elf/docker/mainnet
-          asset_name: mainnet
+          file: target/riscv-guest/methods/beacon_guest/riscv32im-risc0-zkvm-elf/docker/mainnet.bin
+          asset_name: mainnet_guest.bin
           tag: ${{ github.ref }}
+          draft: true
 
       - uses: svenstaro/upload-release-action@v2
         with:
           overwrite: true
           repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: target/riscv-guest/methods/beacon_guest/riscv32im-risc0-zkvm-elf/docker/sepolia
-          asset_name: sepolia
+          file: target/riscv-guest/methods/beacon_guest/riscv32im-risc0-zkvm-elf/docker/sepolia.bin
+          asset_name: sepolia_guest.bin
           tag: ${{ github.ref }}
+          draft: true

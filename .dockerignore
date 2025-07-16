@@ -1,0 +1,6 @@
+.git
+.cache
+data
+logs
+target
+*.pb

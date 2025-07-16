@@ -14,8 +14,8 @@
 
 use std::collections::BTreeSet;
 
-use beacon_types::EthSpec;
 pub use beacon_types::{Attestation, AttestationData};
+use beacon_types::{AttestationElectra, EthSpec};
 
 use crate::committee_cache;
 
@@ -23,10 +23,9 @@ use crate::committee_cache;
 ///
 /// See: https://github.com/ethereum/consensus-specs/blob/dev/specs/electra/beacon-chain.md#modified-get_attesting_indices
 pub fn get_attesting_indices<E: EthSpec>(
-    attn: &Attestation<E>,
+    attn: &AttestationElectra<E>,
     committee_cache: &committee_cache::CommitteeCache<E>,
 ) -> Result<BTreeSet<usize>, committee_cache::Error> {
-    let attn = attn.as_electra().expect("attestation is not electra type");
     let committee_indices = attn.get_committee_indices();
 
     let mut attesting_indices: BTreeSet<usize> = BTreeSet::new();

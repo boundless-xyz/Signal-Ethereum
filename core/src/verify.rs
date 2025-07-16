@@ -22,7 +22,7 @@ use beacon_types::{
 };
 use itertools::Itertools;
 use safe_arith::{ArithError, SafeArith};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use tracing::{debug, info, trace};
 
 #[derive(thiserror::Error, Debug, PartialEq)]
@@ -108,12 +108,18 @@ pub fn verify<S: StateReader>(
         let committees = compute_committees(state_reader, &active_validators, target_epoch)?;
 
         info!("Processing attestations for {}", link);
-        let mut target_balance = 0u64;
+        let mut participating_indices = BTreeSet::new();
         for attestation in attestations {
-            let attesting_balance =
+            let attesting_indices =
                 process_attestation(state_reader, &active_validators, &committees, attestation)?;
-            target_balance.safe_add_assign(attesting_balance)?;
+            participating_indices.extend(attesting_indices);
         }
+
+        let unslashed_participating_validators = participating_indices
+            .iter()
+            .map(|i| active_validators.get(i).unwrap())
+            .filter(|v| !v.slashed);
+        let target_balance = get_total_balance(spec, unslashed_participating_validators)?;
 
         let total_active_balance = get_total_balance(spec, active_validators.values())?;
         debug!(
@@ -176,12 +182,13 @@ fn validate_link(
     Ok(())
 }
 
+/// Verifies a single attestation returning its attesting validator indices.
 fn process_attestation<S: StateReader, E: EthSpec>(
     state: &S,
     active_validators: &BTreeMap<ValidatorIndex, &ValidatorInfo>,
     committees: &CommitteeCache<E>,
     attestation: &Attestation<E>,
-) -> Result<u64, VerifyError> {
+) -> Result<BTreeSet<ValidatorIndex>, VerifyError> {
     let attesting_indices = get_attesting_indices(attestation, committees)?;
     let attesting_validators = attesting_indices
         .iter()
@@ -204,13 +211,7 @@ fn process_attestation<S: StateReader, E: EthSpec>(
         VerifyError::InvalidAttestation("Invalid signature")
     );
 
-    // sum up the effective balance of all validators who have not been slashed
-    let target_balance = get_total_balance(
-        state.chain_spec(),
-        attesting_validators.iter().filter(|v| !v.slashed),
-    )?;
-
-    Ok(target_balance)
+    Ok(attesting_indices)
 }
 
 /// Checks if given indexed attestation is not empty and has a valid aggregate signature.

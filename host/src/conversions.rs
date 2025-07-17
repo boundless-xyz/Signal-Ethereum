@@ -12,70 +12,68 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use anyhow::{Context, Result, anyhow};
 use bls::PublicKey;
 use z_core::{Attestation, AttestationData, EthSpec, ValidatorInfo};
 
-pub fn conv_attestation<
-    E: EthSpec,
-    const MAX_VALIDATORS_PER_SLOT: usize,
-    const MAX_COMMITTEES_PER_SLOT: usize,
->(
-    attestation: ethereum_consensus::electra::Attestation<
-        MAX_VALIDATORS_PER_SLOT,
-        MAX_COMMITTEES_PER_SLOT,
-    >,
-) -> Attestation<E> {
-    use beacon_types::AttestationElectra;
-    use ssz::Decode;
-
-    let a = AttestationElectra {
-        aggregation_bits: ssz_types::BitList::from_bytes(
-            ssz_rs::serialize(&attestation.aggregation_bits)
-                .expect("Failed to serialize aggregation bits")
-                .into(),
-        )
-        .expect("Failed to deserialize aggregation bits"),
-        data: conv_attestation_data(attestation.data),
-        signature: beacon_types::AggregateSignature::from_ssz_bytes(
-            &ssz_rs::serialize(&attestation.signature).expect("Failed to serialize signature"),
-        )
-        .expect("Failed to deserialize signature"),
-        committee_bits: ssz_types::BitVector::from_bytes(
-            ssz_rs::serialize(&attestation.committee_bits)
-                .expect("Failed to serialize committee bits")
-                .into(),
-        )
-        .expect("Failed to deserialize committee bits"),
-    };
-    Attestation::Electra(a)
+/// An extension trait for failable conversions into `beacon_types`.
+pub(crate) trait TryAsBeaconType<T> {
+    /// Tries to perform the conversion into a `beacon_types` equivalent.
+    fn try_as_beacon_type(&self) -> Result<T>;
 }
 
-fn conv_attestation_data(data: ethereum_consensus::electra::AttestationData) -> AttestationData {
-    AttestationData {
-        slot: data.slot.into(),
-        index: data.index as u64,
-        beacon_block_root: data.beacon_block_root,
-        source: conv_checkpoint(data.source),
-        target: conv_checkpoint(data.target),
+impl<E: EthSpec, const MAX_VALIDATORS_PER_SLOT: usize, const MAX_COMMITTEES_PER_SLOT: usize>
+    TryAsBeaconType<Attestation<E>>
+    for ethereum_consensus::electra::Attestation<MAX_VALIDATORS_PER_SLOT, MAX_COMMITTEES_PER_SLOT>
+{
+    fn try_as_beacon_type(&self) -> Result<Attestation<E>> {
+        use ssz::Decode;
+        use ssz_rs::Serialize;
+
+        let mut buf = Vec::new();
+        self.serialize(&mut buf)
+            .context("failed to SSZ-serialize source attestation")?;
+
+        Ok(Attestation::Electra(
+            beacon_types::AttestationElectra::from_ssz_bytes(&buf).map_err(|err| {
+                anyhow!("failed to SSZ-deserialize into target Electra attestation: {err:?}")
+            })?,
+        ))
     }
 }
 
-pub fn conv_checkpoint(
-    checkpoint: ethereum_consensus::electra::Checkpoint,
-) -> beacon_types::Checkpoint {
-    beacon_types::Checkpoint {
-        epoch: checkpoint.epoch.into(),
-        root: checkpoint.root,
+impl TryAsBeaconType<AttestationData> for ethereum_consensus::electra::AttestationData {
+    fn try_as_beacon_type(&self) -> Result<AttestationData> {
+        Ok(AttestationData {
+            slot: self.slot.into(),
+            index: self.index as u64,
+            beacon_block_root: self.beacon_block_root,
+            source: self.source.try_as_beacon_type()?,
+            target: self.target.try_as_beacon_type()?,
+        })
     }
 }
 
-pub fn to_validator_info(v: &ethereum_consensus::phase0::Validator) -> ValidatorInfo {
-    ValidatorInfo {
-        pubkey: PublicKey::deserialize(&v.public_key).unwrap(),
-        effective_balance: v.effective_balance,
-        slashed: v.slashed,
-        activation_epoch: v.activation_epoch.into(),
-        activation_eligibility_epoch: v.activation_eligibility_epoch.into(),
-        exit_epoch: v.exit_epoch.into(),
+impl TryAsBeaconType<beacon_types::Checkpoint> for ethereum_consensus::electra::Checkpoint {
+    fn try_as_beacon_type(&self) -> Result<beacon_types::Checkpoint> {
+        Ok(beacon_types::Checkpoint {
+            epoch: self.epoch.into(),
+            root: self.root,
+        })
+    }
+}
+
+impl TryAsBeaconType<ValidatorInfo> for ethereum_consensus::phase0::Validator {
+    fn try_as_beacon_type(&self) -> Result<ValidatorInfo> {
+        let pubkey = PublicKey::deserialize(&self.public_key)
+            .map_err(|_| anyhow!("failed to deserialize BLS public key"))?;
+        Ok(ValidatorInfo {
+            pubkey,
+            effective_balance: self.effective_balance,
+            slashed: self.slashed,
+            activation_epoch: self.activation_epoch.into(),
+            activation_eligibility_epoch: self.activation_eligibility_epoch.into(),
+            exit_epoch: self.exit_epoch.into(),
+        })
     }
 }

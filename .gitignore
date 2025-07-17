@@ -1,6 +1,5 @@
 .DS_Store
 Cargo.lock
-methods/guest/Cargo.lock
 target/
 *.ssz
 data/
@@ -8,3 +7,6 @@ data/
 .cache
 .env
 logs/
+
+# allow exceptions
+!methods/guest/Cargo.lock

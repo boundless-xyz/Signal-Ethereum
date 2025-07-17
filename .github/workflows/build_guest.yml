@@ -32,6 +32,11 @@ jobs:
       - name: Install rust
         uses: risc0/risc0/.github/actions/rustup@fbe1d0bb75c21fe36cefd87bae25f424b711b291
 
+      - name: Install sccache
+        uses: risc0/risc0/.github/actions/sccache@fbe1d0bb75c21fe36cefd87bae25f424b711b291
+        with:
+          key: Linux-default
+
       - name: install cargo risczero
         uses: ./.github/actions/bininstall-risc0
         with:
@@ -60,3 +65,6 @@ jobs:
           file: target/riscv-guest/methods/beacon_guest/riscv32im-risc0-zkvm-elf/docker/sepolia.bin
           asset_name: sepolia_guest.bin
           tag: ${{ github.ref }}
+
+      - name: Show sccache stats
+        run: sccache --show-stats

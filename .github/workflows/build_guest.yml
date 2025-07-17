@@ -1,16 +1,9 @@
 name: build guest
 
-# on:
-#   push:
-#     tags:
-#         - "v*"
-
 on:
-  workflow_dispatch:
-    inputs:
-      tag:
-        description: 'Simulated release tag'
-        required: true
+  push:
+    tags:
+        - "v*"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}

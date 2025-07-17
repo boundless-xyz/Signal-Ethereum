@@ -35,6 +35,16 @@ pub enum Error {
 
     #[error("requested a value with gindex {} but got gindex {}", .expected, .actual)]
     GIndexMismatch { expected: u64, actual: u64 },
+
+    #[error(
+        "Unexpected internal node encountered. This likely indicates a bug in the multiproof descriptor"
+    )]
+    UnexpectedInternalNode,
+
+    #[error(
+        "Multiproof contains unused leaves. This likely indicates a bug in the multiproof descriptor"
+    )]
+    UnusedLeaves,
 }
 
 pub type Result<T> = std::result::Result<T, Error>;

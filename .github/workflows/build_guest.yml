@@ -12,7 +12,7 @@ concurrency:
 # this is needed to gain access via OIDC to the S3 bucket for caching
 permissions:
   id-token: write
-  contents: read
+  contents: write
 
 env:
   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

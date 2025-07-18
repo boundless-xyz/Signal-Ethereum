@@ -19,6 +19,7 @@ serde_with = "3.13"
 sha2 = { workspace = true, default-features = false }
 ssz-multiproofs = { path = "../ssz-multiproofs" }
 swap_or_not_shuffle = { workspace = true }
+state_processing = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
 tree_hash = { version = "0.10" }

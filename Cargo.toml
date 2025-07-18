@@ -58,6 +58,7 @@ beacon_types = { package = "types", path = "/home/etu/lighthouse/consensus/types
 bls = { path = "/home/etu/lighthouse/crypto/bls" }
 swap_or_not_shuffle = { path = "/home/etu/lighthouse/consensus/swap_or_not_shuffle" }
 safe_arith = { path = "/home/etu/lighthouse/consensus/safe_arith" }
+state_processing = { path = "/home/etu/lighthouse/consensus/state_processing", default-features = false, features = ["legacy-arith"] }
 
 [patch."https://github.com/ralexstokes/ssz-rs"]
 # Get the merkle tree empty node virtualization so non-trivial merkle trees actually fit in memory

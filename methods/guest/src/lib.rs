@@ -88,8 +88,8 @@ pub fn transition_entry<E: EthSpec>(spec: ChainSpec) {
     // from_ssz_bytes(&block_bytes).expect("Failed to deserialize block");
     env::log("Block deserialized");
 
-    let pre_state: beacon_types::BeaconState<E> =
-        serde_json::from_slice(&pre_state_bytes).expect("Failed to deserialize pre-state");
+    let pre_state = beacon_types::BeaconState::<E>::from_ssz_bytes(&pre_state_bytes, &spec)
+        .expect("Failed to deserialize pre-state");
     env::log("Pre-state deserialized");
 
     let mut saved_ctxt: Option<_> = None;

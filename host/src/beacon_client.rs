@@ -15,7 +15,7 @@
 use crate::{ChainReader, mainnet::BeaconState};
 use ethereum_consensus::{
     Fork, phase0::SignedBeaconBlockHeader, primitives::Root, serde::as_str,
-    types::mainnet::BeaconBlock,
+    types::mainnet::BeaconBlock, types::mainnet::SignedBeaconBlock,
 };
 use http::StatusCode;
 use http_cache_reqwest::{CACacheManager, Cache, CacheMode, HttpCache, HttpCacheOptions};
@@ -237,6 +237,25 @@ impl BeaconClient {
         let path = format!("eth/v2/beacon/blocks/{block_id}");
         match self.get_json::<Response<BlockResponse>>(&path).await {
             Ok(resp) => Ok(Some(resp.data.message)),
+            Err(Error::Http(err)) => match err.status() {
+                Some(StatusCode::NOT_FOUND) => Ok(None),
+                _ => Err(err.into()),
+            },
+            Err(err) => Err(err),
+        }
+    }
+
+    /// Retrieves block details for given block id.
+    ///
+    /// Block ID can be 'head', 'genesis', 'finalized', <slot>, or <root>.
+    #[tracing::instrument(skip(self), fields(block_id = %block_id))]
+    pub async fn get_signed_block(
+        &self,
+        block_id: impl Display,
+    ) -> Result<Option<SignedBeaconBlock>> {
+        let path = format!("eth/v2/beacon/blocks/{block_id}");
+        match self.get_json::<Response<SignedBeaconBlock>>(&path).await {
+            Ok(resp) => Ok(Some(resp.data)),
             Err(Error::Http(err)) => match err.status() {
                 Some(StatusCode::NOT_FOUND) => Ok(None),
                 _ => Err(err.into()),

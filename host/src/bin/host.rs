@@ -12,28 +12,32 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use alloy_primitives::FixedBytes;
 use anyhow::{Context, ensure};
+use beacon_types::SignedBeaconBlock;
 use clap::{Parser, ValueEnum};
 use host::{
     AssertStateReader, BeaconClient, CacheStateProvider, ChainReader, InputBuilder,
-    PersistentApiStateProvider, StateProvider, host_state_reader::HostStateReader,
-    preflight_state_reader::PreflightStateReader,
+    PersistentApiStateProvider, StateProvider, TryAsBeaconTypeVersioned,
+    host_state_reader::HostStateReader, preflight_state_reader::PreflightStateReader,
 };
-use methods::{MAINNET_ELF, SEPOLIA_ELF};
+use methods::{MAINNET_ELF, SEPOLIA_ELF, TRANSITION_ELF};
 use risc0_zkvm::{ExecutorEnv, default_executor};
 use serde::Serialize;
+use ssz::Encode;
 use ssz_rs::HashTreeRoot;
 use std::{
     fmt::{self, Display},
     fs::{self, File},
     io::Write,
     path::PathBuf,
+    time::Instant,
 };
 use tracing::{debug, info, warn};
 use url::Url;
 use z_core::{
     Checkpoint, Config, ConsensusState, DEFAULT_CONFIG, Epoch, EthSpec, Input, MainnetEthSpec,
-    Slot, StateInput, StateReader, verify,
+    ProcessingConfig, Slot, StateInput, StateReader, do_transition, verify,
 };
 
 // all chains use the mainnet preset
@@ -111,7 +115,12 @@ enum Command {
     },
 
     #[clap(name = "transition")]
-    Transition { slot: Slot },
+    Transition {
+        #[clap(long)]
+        slot: Slot,
+        #[clap(long, default_value_t = ExecMode::Native)]
+        mode: ExecMode,
+    },
 }
 
 /// Enum for network selection
@@ -201,16 +210,107 @@ async fn main() -> anyhow::Result<()> {
             .await?;
         }
 
-        Command::Transition { slot } => {
-            transition(slot).await?;
+        Command::Transition { slot, mode } => {
+            transition(&reader, &beacon_client, slot, mode).await?;
         }
     }
 
     Ok(())
 }
 
-async fn transition(slot: Slot) -> anyhow::Result<()> {
-    todo!()
+async fn transition<P: StateProvider>(
+    host_reader: &HostStateReader<P>,
+    beacon_client: &BeaconClient,
+    slot: Slot,
+    mode: ExecMode,
+) -> anyhow::Result<()> {
+    let block = beacon_client
+        .get_signed_block(slot)
+        .await?
+        .expect("block not found")
+        .try_as_beacon_type(host_reader.chain_spec())?;
+    info!(
+        "Transitioning block at slot: {} with root: {}, state root: {}",
+        slot,
+        block.canonical_root(),
+        block.state_root()
+    );
+
+    let parent_block: SignedBeaconBlock<P::Spec> = beacon_client
+        .get_signed_block(block.parent_root())
+        .await?
+        .expect("parent block not found")
+        .try_as_beacon_type(host_reader.chain_spec())?;
+
+    let state_root = parent_block.state_root();
+    let parent_slot = parent_block.slot();
+
+    let pre_state = host_reader
+        .state_at_slot(parent_slot)?
+        .try_as_beacon_type(host_reader.chain_spec())?;
+
+    let start = Instant::now();
+
+    let block_root = block.canonical_root();
+
+    let state_root_opt = Some(state_root);
+
+    let config = ProcessingConfig {
+        no_signature_verification: false,
+        exclude_cache_builds: false,
+        exclude_post_block_thc: false,
+    };
+
+    let mut saved_ctxt = None;
+    let pre_state_clone = pre_state.clone();
+    let mut post_state = do_transition::<P::Spec>(
+        pre_state_clone,
+        block_root,
+        block.clone(),
+        state_root_opt,
+        &config,
+        // &validator_pubkey_cache,
+        &mut saved_ctxt,
+        &host_reader.chain_spec(),
+    )?;
+
+    let duration = Instant::now().duration_since(start);
+    info!("Run duration: {:?}", duration);
+    info!(
+        "Post-state slot:{} root: {}",
+        post_state.slot(),
+        post_state.canonical_root().unwrap()
+    );
+    if mode == ExecMode::R0vm {
+        info!("Running in R0VM mode, committing post-state root to zkvm");
+        let pre_state_bytes = pre_state.as_ssz_bytes();
+        let block_root_bytes =
+            bincode::serialize(&block_root).context("Failed to serialize block root")?;
+        let block_bytes = block.as_ssz_bytes();
+        let state_root_opt_bytes =
+            bincode::serialize(&state_root_opt).context("Failed to serialize state root option")?;
+        let env = ExecutorEnv::builder()
+            .write_frame(pre_state_bytes.as_ref())
+            .write_frame(block_root_bytes.as_ref())
+            .write_frame(block_bytes.as_ref())
+            .write_frame(state_root_opt_bytes.as_ref())
+            .build()?;
+        let elf = TRANSITION_ELF;
+        let session_info = default_executor().execute(env, elf)?;
+        debug!(cycles = session_info.cycles(), "Session info");
+
+        let journal_bytes = session_info.journal.bytes;
+        let guest_post_state_root: FixedBytes<32> = bincode::deserialize(&journal_bytes)?;
+
+        ensure!(
+            guest_post_state_root == post_state.canonical_root().unwrap(),
+            "Post-state root mismatch: expected {}, got {}",
+            post_state.canonical_root().unwrap(),
+            guest_post_state_root
+        );
+    }
+
+    Ok(())
 }
 
 async fn run_sync<E: EthSpec + Serialize>(

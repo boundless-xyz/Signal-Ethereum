@@ -23,6 +23,7 @@ mod test_utils;
 
 pub use beacon_client::*;
 pub use beacon_state::*;
+pub use conversions::*;
 pub use input_builder::*;
 pub use state_patch_builder::*;
 pub use state_provider::*;

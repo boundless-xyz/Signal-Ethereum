@@ -625,6 +625,7 @@ dependencies = [
  "risc0-zkvm",
  "serde_cbor",
  "sha2",
+ "types",
  "z-core",
 ]
 
@@ -5073,6 +5074,7 @@ dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
  "bls",
+ "chainspec",
  "ethereum_ssz",
  "itertools 0.14.0",
  "safe_arith",

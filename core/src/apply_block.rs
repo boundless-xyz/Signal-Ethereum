@@ -1,11 +1,9 @@
-use std::borrow::Cow;
-
 use beacon_types::{
     AbstractExecPayload, BeaconState, ChainSpec, EthSpec, Hash256, SignedBeaconBlock,
 };
 use state_processing::{
     AllCaches, BlockProcessingError, BlockSignatureStrategy, BlockSignatureVerifier,
-    ConsensusContext, VerifyBlockRoot, state_advance::complete_state_advance,
+    ConsensusContext, VerifyBlockRoot, per_block_processing, state_advance::complete_state_advance,
 };
 use tracing::debug;
 
@@ -34,22 +32,10 @@ impl From<&str> for Error {
 }
 
 #[derive(Debug)]
-pub struct Config {
-    no_signature_verification: bool,
-    exclude_cache_builds: bool,
-    exclude_post_block_thc: bool,
-}
-
-pub fn per_block_processing<E: EthSpec, Payload: AbstractExecPayload<E>>(
-    _state: &mut BeaconState<E>,
-    _signed_block: &SignedBeaconBlock<E, Payload>,
-    _block_signature_strategy: BlockSignatureStrategy,
-    _verify_block_root: VerifyBlockRoot,
-    _ctxt: &mut ConsensusContext<E>,
-    _spec: &ChainSpec,
-) -> Result<(), Error> {
-    // Process the block and update the state
-    Ok(())
+pub struct ProcessingConfig {
+    pub no_signature_verification: bool,
+    pub exclude_cache_builds: bool,
+    pub exclude_post_block_thc: bool,
 }
 
 pub fn do_transition<E: EthSpec>(
@@ -57,7 +43,7 @@ pub fn do_transition<E: EthSpec>(
     block_root: Hash256,
     block: SignedBeaconBlock<E>,
     mut state_root_opt: Option<Hash256>,
-    config: &Config,
+    config: &ProcessingConfig,
     // validator_pubkey_cache: &ValidatorPubkeyCache<EphemeralHarnessType<E>>,
     saved_ctxt: &mut Option<ConsensusContext<E>>,
     spec: &ChainSpec,

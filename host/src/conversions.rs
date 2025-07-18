@@ -13,13 +13,20 @@
 // limitations under the License.
 
 use anyhow::{Context, Result, anyhow};
+use beacon_types::{BeaconState, SignedBeaconBlock};
 use bls::PublicKey;
-use z_core::{Attestation, AttestationData, EthSpec, ValidatorInfo};
+use z_core::{Attestation, AttestationData, ChainSpec, EthSpec, ValidatorInfo};
 
 /// An extension trait for failable conversions into `beacon_types`.
 pub(crate) trait TryAsBeaconType<T> {
     /// Tries to perform the conversion into a `beacon_types` equivalent.
     fn try_as_beacon_type(&self) -> Result<T>;
+}
+
+/// An extension trait for failable conversions into `beacon_types`.
+pub trait TryAsBeaconTypeVersioned<T> {
+    /// Tries to perform the conversion into a `beacon_types` equivalent.
+    fn try_as_beacon_type(&self, spec: &ChainSpec) -> Result<T>;
 }
 
 impl<E: EthSpec, const MAX_VALIDATORS_PER_SLOT: usize, const MAX_COMMITTEES_PER_SLOT: usize>
@@ -75,5 +82,36 @@ impl TryAsBeaconType<ValidatorInfo> for ethereum_consensus::phase0::Validator {
             activation_eligibility_epoch: self.activation_eligibility_epoch.into(),
             exit_epoch: self.exit_epoch.into(),
         })
+    }
+}
+
+impl<E: EthSpec> TryAsBeaconTypeVersioned<BeaconState<E>> for crate::mainnet::BeaconState {
+    fn try_as_beacon_type(&self, spec: &ChainSpec) -> Result<BeaconState<E>> {
+        use ssz_rs::Serialize;
+
+        let mut buf = Vec::new();
+        self.serialize(&mut buf)
+            .context("failed to SSZ-serialize source beacon state")?;
+
+        Ok(BeaconState::<E>::from_ssz_bytes(&buf, spec)
+            .map_err(|err| anyhow!("failed to SSZ-deserialize into target BeaconState: {err:?}"))?)
+    }
+}
+
+impl<E: EthSpec> TryAsBeaconTypeVersioned<SignedBeaconBlock<E>>
+    for ethereum_consensus::types::mainnet::SignedBeaconBlock
+{
+    fn try_as_beacon_type(&self, spec: &ChainSpec) -> Result<SignedBeaconBlock<E>> {
+        use ssz_rs::Serialize;
+
+        let mut buf = Vec::new();
+        self.serialize(&mut buf)
+            .context("failed to SSZ-serialize source beacon block")?;
+
+        Ok(
+            SignedBeaconBlock::<E>::from_ssz_bytes(&buf, spec).map_err(|err| {
+                anyhow!("failed to SSZ-deserialize into target SignedBeaconBlock: {err:?}")
+            })?,
+        )
     }
 }

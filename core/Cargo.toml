@@ -10,6 +10,7 @@ alloy-primitives = { workspace = true, features = ["rlp"] }
 alloy-sol-types = { workspace = true }
 beacon_types = { workspace = true, default-features = false, features = ["legacy-arith"] }
 bls = { workspace = true }
+chainspec = { workspace = true }
 ethereum_ssz = "0.9.0"
 itertools = "0.14"
 safe_arith = { workspace = true }

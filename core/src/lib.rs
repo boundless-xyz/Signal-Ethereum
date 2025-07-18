@@ -37,6 +37,7 @@ mod state_patch;
 mod state_reader;
 mod verify;
 
+pub use apply_block::*;
 pub use attestation::*;
 pub use bls::*;
 pub use committee_cache::*;

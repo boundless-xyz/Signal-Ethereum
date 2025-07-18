@@ -58,7 +58,7 @@ fn test_proving_validator_fields() {
         .unwrap();
 
     assert_eq!(
-        multiproof.values::<32>().next(),
+        multiproof.values().next(),
         Some((
             gindex as u64,
             beacon_state.validators[0]

@@ -79,7 +79,7 @@ pub struct Input<E: EthSpec> {
     /// A list of attestations to be processed.
     ///
     /// This contains only the required attestations to advance the consensus state, i.e., they
-    /// each correspond to a superiority link leading to a new justification.
+    /// each correspond to a supermajority link leading to a new justification.
     ///
     /// This vector is expected to be pre-sorted by
     /// `(attestation.data.source, attestation.data.target)` so that all attestations

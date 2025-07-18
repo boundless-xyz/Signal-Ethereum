@@ -62,7 +62,7 @@ impl From<ArithError> for VerifyError {
 
 /// Verifies a batch of attestations to advance the consensus state.
 ///
-/// This function processes the given attestations. For each corresponding superiority link it
+/// This function processes the given attestations. For each corresponding supermajority link it
 /// updates the consensus state until a new finalization is reached.
 ///
 /// # Preconditions
@@ -189,6 +189,17 @@ fn process_attestation<S: StateReader, E: EthSpec>(
     committees: &CommitteeCache<E>,
     attestation: &Attestation<E>,
 ) -> Result<BTreeSet<ValidatorIndex>, VerifyError> {
+    let attestation = attestation
+        .as_electra()
+        .expect("attestation is not an Electra variant");
+    // the slot in which the validators made the attestation, must match the target epoch.
+    assert_eq!(
+        attestation.data.target.epoch,
+        attestation.data.slot.epoch(E::slots_per_epoch())
+    );
+    // with EIP-7549, the committee index was moved outside Attestation and must always be zero
+    assert_eq!(attestation.data.index, 0);
+
     let attesting_indices = get_attesting_indices(attestation, committees)?;
     let attesting_validators = attesting_indices
         .iter()
@@ -205,8 +216,8 @@ fn process_attestation<S: StateReader, E: EthSpec>(
         is_valid_indexed_attestation(
             state,
             &attesting_validators,
-            attestation.data(),
-            attestation.signature(),
+            &attestation.data,
+            &attestation.signature,
         )?,
         VerifyError::InvalidAttestation("Invalid signature")
     );

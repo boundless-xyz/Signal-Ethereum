@@ -20,6 +20,8 @@ permissions:
 env:
   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
   RUST_BACKTRACE: "1"
+  RISC0_RUST_TOOLCHAIN_VERSION: 1.88.0
+  RISC0_VERSION: 2.3.0
 
 jobs:
   test:
@@ -52,8 +54,8 @@ jobs:
       - name: install cargo risczero
         uses: ./.github/actions/bininstall-risc0
         with:
-          risczero-version: "3.0.0-rc.1"
-          toolchain-version: "1.85.0"
+          risczero-version: ${{ env.RISC0_VERSION }}
+          toolchain-version: ${{ env.RISC0_RUST_TOOLCHAIN_VERSION }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 

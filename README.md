@@ -1,4 +1,4 @@
-# The Signal: Etheruem (TSEth)
+# The Signal: Ethereum (TSEth)
 
 A ZKVM-friendly implementation of [Casper FFG](https://arxiv.org/abs/2003.03052), the finality gadget used by the Ethereum beacon chain. This forms part of [The Signal](https://github.com/boundless-xyz/signal) - an open source initiative to build trustless interoperability across all chains.
 
@@ -11,7 +11,7 @@ Using this program someone can check that the beacon chain has updated a finaliz
 
 Like Casper, Signal.Ethereum operates over the abstraction of checkpoints and attested links rather than blocks and epochs. The ZKVM program allows a prover to construct a proof that they have seen sufficient attestations for a link(s) that can transition a given consensus state (latest justified and finalized checkpoints) to a new consensus state. Starting from a trusted consensus state, a client verifying these proofs can update its view of the latest finalized checkpoint which can be used as a root of trust for proofs into the finalized blockchain.
 
-See [the book](https://boundless-xyz.github.io/The-Signal.Ethereum/) for detailed analysis of the protocol. 
+See [the book](https://boundless-xyz.github.io/Signal-Ethereum/) for detailed analysis of the protocol. 
 
 ### Important Considerations
 

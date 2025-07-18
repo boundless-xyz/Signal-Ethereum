@@ -21,7 +21,7 @@ use host::{
     PersistentApiStateProvider, StateProvider, TryAsBeaconTypeVersioned,
     host_state_reader::HostStateReader, preflight_state_reader::PreflightStateReader,
 };
-use methods::{MAINNET_ELF, SEPOLIA_ELF, TRANSITION_ELF};
+use methods::{MAINNET_ELF, SEPOLIA_ELF, TRANSITION_MAINNET_ELF, TRANSITION_SEPOLIA_ELF};
 use risc0_zkvm::{ExecutorEnv, default_executor};
 use serde::Serialize;
 use ssz_rs::HashTreeRoot;
@@ -210,7 +210,7 @@ async fn main() -> anyhow::Result<()> {
         }
 
         Command::Transition { slot, mode } => {
-            transition(&reader, &beacon_client, slot, mode).await?;
+            transition(&reader, &beacon_client, slot, mode, args.network).await?;
         }
     }
 
@@ -222,6 +222,7 @@ async fn transition<P: StateProvider>(
     beacon_client: &BeaconClient,
     slot: Slot,
     mode: ExecMode,
+    network: Network,
 ) -> anyhow::Result<()> {
     let block = beacon_client
         .get_signed_block(slot)
@@ -295,7 +296,10 @@ async fn transition<P: StateProvider>(
             .write_frame(block_bytes.as_ref())
             .write_frame(state_root_opt_bytes.as_ref())
             .build()?;
-        let elf = TRANSITION_ELF;
+        let elf = match network {
+            Network::Mainnet => TRANSITION_MAINNET_ELF,
+            Network::Sepolia => TRANSITION_SEPOLIA_ELF,
+        };
         let session_info = default_executor().execute(env, elf)?;
         debug!(cycles = session_info.cycles(), "Session info");
 

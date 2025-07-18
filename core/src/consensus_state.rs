@@ -273,7 +273,7 @@ impl ConsensusState {
     /// Decodes a `ConsensusState` from its ABI byte representation.
     #[inline]
     pub fn abi_decode(data: &[u8]) -> Result<Self, alloy_sol_types::Error> {
-        let state = <abi::State as SolType>::abi_decode(data, true)?;
+        let state = <abi::State as SolType>::abi_decode(data)?;
         state
             .try_into()
             .map_err(|err: ConsensusError| alloy_sol_types::Error::custom(err.to_string()))

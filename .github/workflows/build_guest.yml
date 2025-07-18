@@ -12,7 +12,7 @@ concurrency:
 # this is needed to gain access via OIDC to the S3 bucket for caching
 permissions:
   id-token: write
-  contents: read
+  contents: write
 
 env:
   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -50,12 +50,20 @@ jobs:
           RISC0_USE_DOCKER: 1
         run: cargo build --manifest-path=methods/Cargo.toml 
 
+      - name: compute image ids
+        id: compute-image-ids
+        run: |
+          IMAGE_ID=$(r0vm --elf target/riscv-guest/methods/beacon_guest/riscv32im-risc0-zkvm-elf/docker/mainnet.bin --id)
+          echo "mainnet_image_id=$IMAGE_ID" >> $GITHUB_OUTPUT
+          IMAGE_ID=$(r0vm --elf target/riscv-guest/methods/beacon_guest/riscv32im-risc0-zkvm-elf/docker/sepolia.bin --id)
+          echo "sepolia_image_id=$IMAGE_ID" >> $GITHUB_OUTPUT
+
       - uses: svenstaro/upload-release-action@v2
         with:
           overwrite: true
           repo_token: ${{ secrets.GITHUB_TOKEN }}
           file: target/riscv-guest/methods/beacon_guest/riscv32im-risc0-zkvm-elf/docker/mainnet.bin
-          asset_name: mainnet_guest.bin
+          asset_name: mainnet_${{ steps.compute-image-ids.outputs.mainnet_image_id }}.bin
           tag: ${{ github.ref }}
 
       - uses: svenstaro/upload-release-action@v2
@@ -63,7 +71,7 @@ jobs:
           overwrite: true
           repo_token: ${{ secrets.GITHUB_TOKEN }}
           file: target/riscv-guest/methods/beacon_guest/riscv32im-risc0-zkvm-elf/docker/sepolia.bin
-          asset_name: sepolia_guest.bin
+          asset_name: sepolia_${{ steps.compute-image-ids.outputs.sepolia_image_id }}.bin
           tag: ${{ github.ref }}
 
       - name: Show sccache stats

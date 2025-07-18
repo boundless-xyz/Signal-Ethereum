@@ -109,6 +109,9 @@ enum Command {
         #[clap(long, short)]
         log_path: Option<PathBuf>,
     },
+
+    #[clap(name = "transition")]
+    Transition { slot: Slot },
 }
 
 /// Enum for network selection
@@ -197,9 +200,17 @@ async fn main() -> anyhow::Result<()> {
             )
             .await?;
         }
+
+        Command::Transition { slot } => {
+            transition(slot).await?;
+        }
     }
 
     Ok(())
+}
+
+async fn transition(slot: Slot) -> anyhow::Result<()> {
+    todo!()
 }
 
 async fn run_sync<E: EthSpec + Serialize>(

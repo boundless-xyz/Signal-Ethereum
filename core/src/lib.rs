@@ -25,6 +25,7 @@ use std::{
 };
 use tree_hash::TreeHash;
 
+mod apply_block;
 mod attestation;
 mod bls;
 mod committee_cache;

@@ -24,7 +24,6 @@ use host::{
 use methods::{MAINNET_ELF, SEPOLIA_ELF, TRANSITION_ELF};
 use risc0_zkvm::{ExecutorEnv, default_executor};
 use serde::Serialize;
-use ssz::Encode;
 use ssz_rs::HashTreeRoot;
 use std::{
     fmt::{self, Display},
@@ -283,10 +282,11 @@ async fn transition<P: StateProvider>(
     );
     if mode == ExecMode::R0vm {
         info!("Running in R0VM mode, committing post-state root to zkvm");
-        let pre_state_bytes = pre_state.as_ssz_bytes();
+        let pre_state_bytes =
+            serde_json::to_vec(&pre_state).context("Failed to serialize pre-state")?;
         let block_root_bytes =
             bincode::serialize(&block_root).context("Failed to serialize block root")?;
-        let block_bytes = block.as_ssz_bytes();
+        let block_bytes = serde_json::to_vec(&block).context("Failed to serialize block")?;
         let state_root_opt_bytes =
             bincode::serialize(&state_root_opt).context("Failed to serialize state root option")?;
         let env = ExecutorEnv::builder()

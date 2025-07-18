@@ -624,6 +624,7 @@ dependencies = [
  "chainspec",
  "risc0-zkvm",
  "serde_cbor",
+ "serde_json",
  "sha2",
  "types",
  "z-core",

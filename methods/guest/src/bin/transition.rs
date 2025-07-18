@@ -39,19 +39,23 @@ fn main() {
     ));
     let spec = chainspec::mainnet_spec();
 
-    let pre_state =
-        beacon_types::BeaconState::<MainnetEthSpec>::from_ssz_bytes(&pre_state_bytes, &spec)
-            .expect("Failed to deserialize pre-state");
-    env::log("Pre-state deserialized");
     let block_root =
         bincode::deserialize(&block_root_bytes).expect("Failed to deserialize block root");
     env::log("Block root deserialized");
-    let block: beacon_types::SignedBeaconBlock<MainnetEthSpec> =
-        from_ssz_bytes(&block_bytes).expect("Failed to deserialize block");
-    env::log("Block deserialized");
+
     let state_root_opt = bincode::deserialize(&state_root_opt_bytes)
         .expect("Failed to deserialize state root option");
     env::log("State root option deserialized");
+
+    let block: beacon_types::SignedBeaconBlock<MainnetEthSpec> =
+        serde_json::from_slice(&block_bytes).expect("Failed to deserialize block");
+    // from_ssz_bytes(&block_bytes).expect("Failed to deserialize block");
+    env::log("Block deserialized");
+
+    let pre_state: beacon_types::BeaconState<MainnetEthSpec> =
+        serde_json::from_slice(&pre_state_bytes).expect("Failed to deserialize pre-state");
+    env::log("Pre-state deserialized");
+
     let mut saved_ctxt: Option<_> = None;
 
     let config = ProcessingConfig {

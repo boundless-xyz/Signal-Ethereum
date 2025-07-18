@@ -46,11 +46,18 @@ thiserror = "2.0"
 tokio = { version = "1.45", features = ["full"] }
 
 # Lighthouse crates
-beacon_chain = { git = "https://github.com/risc0-labs/lighthouse.git", rev = "04b8ea4cdedac4bb0d2f61988d1dd89437a77e2e" }
-beacon_types = { package = "types", git = "https://github.com/risc0-labs/lighthouse.git", rev = "04b8ea4cdedac4bb0d2f61988d1dd89437a77e2e", default-features = false, features = ["legacy-arith"] }
-bls = { git = "https://github.com/risc0-labs/lighthouse.git", rev = "04b8ea4cdedac4bb0d2f61988d1dd89437a77e2e" }
-swap_or_not_shuffle = { git = "https://github.com/risc0-labs/lighthouse.git", rev = "04b8ea4cdedac4bb0d2f61988d1dd89437a77e2e" }
-safe_arith = { git = "https://github.com/risc0-labs/lighthouse.git", rev = "04b8ea4cdedac4bb0d2f61988d1dd89437a77e2e" }
+# beacon_chain = { git = "https://github.com/risc0-labs/lighthouse.git", rev = "04b8ea4cdedac4bb0d2f61988d1dd89437a77e2e" }
+# beacon_types = { package = "types", git = "https://github.com/risc0-labs/lighthouse.git", rev = "04b8ea4cdedac4bb0d2f61988d1dd89437a77e2e", default-features = false, features = ["legacy-arith"] }
+# bls = { git = "https://github.com/risc0-labs/lighthouse.git", rev = "04b8ea4cdedac4bb0d2f61988d1dd89437a77e2e" }
+# swap_or_not_shuffle = { git = "https://github.com/risc0-labs/lighthouse.git", rev = "04b8ea4cdedac4bb0d2f61988d1dd89437a77e2e" }
+# safe_arith = { git = "https://github.com/risc0-labs/lighthouse.git", rev = "04b8ea4cdedac4bb0d2f61988d1dd89437a77e2e" }
+
+
+beacon_chain = { path = "/home/etu/lighthouse/beacon_node/beacon_chain" }
+beacon_types = { package = "types", path = "/home/etu/lighthouse/consensus/types", default-features = false, features = ["legacy-arith"] }
+bls = { path = "/home/etu/lighthouse/crypto/bls" }
+swap_or_not_shuffle = { path = "/home/etu/lighthouse/consensus/swap_or_not_shuffle" }
+safe_arith = { path = "/home/etu/lighthouse/consensus/safe_arith" }
 
 [patch."https://github.com/ralexstokes/ssz-rs"]
 # Get the merkle tree empty node virtualization so non-trivial merkle trees actually fit in memory

@@ -17,6 +17,25 @@ use z_core::{
     ChainSpec, Config, EthSpec, Input, ProcessingConfig, StateInput, do_transition, verify,
 };
 
+struct GuestEnvLogWriter;
+impl std::io::Write for GuestEnvLogWriter {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        env::log(std::str::from_utf8(buf).unwrap());
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+impl tracing_subscriber::fmt::MakeWriter<'_> for GuestEnvLogWriter {
+    type Writer = Self;
+
+    fn make_writer(&self) -> Self::Writer {
+        GuestEnvLogWriter
+    }
+}
+
 pub fn entry<E: EthSpec>(spec: ChainSpec, config: &Config) {
     env::log(&format!("Network: {}", spec.config_name.as_ref().unwrap()));
 
@@ -59,6 +78,14 @@ pub fn entry<E: EthSpec>(spec: ChainSpec, config: &Config) {
 }
 
 pub fn transition_entry<E: EthSpec>(spec: ChainSpec) {
+    let filter = tracing_subscriber::filter::EnvFilter::from_default_env()
+        .add_directive(tracing_subscriber::filter::LevelFilter::INFO.into());
+    tracing_subscriber::fmt()
+        .without_time()
+        .with_env_filter(filter)
+        .with_writer(GuestEnvLogWriter)
+        .init();
+
     env::log("Starting guest");
     let pre_state_bytes = env::read_frame();
     env::log(&format!("Pre-state bytes read: {}", pre_state_bytes.len()));

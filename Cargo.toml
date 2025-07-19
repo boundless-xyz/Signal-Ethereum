@@ -60,6 +60,9 @@ swap_or_not_shuffle = { path = "/home/etu/lighthouse/consensus/swap_or_not_shuff
 safe_arith = { path = "/home/etu/lighthouse/consensus/safe_arith" }
 state_processing = { path = "/home/etu/lighthouse/consensus/state_processing", default-features = false, features = ["legacy-arith"] }
 
+[patch.crates-io]
+milhouse = { path = "/home/etu/milhouse" }
+
 [patch."https://github.com/ralexstokes/ssz-rs"]
 # Get the merkle tree empty node virtualization so non-trivial merkle trees actually fit in memory
 ssz_rs = { git = "https://github.com/willemolding/ssz-rs", rev = "d939604c3693aadaff63dcacf9a810d8845fafef" }

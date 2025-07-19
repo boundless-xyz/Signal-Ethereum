@@ -301,7 +301,7 @@ async fn transition<P: StateProvider>(
             Network::Sepolia => TRANSITION_SEPOLIA_ELF,
         };
         let session_info = default_executor().execute(env, elf)?;
-        debug!(cycles = session_info.cycles(), "Session info");
+        info!(cycles = session_info.cycles(), "Session info");
 
         let journal_bytes = session_info.journal.bytes;
         let guest_post_state_root: FixedBytes<32> = bincode::deserialize(&journal_bytes)?;

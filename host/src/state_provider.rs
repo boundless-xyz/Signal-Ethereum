@@ -40,13 +40,20 @@ pub enum StateProviderError {
 }
 
 pub trait StateProvider {
+    /// The `EthSpec` associated with the chain this provider sources data from.
     type Spec: EthSpec;
+
+    /// Returns the `genesis_validators_root` from the state at slot 0.
     fn genesis_validators_root(&self) -> Result<Root, StateProviderError> {
         Ok(self.state_at_slot(0u64.into())?.genesis_validators_root())
     }
 
-    fn state_at_checkpoint(&self, checkpoint: Checkpoint) -> Result<StateRef, StateProviderError> {
-        let state = self.state_at_epoch(checkpoint.epoch())?;
+    /// Fetches the `BeaconState` at the boundary of a given `epoch`.
+    ///
+    /// This method handles cases where the first slot of an epoch is empty by finding the
+    /// block at the true epoch boundary and fetching its corresponding state.
+    fn state_at_epoch_boundary(&self, epoch: Epoch) -> Result<StateRef, StateProviderError> {
+        let state = self.state_at_epoch(epoch)?;
 
         // check that the start_slot is indeed the epoch boundary
         let epoch_boundary_slot = state.latest_block_header().slot;
@@ -55,12 +62,16 @@ pub trait StateProvider {
         }
 
         warn!(
-            "Epoch {} does not contain the epoch boundary block, etching slot {}",
-            checkpoint.epoch(),
-            epoch_boundary_slot
+            "Epoch {} does not contain the epoch boundary block, fetching slot {}",
+            epoch, epoch_boundary_slot
         );
 
-        let state = self.state_at_slot(epoch_boundary_slot.into())?;
+        self.state_at_slot(epoch_boundary_slot.into())
+    }
+
+    /// Fetches the `BeaconState` corresponding to a finalized `Checkpoint`.
+    fn state_at_checkpoint(&self, checkpoint: Checkpoint) -> Result<StateRef, StateProviderError> {
+        let state = self.state_at_epoch_boundary(checkpoint.epoch())?;
 
         // check that the state matches the epoch boundary block
         let mut epoch_boundary_block = state.latest_block_header().clone();
@@ -74,10 +85,12 @@ pub trait StateProvider {
         Ok(state)
     }
 
+    /// A convenience method to fetch the `BeaconState` at the start slot of a given `epoch`.
     fn state_at_epoch(&self, epoch: Epoch) -> Result<StateRef, StateProviderError> {
         let start_slot = epoch.start_slot(Self::Spec::slots_per_epoch());
         self.state_at_slot(start_slot)
     }
 
+    /// The core method required by the trait to fetch a `BeaconState` at a specific `Slot`.
     fn state_at_slot(&self, slot: Slot) -> Result<StateRef, StateProviderError>;
 }

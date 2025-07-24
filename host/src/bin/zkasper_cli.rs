@@ -244,7 +244,7 @@ async fn main() -> anyhow::Result<()> {
             let inputs_dir = args.data_dir.join(args.network.to_string()).join("inputs");
             fs::create_dir_all(&inputs_dir).context("failed to create encoded inputs directory")?;
             let mut input_file =
-                File::create(&inputs_dir.join(format!("{finalized_epoch}_stdin.bin")))
+                File::create(inputs_dir.join(format!("{finalized_epoch}_stdin.bin")))
                     .context("failed to create encoded input file")?;
 
             let journals_dir = args
@@ -253,7 +253,7 @@ async fn main() -> anyhow::Result<()> {
                 .join("journals");
             fs::create_dir_all(&journals_dir).context("failed to create journals directory")?;
             let mut journal_file =
-                File::create(&journals_dir.join(format!("{finalized_epoch}_journal.bin")))
+                File::create(journals_dir.join(format!("{finalized_epoch}_journal.bin")))
                     .context("failed to create journal file")?;
 
             input_file

@@ -3,7 +3,7 @@ resolver = "2"
 members = ["chainspec", "core", "host", "methods", "ssz-multiproofs"]
 
 [workspace.package]
-version = "0.1.0"
+version = "1.0.0"
 edition = "2024"
 repository = "https://github.com/boundless-xyz/The-Signal.Ethereum/"
 
@@ -55,8 +55,3 @@ safe_arith = { git = "https://github.com/risc0-labs/lighthouse.git", rev = "04b8
 [patch."https://github.com/ralexstokes/ssz-rs"]
 # Get the merkle tree empty node virtualization so non-trivial merkle trees actually fit in memory
 ssz_rs = { git = "https://github.com/willemolding/ssz-rs", rev = "d939604c3693aadaff63dcacf9a810d8845fafef" }
-# ssz_rs = { path = "../ssz-rs/ssz-rs" }
-
-# [patch."https://github.com/gattaca-com/ethereum-consensus"]
-# ethereum-consensus = { path = "../ethereum-consensus/ethereum-consensus" }
-# beacon-api-client = { path = "../ethereum-consensus/beacon-api-client" }

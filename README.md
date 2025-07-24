@@ -2,9 +2,6 @@
 
 A ZKVM-friendly implementation of [Casper FFG](https://arxiv.org/abs/2003.03052), the finality gadget used by the Ethereum beacon chain. This forms part of [The Signal](https://github.com/boundless-xyz/signal) - an open source initiative to build trustless interoperability across all chains.
 
-> [!WARNING]  
-> The Signal: Ethereum is currently under audit and its design under peer review. The code, or the generated proofs should not be used in any production system. Aspects of the design may change without notice.
-
 Using this program someone can check that the beacon chain has updated a finalized checkpoint correctly, backed by the current validator set of Etheruem
 
 ## Background
@@ -101,6 +98,12 @@ Options:
 > This RPC must support the [Debug](https://ethereum.github.io/beacon-APIs/#/Debug) endpoints and, unless operating near the tip of the chain,
 > must support access to historical beacon states (e.g. an archive node). 
 > [Quicknode](https://www.quicknode.com/)(unaffiliated) is one public RPC provider that is known to work. 
+
+## Audits
+
+Signal Ethereum has been audited by Sigma Prime 
+
+- Audit report available [here](https://github.com/sigp/public-audits/blob/master/reports/risc-zero/Sigma_Prime_Risc_Zero_The_Signal_Ethereum_Security_Assessment_Report_v2_0.pdf) for commit [a75d3d9](https://github.com/boundless-xyz/Signal-Ethereum/tree/a75d3d99127397eac5d4b1f160c936522f87c065)
 
 ## License
 

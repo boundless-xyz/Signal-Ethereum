@@ -10,7 +10,7 @@ alloy-primitives = { workspace = true, features = ["rlp"] }
 alloy-sol-types = { workspace = true }
 beacon_types = { workspace = true, default-features = false, features = ["legacy-arith"] }
 bls = { workspace = true }
-ethereum_ssz = "0.7.1"
+ethereum_ssz = "0.9.0"
 itertools = "0.14"
 safe_arith = { workspace = true }
 serde = { workspace = true }
@@ -21,7 +21,7 @@ ssz-multiproofs = { path = "../ssz-multiproofs" }
 swap_or_not_shuffle = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
-tree_hash = { version = "0.8" }
+tree_hash = { version = "0.10" }
 
 [dev-dependencies]
 bincode = { workspace = true }

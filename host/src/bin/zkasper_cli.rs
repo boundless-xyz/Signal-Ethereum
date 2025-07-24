@@ -347,14 +347,14 @@ async fn run_sync<E: EthSpec + Serialize>(
     }
 }
 
-async fn prepare_input<
-    E: EthSpec + Serialize,
-    S: StateReader<Spec = E> + StateProvider<Spec = E>,
->(
+async fn prepare_input<E: EthSpec + Serialize, S: StateReader<Spec = E> + StateProvider<Spec = E>>(
     finalized_epoch: Epoch,
     reader: &S,
     beacon_client: &BeaconClient,
-) -> anyhow::Result<(Vec<u8>, Vec<u8>, ConsensusState, ConsensusState)> {
+) -> anyhow::Result<(Vec<u8>, Vec<u8>, ConsensusState, ConsensusState)>
+where
+    <S as StateReader>::Error: Sync + Send + 'static,
+{
     let trusted_state = reader.state_at_epoch_boundary(finalized_epoch)?;
     let epoch_boundary_slot = trusted_state.latest_block_header().slot;
     let trusted_beacon_block = beacon_client
@@ -378,7 +378,7 @@ async fn prepare_input<
     let post_state = verify(&DEFAULT_CONFIG, &reader, input.clone()).context("preflight failed")?;
     info!("Preflight succeeded");
 
-    let state_input = reader.to_input();
+    let state_input = reader.to_input()?;
 
     let state_bytes = bincode::serialize(&state_input).context("failed to serialize state")?;
     debug!(len = state_bytes.len(), "State serialized");

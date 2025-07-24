@@ -617,7 +617,7 @@ checksum = "55248b47b0caf0546f7988906588779981c43bb1bc9d0c44087278f80cdb44ba"
 
 [[package]]
 name = "beacon_guest"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "bincode",
  "blst",
@@ -900,7 +900,7 @@ checksum = "613afe47fcd5fac7ccf1db93babcb082c5994d996f20b8b159f2ad1658eb5724"
 
 [[package]]
 name = "chainspec"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "serde_yaml",
  "types",
@@ -3897,7 +3897,7 @@ dependencies = [
 
 [[package]]
 name = "ssz-multiproofs"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "alloy-primitives",
  "bitvec",
@@ -5049,7 +5049,7 @@ dependencies = [
 
 [[package]]
 name = "z-core"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",

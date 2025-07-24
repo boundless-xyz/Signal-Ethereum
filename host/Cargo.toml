@@ -13,9 +13,6 @@ bench = false
 [[bin]]
 name = "zkasper_cli"
 
-[[bin]]
-name = "simple_prove"
-
 [dependencies]
 alloy-primitives = { workspace = true, features = ["rlp"] }
 anyhow = "1.0"

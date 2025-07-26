@@ -43,6 +43,7 @@ pub fn entry<E: EthSpec>(spec: ChainSpec, config: &Config) {
 
     env::log("Verifying FFG state transitions...");
 
+    let finalized_slot = input.finalized_block.slot.clone();
     let pre_state = input.consensus_state.clone();
     let post_state = verify(config, &state_reader, input).unwrap();
 
@@ -54,4 +55,5 @@ pub fn entry<E: EthSpec>(spec: ChainSpec, config: &Config) {
     // write public output to the journal
     env::commit_slice(&pre_state.abi_encode());
     env::commit_slice(&post_state.abi_encode());
+    env::commit_slice(&finalized_slot.to_le_bytes());
 }

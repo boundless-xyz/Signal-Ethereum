@@ -18,7 +18,9 @@ use ethereum_consensus::{electra::mainnet::SignedBeaconBlockHeader, types::mainn
 use std::collections::HashMap;
 use std::fmt::Display;
 use tracing::debug;
-use z_core::{Attestation, Checkpoint, ConsensusError, ConsensusState, Epoch, Input, Link, ensure};
+use z_core::{
+    Attestation, Checkpoint, ConsensusError, ConsensusState, Epoch, Input, Link, Root, ensure,
+};
 
 /// A trait to abstract reading data from an instance of a beacon chain
 /// This could be an RPC to a node or something else (e.g. test harness)
@@ -50,6 +52,8 @@ pub enum InputBuilderError {
     ConsensusError(#[from] ConsensusError),
     #[error("Chain reader error")]
     ChainReader(#[from] anyhow::Error),
+    #[error("Unable to retrieve finalized block with root: {0}")]
+    UnableToRetrieveFinalizedBlock(Root),
 }
 
 pub struct InputBuilder<E, CR> {
@@ -90,10 +94,21 @@ impl<E: EthSpec, CR: ChainReader> InputBuilder<E, CR> {
         // Concurrently fetch attestations for all required links.
         let attestations = self.collect_attestations_for_links(&links).await?;
 
+        let finalized_block_root = next_state.finalized_checkpoint().root();
+        let finalized_block = self
+            .chain_reader
+            .get_block_header(finalized_block_root)
+            .await?
+            .ok_or(InputBuilderError::UnableToRetrieveFinalizedBlock(
+                finalized_block_root,
+            ))?
+            .message;
+
         Ok((
             Input {
                 consensus_state: state,
                 attestations,
+                finalized_block: finalized_block.try_as_beacon_type()?,
             },
             next_state,
         ))

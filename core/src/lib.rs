@@ -86,6 +86,9 @@ pub struct Input<E: EthSpec> {
     /// for the same link are grouped together.
     #[serde_as(as = "Vec<DiskAttestation>")]
     pub attestations: Vec<Attestation<E>>,
+
+    /// The beacon block header that is finalized by the attestations.
+    pub finalized_block: BeaconBlockHeader,
 }
 
 impl<E: EthSpec> fmt::Debug for Input<E> {
@@ -244,6 +247,19 @@ impl Display for Link {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         write!(f, "{}->{}", self.source, self.target)
     }
+}
+
+// This is redefined here instead of importing from `beacon_types` as the ligthhouse version
+// uses #[serde(with = "serde_utils::quoted_u64")] which prevents non-json serialization
+#[derive(
+    Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize, tree_hash_derive::TreeHash,
+)]
+pub struct BeaconBlockHeader {
+    pub slot: u64,
+    pub proposer_index: u64,
+    pub parent_root: Root,
+    pub state_root: Root,
+    pub body_root: Root,
 }
 
 #[macro_export]

@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use crate::{
-    AttestationData, Checkpoint, CommitteeCache, Config, ConsensusError, Epoch, Input, Link,
+    AttestationData, Checkpoint, CommitteeCache, Config, ConsensusError, Epoch, Input, Link, Root,
     ShuffleData, StateReader, ValidatorIndex, ValidatorInfo, committee_cache,
     consensus_state::ConsensusState, ensure, get_attesting_indices, get_total_balance,
 };
@@ -24,6 +24,7 @@ use itertools::Itertools;
 use safe_arith::{ArithError, SafeArith};
 use std::collections::{BTreeMap, BTreeSet};
 use tracing::{debug, info, trace};
+use tree_hash::TreeHash;
 
 #[derive(thiserror::Error, Debug, PartialEq)]
 pub enum VerifyError {
@@ -52,6 +53,10 @@ pub enum VerifyError {
     LookaheadExceedsLimit(Epoch, Epoch),
     #[error("Arithmetic error: {0:?}")]
     ArithError(ArithError),
+    #[error(
+        "Root of input finalized block does not match root in finalized checkpoint: input {input}, checkpoint {checkpoint}"
+    )]
+    BlockRootMismatch { input: Root, checkpoint: Root },
 }
 
 impl From<ArithError> for VerifyError {
@@ -64,6 +69,9 @@ impl From<ArithError> for VerifyError {
 ///
 /// This function processes the given attestations. For each corresponding supermajority link it
 /// updates the consensus state until a new finalization is reached.
+///
+/// It will also check that the input.finalized_block matches the root of the finalized checkpoint. So after a successful
+/// call to verify the contents of the finalized_block can be trusted.
 ///
 /// # Preconditions
 ///
@@ -78,6 +86,7 @@ pub fn verify<S: StateReader>(
     let Input {
         mut consensus_state,
         attestations,
+        finalized_block,
     } = input;
 
     // group attestations by their corresponding link
@@ -150,6 +159,15 @@ pub fn verify<S: StateReader>(
     ensure!(
         consensus_state.finalized_checkpoint() != trusted_checkpoint,
         VerifyError::InvalidFinalization(consensus_state.finalized_checkpoint())
+    );
+
+    // provided block header must match the finalized block root
+    ensure!(
+        finalized_block.tree_hash_root() == consensus_state.finalized_checkpoint().root(),
+        VerifyError::BlockRootMismatch {
+            input: consensus_state.finalized_checkpoint().root(),
+            checkpoint: finalized_block.tree_hash_root(),
+        }
     );
 
     Ok(consensus_state)

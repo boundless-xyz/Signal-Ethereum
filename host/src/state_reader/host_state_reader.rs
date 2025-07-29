@@ -23,7 +23,7 @@ use safe_arith::ArithError;
 use std::path::PathBuf;
 use thiserror::Error;
 use tracing::{debug, trace};
-use z_core::{Epoch, RandaoMixIndex, Root, Slot, StateReader, ValidatorIndex, ValidatorInfo};
+use z_core::{Epoch, RandaoMixIndex, Root, Slot, InputReader, ValidatorIndex, ValidatorInfo};
 
 #[derive(Error, Debug)]
 pub enum HostReaderError {
@@ -92,7 +92,7 @@ impl<P: StateProvider> StateProvider for HostStateReader<P> {
     }
 }
 
-impl<P: StateProvider> StateReader for HostStateReader<P> {
+impl<P: StateProvider> InputReader for HostStateReader<P> {
     type Error = HostReaderError;
     type Spec = P::Spec;
 

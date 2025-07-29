@@ -50,7 +50,7 @@ use state_processing::{
 };
 use test_log::test;
 use z_core::{
-    AttestationData, Config, ConsensusState, Input, StateInput, StateReader, VerifyError, verify,
+    AttestationData, Config, ConsensusState, Input, InputReader, StateInput, VerifyError, verify,
 };
 
 const VALIDATOR_COUNT: u64 = 48;

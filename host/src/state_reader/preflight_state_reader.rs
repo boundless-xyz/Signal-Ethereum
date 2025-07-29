@@ -32,7 +32,7 @@ use std::{
 };
 use tracing::{debug, info};
 use z_core::{
-    Checkpoint, Epoch, RandaoMixIndex, Root, StateInput, StateReader, ValidatorIndex, ValidatorInfo,
+    Checkpoint, Epoch, RandaoMixIndex, Root, StateInput, InputReader, ValidatorIndex, ValidatorInfo,
 };
 
 pub struct PreflightStateReader<'a, SR> {
@@ -44,8 +44,8 @@ pub struct PreflightStateReader<'a, SR> {
 
 impl<'a, S, E: EthSpec> PreflightStateReader<'a, S>
 where
-    S: StateReader<Spec = E> + StateProvider<Spec = E>,
-    <S as StateReader>::Error: std::error::Error + Send + Sync + 'static,
+    S: InputReader<Spec = E> + StateProvider<Spec = E>,
+    <S as InputReader>::Error: std::error::Error + Send + Sync + 'static,
 {
     pub fn new(reader: &'a S, trusted_checkpoint: Checkpoint) -> Self {
         Self {
@@ -175,9 +175,9 @@ where
     }
 }
 
-impl<SR> StateReader for PreflightStateReader<'_, SR>
+impl<SR> InputReader for PreflightStateReader<'_, SR>
 where
-    SR: StateReader,
+    SR: InputReader,
 {
     type Error = SR::Error;
     type Spec = SR::Spec;

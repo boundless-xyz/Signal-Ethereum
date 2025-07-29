@@ -12,10 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::StateReader;
+use super::InputReader;
 use crate::{
-    Checkpoint, ConsensusState, EMPTY_STATE_PATCH, Epoch, PublicKey, RandaoMixIndex, Root, Slot,
-    StatePatch, ValidatorIndex, ValidatorInfo, ensure, get_total_balance,
+    BeaconBlockHeader, Checkpoint, ConsensusState, DiskAttestation, EMPTY_STATE_PATCH, Epoch,
+    PublicKey, RandaoMixIndex, Root, Slot, StatePatch, ValidatorIndex, ValidatorInfo, ensure,
+    get_total_balance,
     guest_gindices::{
         activation_eligibility_epoch_gindex, activation_epoch_gindex,
         earliest_consolidation_epoch_gindex, earliest_exit_epoch_gindex, effective_balance_gindex,
@@ -27,7 +28,7 @@ use crate::{
     has_compressed_chunks, serde_utils,
 };
 use alloy_primitives::B256;
-use beacon_types::{ChainSpec, EthSpec, Fork};
+use beacon_types::{Attestation, ChainSpec, EthSpec, Fork};
 use itertools::Itertools;
 use safe_arith::{ArithError, SafeArith};
 use serde::{Deserialize, Serialize};
@@ -35,10 +36,11 @@ use serde_with::serde_as;
 use ssz_multiproofs::Multiproof;
 use std::{collections::BTreeMap, marker::PhantomData, mem};
 use tracing::{debug, trace};
+use tree_hash::TreeHash;
 
 #[serde_as]
 #[derive(Clone, PartialEq, Deserialize, Serialize)]
-pub struct StateInput<'a> {
+pub struct StateInput<'a, E: EthSpec> {
     /// Used fields of the beacon block plus their inclusion proof against the block root.
     #[serde(borrow)]
     pub beacon_block: Multiproof<'a>,
@@ -58,6 +60,26 @@ pub struct StateInput<'a> {
     /// State patches to "look ahead" to future states.
     #[serde_as(as = "BTreeMap<serde_utils::U64, _>")]
     pub patches: BTreeMap<Epoch, StatePatch>,
+
+    /// The trusted consensus state that serves as the starting point.
+    ///
+    /// Any state transitions resulting from the verification of the `attestations` will be applied
+    /// relative to this state.
+    pub consensus_state: ConsensusState,
+
+    /// A list of attestations to be processed.
+    ///
+    /// This contains only the required attestations to advance the consensus state, i.e., they
+    /// each correspond to a supermajority link leading to a new justification.
+    ///
+    /// This vector is expected to be pre-sorted by
+    /// `(attestation.data.source, attestation.data.target)` so that all attestations
+    /// for the same link are grouped together.
+    #[serde_as(as = "Vec<DiskAttestation>")]
+    pub attestations: Vec<Attestation<E>>,
+
+    /// The beacon block header that is finalized by the attestations.
+    pub finalized_block: BeaconBlockHeader,
 }
 
 pub struct SszStateReader<E: EthSpec> {
@@ -69,6 +91,14 @@ pub struct SszStateReader<E: EthSpec> {
 
     // additional unverified data
     patches: BTreeMap<Epoch, StatePatch>,
+
+    pub consensus_state: ConsensusState,
+
+    /// A list of attestations to be processed.
+    pub attestations: Vec<Attestation<E>>,
+
+    /// Trusted block slots
+    pub block_slots: BTreeMap<Root, u64>,
 
     _phantom: PhantomData<E>,
 }
@@ -115,8 +145,8 @@ impl<T> WithContext<T> for Result<T, ssz_multiproofs::Error> {
     }
 }
 
-impl StateInput<'_> {
-    pub fn into_state_reader<E: EthSpec>(
+impl<E: EthSpec> StateInput<'_, E> {
+    pub fn into_state_reader(
         mut self,
         spec: ChainSpec,
         consensus_state: &ConsensusState,
@@ -179,11 +209,19 @@ impl StateInput<'_> {
         // the state patches are unverified, but we have to perform some plausibility checks
         self.validate_state_patches(&spec, &trusted_checkpoint, &state, &validators)?;
 
+        let block_slots = BTreeMap::from_iter([(
+            self.finalized_block.tree_hash_root(),
+            self.finalized_block.slot,
+        )]);
+
         Ok(SszStateReader {
             spec,
             genesis_validators_root: state.genesis_validators_root,
             validators,
             patches: self.patches,
+            consensus_state: self.consensus_state,
+            attestations: self.attestations,
+            block_slots,
             _phantom: PhantomData,
         })
     }
@@ -272,7 +310,7 @@ impl StateInput<'_> {
     }
 }
 
-impl<E: EthSpec> StateReader for SszStateReader<E> {
+impl<E: EthSpec> InputReader for SszStateReader<E> {
     type Error = SszReaderError;
     type Spec = E;
 
@@ -306,6 +344,21 @@ impl<E: EthSpec> StateReader for SszStateReader<E> {
         let randao = patch.randao_mixes.get(&index);
 
         Ok(randao.cloned())
+    }
+
+    fn attestations(&self) -> Result<impl Iterator<Item = &Attestation<Self::Spec>>, Self::Error> {
+        Ok(self.attestations.iter())
+    }
+
+    fn consensus_state(&self) -> Result<ConsensusState, Self::Error> {
+        Ok(self.consensus_state.clone())
+    }
+
+    fn slot_for_block(&self, root: &Root) -> Result<u64, Self::Error> {
+        self.block_slots
+            .get(root)
+            .copied()
+            .ok_or(SszReaderError::ConfigError("Block slot not found"))
     }
 }
 
@@ -504,7 +557,10 @@ fn bool_from_chunk(node: &[u8; 32]) -> bool {
 #[cfg(test)]
 mod tests {
     mod state_input {
-        use crate::{Epoch, RandaoMixIndex, StateInput, StatePatch, ValidatorIndex};
+        use crate::{
+            ConsensusState, Epoch, MainnetEthSpec, RandaoMixIndex, StateInput, StatePatch,
+            ValidatorIndex,
+        };
         use alloy_primitives::B256;
         use bls::SecretKey;
         use std::collections::BTreeMap;
@@ -526,10 +582,19 @@ mod tests {
                         validator_exits: BTreeMap::from([(ValidatorIndex::MAX, Epoch::new(1))]),
                     },
                 )]),
+                consensus_state: ConsensusState::default(),
+                attestations: Vec::new(),
+                finalized_block: crate::BeaconBlockHeader {
+                    slot: 1,
+                    proposer_index: 0,
+                    parent_root: B256::ZERO,
+                    state_root: B256::ZERO,
+                    body_root: B256::ZERO,
+                },
             };
 
             let bytes = bincode::serialize(&input).unwrap();
-            let de = bincode::deserialize::<StateInput>(&bytes).unwrap();
+            let de = bincode::deserialize::<StateInput<MainnetEthSpec>>(&bytes).unwrap();
             assert!(input == de);
         }
     }

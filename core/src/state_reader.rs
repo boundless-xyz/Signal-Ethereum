@@ -12,16 +12,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::{Epoch, RandaoMixIndex, Root, ValidatorIndex, ValidatorInfo};
+use crate::{ConsensusState, Epoch, RandaoMixIndex, Root, ValidatorIndex, ValidatorInfo};
 use alloy_primitives::{B256, aliases::B32};
-use beacon_types::{ChainSpec, EthSpec, Unsigned};
+use beacon_types::{Attestation, ChainSpec, EthSpec, Unsigned};
 use safe_arith::{ArithError, SafeArith};
 use sha2::Digest;
 
 mod ssz_state_reader;
 pub use ssz_state_reader::*;
 
-pub trait StateReader {
+pub trait InputReader {
     type Error: std::error::Error + From<ArithError>;
     type Spec: EthSpec;
 
@@ -44,6 +44,18 @@ pub trait StateReader {
 
     /// Return `state.randao_mixes[idx]`.
     fn randao_mix(&self, epoch: Epoch, idx: RandaoMixIndex) -> Result<Option<B256>, Self::Error>;
+
+    /// Return an iterator over the attestations for this input
+    fn attestations(&self) -> Result<impl Iterator<Item = &Attestation<Self::Spec>>, Self::Error>;
+
+    /// The trusted consensus state that serves as the starting point.
+    ///
+    /// Any state transitions resulting from the verification of the `attestations` will be applied
+    /// relative to this state.
+    fn consensus_state(&self) -> Result<ConsensusState, Self::Error>;
+
+    /// Return the root of the block that is finalized by the attestations
+    fn slot_for_block(&self, block_root: &Root) -> Result<u64, Self::Error>;
 
     /// Return the RANDAO mix at a recent `epoch`.
     fn get_randao_mix(&self, state_epoch: Epoch, epoch: Epoch) -> Result<B256, Self::Error> {

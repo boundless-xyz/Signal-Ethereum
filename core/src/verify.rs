@@ -13,8 +13,8 @@
 // limitations under the License.
 
 use crate::{
-    AttestationData, Checkpoint, CommitteeCache, Config, ConsensusError, Epoch, Input, Link, Root,
-    ShuffleData, StateReader, ValidatorIndex, ValidatorInfo, committee_cache,
+    AttestationData, Checkpoint, CommitteeCache, Config, ConsensusError, Epoch, InputReader, Link,
+    Root, ShuffleData, ValidatorIndex, ValidatorInfo, committee_cache,
     consensus_state::ConsensusState, ensure, get_attesting_indices, get_total_balance,
 };
 use beacon_types::{
@@ -24,7 +24,6 @@ use itertools::Itertools;
 use safe_arith::{ArithError, SafeArith};
 use std::collections::{BTreeMap, BTreeSet};
 use tracing::{debug, info, trace};
-use tree_hash::TreeHash;
 
 #[derive(thiserror::Error, Debug, PartialEq)]
 pub enum VerifyError {
@@ -76,23 +75,19 @@ impl From<ArithError> for VerifyError {
 /// # Preconditions
 ///
 /// The `input.attestations` are expected to be sorted by `(attestation.data.source, attestation.data.target)`.
-pub fn verify<S: StateReader>(
+pub fn verify<S: InputReader>(
     cfg: &Config,
-    state_reader: &S,
-    input: Input<S::Spec>,
+    input_reader: &S,
 ) -> Result<ConsensusState, VerifyError> {
-    let spec = state_reader.chain_spec();
-    let trusted_checkpoint = input.consensus_state.finalized_checkpoint();
-    let Input {
-        mut consensus_state,
-        attestations,
-        finalized_block,
-    } = input;
+    let spec = input_reader.chain_spec();
+    let mut consensus_state = input_reader.consensus_state().unwrap();
+    let trusted_checkpoint = consensus_state.finalized_checkpoint();
 
     // group attestations by their corresponding link
-    for (link, attestations) in &attestations
-        .iter()
-        .chunk_by(|a| (&a.data().source, &a.data().target))
+    for (link, attestations) in &input_reader
+        .attestations()
+        .unwrap()
+        .chunk_by(|a| (a.data().source, a.data().target))
     {
         // we must not process more than one new finalization
         ensure!(
@@ -101,8 +96,8 @@ pub fn verify<S: StateReader>(
         );
 
         let link = Link {
-            source: (*link.0).into(),
-            target: (*link.1).into(),
+            source: (link.0).into(),
+            target: (link.1).into(),
         };
         validate_link(cfg, spec, trusted_checkpoint, &link)?;
         let target_epoch = link.target.epoch();
@@ -110,17 +105,17 @@ pub fn verify<S: StateReader>(
         info!("Computing committees for epoch {}", target_epoch);
 
         // compute all committees for the target epoch
-        let active_validators: BTreeMap<_, _> = state_reader
+        let active_validators: BTreeMap<_, _> = input_reader
             .active_validators(target_epoch)
             .map_err(|e| VerifyError::StateReaderError(e.to_string()))?
             .collect();
-        let committees = compute_committees(state_reader, &active_validators, target_epoch)?;
+        let committees = compute_committees(input_reader, &active_validators, target_epoch)?;
 
         info!("Processing attestations for {}", link);
         let mut participating_indices = BTreeSet::new();
         for attestation in attestations {
             let attesting_indices =
-                process_attestation(state_reader, &active_validators, &committees, attestation)?;
+                process_attestation(input_reader, &active_validators, &committees, &attestation)?;
             participating_indices.extend(attesting_indices);
         }
 
@@ -161,15 +156,6 @@ pub fn verify<S: StateReader>(
         VerifyError::InvalidFinalization(consensus_state.finalized_checkpoint())
     );
 
-    // provided block header must match the finalized block root
-    ensure!(
-        finalized_block.tree_hash_root() == consensus_state.finalized_checkpoint().root(),
-        VerifyError::BlockRootMismatch {
-            input: consensus_state.finalized_checkpoint().root(),
-            checkpoint: finalized_block.tree_hash_root(),
-        }
-    );
-
     Ok(consensus_state)
 }
 
@@ -201,7 +187,7 @@ fn validate_link(
 }
 
 /// Verifies a single attestation returning its attesting validator indices.
-fn process_attestation<S: StateReader, E: EthSpec>(
+fn process_attestation<S: InputReader, E: EthSpec>(
     state: &S,
     active_validators: &BTreeMap<ValidatorIndex, &ValidatorInfo>,
     committees: &CommitteeCache<E>,
@@ -244,8 +230,8 @@ fn process_attestation<S: StateReader, E: EthSpec>(
 }
 
 /// Checks if given indexed attestation is not empty and has a valid aggregate signature.
-fn is_valid_indexed_attestation<S: StateReader>(
-    state_reader: &S,
+fn is_valid_indexed_attestation<S: InputReader>(
+    input_reader: &S,
     attesting_validators: &[&ValidatorInfo],
     data: &AttestationData,
     signature: &AggregateSignature,
@@ -259,13 +245,13 @@ fn is_valid_indexed_attestation<S: StateReader>(
         .map(|validator| &validator.pubkey)
         .collect::<Vec<_>>();
 
-    let domain = state_reader.chain_spec().get_domain(
+    let domain = input_reader.chain_spec().get_domain(
         data.target.epoch,
         Domain::BeaconAttester,
-        &state_reader
+        &input_reader
             .fork(data.target.epoch)
             .map_err(|e| VerifyError::StateReaderError(e.to_string()))?,
-        state_reader
+        input_reader
             .genesis_validators_root()
             .map_err(|e| VerifyError::StateReaderError(e.to_string()))?,
     );
@@ -279,15 +265,15 @@ fn is_valid_indexed_attestation<S: StateReader>(
 }
 
 /// Return all the committees for the given epoch.
-fn compute_committees<S: StateReader>(
-    state_reader: &S,
+fn compute_committees<S: InputReader>(
+    input_reader: &S,
     active_validators: &BTreeMap<ValidatorIndex, &ValidatorInfo>,
     epoch: Epoch,
 ) -> Result<CommitteeCache<S::Spec>, VerifyError> {
-    let spec = state_reader.chain_spec();
+    let spec = input_reader.chain_spec();
 
     let domain = spec.get_domain_constant(Domain::BeaconAttester);
-    let seed = state_reader
+    let seed = input_reader
         .get_seed(epoch, domain.to_le_bytes().into())
         .map_err(|e| VerifyError::StateReaderError(e.to_string()))?;
     let indices: Vec<_> = active_validators.keys().copied().collect();

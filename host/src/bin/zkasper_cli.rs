@@ -34,7 +34,7 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use url::Url;
 use z_core::{
     Checkpoint, Config, ConsensusState, DEFAULT_CONFIG, Epoch, EthSpec, Input, MainnetEthSpec,
-    Slot, StateInput, StateReader, abi, verify,
+    Slot, StateInput, InputReader, abi, verify,
 };
 
 // all chains use the mainnet preset
@@ -347,13 +347,13 @@ async fn run_sync<E: EthSpec + Serialize>(
     }
 }
 
-async fn prepare_input<E: EthSpec + Serialize, S: StateReader<Spec = E> + StateProvider<Spec = E>>(
+async fn prepare_input<E: EthSpec + Serialize, S: InputReader<Spec = E> + StateProvider<Spec = E>>(
     finalized_epoch: Epoch,
     reader: &S,
     beacon_client: &BeaconClient,
 ) -> anyhow::Result<(Vec<u8>, Vec<u8>, ConsensusState, ConsensusState, u64)>
 where
-    <S as StateReader>::Error: Sync + Send + 'static,
+    <S as InputReader>::Error: Sync + Send + 'static,
 {
     let trusted_state = reader.state_at_epoch_boundary(finalized_epoch)?;
     let epoch_boundary_slot = trusted_state.latest_block_header().slot;
@@ -393,7 +393,7 @@ where
     ))
 }
 
-fn run_verify<E: EthSpec + Serialize, R: StateReader<Spec = E> + StateProvider<Spec = E>>(
+fn run_verify<E: EthSpec + Serialize, R: InputReader<Spec = E> + StateProvider<Spec = E>>(
     pre_state: ConsensusState,
     state_bytes: impl AsRef<[u8]>,
     input_bytes: impl AsRef<[u8]>,

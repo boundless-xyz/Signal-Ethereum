@@ -15,7 +15,7 @@
 use alloy_primitives::B256;
 use beacon_types::{ChainSpec, EthSpec};
 use std::iter;
-use z_core::{Epoch, RandaoMixIndex, Root, StateReader, ValidatorIndex, ValidatorInfo};
+use z_core::{Epoch, RandaoMixIndex, Root, InputReader, ValidatorIndex, ValidatorInfo};
 
 /// A simple state reader used for debugging and testing.
 pub struct AssertStateReader<'a, S, R> {
@@ -23,7 +23,7 @@ pub struct AssertStateReader<'a, S, R> {
     reader_b: &'a R,
 }
 
-impl<'a, S: StateReader, R: StateReader> AssertStateReader<'a, S, R> {
+impl<'a, S: InputReader, R: InputReader> AssertStateReader<'a, S, R> {
     pub fn new(inner: &'a S, reader: &'a R) -> Self {
         Self {
             reader_a: inner,
@@ -32,7 +32,7 @@ impl<'a, S: StateReader, R: StateReader> AssertStateReader<'a, S, R> {
     }
 }
 
-impl<E: EthSpec, S: StateReader<Spec = E>, R: StateReader<Spec = E>> StateReader
+impl<E: EthSpec, S: InputReader<Spec = E>, R: InputReader<Spec = E>> InputReader
     for AssertStateReader<'_, S, R>
 {
     type Error = S::Error;

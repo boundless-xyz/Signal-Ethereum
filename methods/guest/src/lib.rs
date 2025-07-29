@@ -12,7 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use alloy_sol_types::SolValue;
 use risc0_zkvm::guest::env;
 use z_core::{ChainSpec, Config, EthSpec, Input, StateInput, abi, verify};
 
@@ -55,5 +54,5 @@ pub fn entry<E: EthSpec>(spec: ChainSpec, config: &Config) {
 
     // write public output to the journal
     let journal = abi::Journal::new(&pre_state, &post_state, finalized_slot);
-    env::commit_slice(&journal.abi_encode());
+    env::commit_slice(&journal.encode());
 }

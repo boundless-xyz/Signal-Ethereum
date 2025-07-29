@@ -1,3 +1,5 @@
+use alloy_sol_types::SolValue;
+
 use crate::{ConsensusError, ConsensusState, ensure};
 
 // Defines the Solidity struct layouts for public types
@@ -69,5 +71,13 @@ impl Journal {
             post_state: post_state.into(),
             finalized_slot,
         }
+    }
+
+    pub fn encode(&self) -> Vec<u8> {
+        self.abi_encode()
+    }
+
+    pub fn encoded_size(&self) -> usize {
+        self.abi_encoded_size()
     }
 }

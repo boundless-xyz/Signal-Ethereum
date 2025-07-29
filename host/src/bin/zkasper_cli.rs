@@ -34,7 +34,7 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use url::Url;
 use z_core::{
     Checkpoint, Config, ConsensusState, DEFAULT_CONFIG, Epoch, EthSpec, Input, MainnetEthSpec,
-    Slot, StateInput, StateReader, verify,
+    Slot, StateInput, StateReader, abi, verify,
 };
 
 // all chains use the mainnet preset
@@ -183,7 +183,7 @@ async fn main() -> anyhow::Result<()> {
             mode,
             trusted_epoch,
         } => {
-            let (state_bytes, input_bytes, pre_state, _post_state) =
+            let (state_bytes, input_bytes, pre_state, _post_state, _) =
                 prepare_input(trusted_epoch, &reader, &beacon_client).await?;
 
             let post_state = run_verify(
@@ -235,7 +235,7 @@ async fn main() -> anyhow::Result<()> {
                 continue;
             }
 
-            let (state_bytes, input_bytes, pre_state, post_state) =
+            let (state_bytes, input_bytes, pre_state, post_state, finalized_slot) =
                 prepare_input(finalized_epoch, &reader, &beacon_client).await?;
 
             let encoded_input = encode_input_stdin(&state_bytes, &input_bytes)
@@ -261,12 +261,12 @@ async fn main() -> anyhow::Result<()> {
                 .context("failed to write input to file")?;
             info!("Input written to {:?}", input_file);
 
+            let journal = abi::Journal::new(&pre_state, &post_state, finalized_slot);
+
             journal_file
-                .write_all(&pre_state.abi_encode())
-                .context("failed to write pre_state to file")?;
-            journal_file
-                .write_all(&post_state.abi_encode())
-                .context("failed to write post_state to file")?;
+                .write_all(&journal.encode())
+                .context("failed to write journal to file")?;
+
             info!("Journal written to {:?}", journal_file);
 
             // update for next iteration
@@ -307,7 +307,7 @@ async fn run_sync<E: EthSpec + Serialize>(
     info!("Initial Consensus State: {:#?}", consensus_state);
 
     loop {
-        let (state_bytes, input_bytes, pre_state, expected_state) = prepare_input(
+        let (state_bytes, input_bytes, pre_state, expected_state, _) = prepare_input(
             consensus_state.finalized_checkpoint().epoch(),
             &sr,
             beacon_client,
@@ -351,7 +351,7 @@ async fn prepare_input<E: EthSpec + Serialize, S: StateReader<Spec = E> + StateP
     finalized_epoch: Epoch,
     reader: &S,
     beacon_client: &BeaconClient,
-) -> anyhow::Result<(Vec<u8>, Vec<u8>, ConsensusState, ConsensusState)>
+) -> anyhow::Result<(Vec<u8>, Vec<u8>, ConsensusState, ConsensusState, u64)>
 where
     <S as StateReader>::Error: Sync + Send + 'static,
 {
@@ -384,7 +384,13 @@ where
     debug!(len = state_bytes.len(), "State serialized");
     let input_bytes = bincode::serialize(&input).context("failed to serialize input")?;
 
-    Ok((state_bytes, input_bytes, input.consensus_state, post_state))
+    Ok((
+        state_bytes,
+        input_bytes,
+        input.consensus_state,
+        post_state,
+        input.finalized_block.slot,
+    ))
 }
 
 fn run_verify<E: EthSpec + Serialize, R: StateReader<Spec = E> + StateProvider<Spec = E>>(

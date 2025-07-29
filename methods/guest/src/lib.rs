@@ -13,39 +13,37 @@
 // limitations under the License.
 
 use risc0_zkvm::guest::env;
-use z_core::{ChainSpec, Config, EthSpec, Input, StateInput, abi, verify};
+use z_core::{ChainSpec, Config, EthSpec, InputReader, StateInput, abi, verify};
 
 pub fn entry<E: EthSpec>(spec: ChainSpec, config: &Config) {
     env::log(&format!("Network: {}", spec.config_name.as_ref().unwrap()));
 
     env::log("Reading frames...");
     let ssz_reader_bytes = env::read_frame();
-    let input_bytes = env::read_frame();
     env::log("Deserializing data...");
 
-    let input: Input<E> = bincode::deserialize(&input_bytes).unwrap();
-    env::log(&format!("Input deserialized: {} bytes", input_bytes.len()));
-
     let state_reader = {
-        let state_input: StateInput = bincode::deserialize(&ssz_reader_bytes).unwrap();
+        let state_input: StateInput<E> = bincode::deserialize(&ssz_reader_bytes).unwrap();
         env::log(&format!(
-            "StateReader deserialized: {} bytes",
+            "InputReader deserialized: {} bytes",
             ssz_reader_bytes.len()
         ));
 
-        env::log("Verifying StateReader...");
-        state_input.into_state_reader(spec, &input.consensus_state)
+        env::log("Verifying InputReader...");
+        state_input.into_state_reader(spec)
     }
     .unwrap();
 
     // the input bytes are no longer needed
-    drop((ssz_reader_bytes, input_bytes));
+    drop(ssz_reader_bytes);
 
     env::log("Verifying FFG state transitions...");
 
-    let finalized_slot = input.finalized_block.slot.clone();
-    let pre_state = input.consensus_state.clone();
-    let post_state = verify(config, &state_reader, input).unwrap();
+    let pre_state = state_reader.consensus_state().unwrap();
+    let post_state = verify(config, &state_reader).unwrap();
+    let finalized_slot = state_reader
+        .slot_for_block(&post_state.finalized_checkpoint().root())
+        .unwrap();
 
     env::log(&format!(
         "New finalization: {}",

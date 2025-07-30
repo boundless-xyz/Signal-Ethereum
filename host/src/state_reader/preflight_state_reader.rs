@@ -32,7 +32,7 @@ use std::{
 };
 use tracing::{debug, info};
 use z_core::{
-    Checkpoint, Epoch, RandaoMixIndex, Root, StateInput, InputReader, ValidatorIndex, ValidatorInfo,
+    Checkpoint, Epoch, InputReader, RandaoMixIndex, Root, StateInput, ValidatorIndex, ValidatorInfo,
 };
 
 pub struct PreflightStateReader<'a, SR> {
@@ -56,7 +56,7 @@ where
         }
     }
 
-    pub fn to_input(&self) -> anyhow::Result<StateInput> {
+    pub fn to_input(&self) -> anyhow::Result<StateInput<E>> {
         let trusted_state = self.inner.state_at_checkpoint(self.trusted_checkpoint)?;
         let beacon_state_root = trusted_state.hash_tree_root()?;
 
@@ -163,6 +163,9 @@ where
             active_validators: validator_multiproof,
             public_keys,
             patches,
+            consensus_state: todo!(),
+            attestations: todo!(),
+            finalized_block: todo!(),
         })
     }
 
@@ -216,5 +219,19 @@ where
             .insert(idx);
 
         Ok(Some(randao))
+    }
+
+    fn attestations(
+        &self,
+    ) -> Result<impl Iterator<Item = &z_core::Attestation<Self::Spec>>, Self::Error> {
+        todo!()
+    }
+
+    fn consensus_state(&self) -> Result<z_core::ConsensusState, Self::Error> {
+        todo!()
+    }
+
+    fn slot_for_block(&self, block_root: &Root) -> Result<u64, Self::Error> {
+        todo!()
     }
 }

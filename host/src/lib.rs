@@ -14,6 +14,7 @@
 
 mod beacon_client;
 mod beacon_state;
+mod chain_reader;
 mod conversions;
 mod input_builder;
 mod state_patch_builder;
@@ -23,6 +24,7 @@ mod test_utils;
 
 pub use beacon_client::*;
 pub use beacon_state::*;
+pub use chain_reader::*;
 pub use input_builder::*;
 pub use state_patch_builder::*;
 pub use state_provider::*;

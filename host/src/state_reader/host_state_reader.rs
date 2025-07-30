@@ -13,7 +13,10 @@
 // limitations under the License.
 
 use crate::conversions::TryAsBeaconType;
-use crate::{CacheStateProvider, FileProvider, StateProvider, StateProviderError, StateRef};
+use crate::{
+    BeaconClient, CacheStateProvider, ChainReader, FileProvider, StateProvider, StateProviderError,
+    StateRef,
+};
 use alloy_primitives::B256;
 use beacon_types::{ChainSpec, EthSpec, Fork};
 use elsa::FrozenMap;
@@ -23,7 +26,7 @@ use safe_arith::ArithError;
 use std::path::PathBuf;
 use thiserror::Error;
 use tracing::{debug, trace};
-use z_core::{Epoch, RandaoMixIndex, Root, Slot, InputReader, ValidatorIndex, ValidatorInfo};
+use z_core::{Epoch, InputReader, RandaoMixIndex, Root, Slot, ValidatorIndex, ValidatorInfo};
 
 #[derive(Error, Debug)]
 pub enum HostReaderError {
@@ -51,18 +54,20 @@ impl From<ArithError> for HostReaderError {
     }
 }
 
-pub struct HostStateReader<P> {
+pub struct HostStateReader<P, CR> {
     spec: ChainSpec,
     provider: P,
+    chain_reader: CR,
     validator_cache: FrozenMap<Epoch, Vec<(ValidatorIndex, ValidatorInfo)>>,
 }
 
-impl<P: StateProvider> HostStateReader<P> {
+impl<P: StateProvider, CR: ChainReader> HostStateReader<P, CR> {
     #[must_use]
-    pub fn new(spec: ChainSpec, provider: P) -> Self {
+    pub fn new(spec: ChainSpec, provider: P, chain_reader: CR) -> Self {
         Self {
             spec,
             provider,
+            chain_reader,
             validator_cache: Default::default(),
         }
     }
@@ -77,14 +82,18 @@ impl<P: StateProvider> HostStateReader<P> {
     }
 }
 
-impl<E: EthSpec> HostStateReader<CacheStateProvider<FileProvider<E>>> {
-    pub fn new_with_dir(spec: ChainSpec, dir: impl Into<PathBuf>) -> Result<Self, HostReaderError> {
+impl<E: EthSpec> HostStateReader<CacheStateProvider<FileProvider<E>>, BeaconClient> {
+    pub fn new_with_dir(
+        spec: ChainSpec,
+        dir: impl Into<PathBuf>,
+        beacon_client: BeaconClient,
+    ) -> Result<Self, HostReaderError> {
         let provider = CacheStateProvider::new(FileProvider::new(dir)?);
-        Ok(Self::new(spec, provider))
+        Ok(Self::new(spec, provider, beacon_client))
     }
 }
 
-impl<P: StateProvider> StateProvider for HostStateReader<P> {
+impl<P: StateProvider, CR> StateProvider for HostStateReader<P, CR> {
     type Spec = P::Spec;
 
     fn state_at_slot(&self, slot: Slot) -> Result<StateRef, StateProviderError> {
@@ -92,7 +101,7 @@ impl<P: StateProvider> StateProvider for HostStateReader<P> {
     }
 }
 
-impl<P: StateProvider> InputReader for HostStateReader<P> {
+impl<P: StateProvider, CR: ChainReader> InputReader for HostStateReader<P, CR> {
     type Error = HostReaderError;
     type Spec = P::Spec;
 
@@ -149,6 +158,20 @@ impl<P: StateProvider> InputReader for HostStateReader<P> {
             .randao_mixes()
             .get(idx as usize)
             .map(|randao| B256::from_slice(randao.as_slice())))
+    }
+
+    fn attestations(
+        &self,
+    ) -> Result<impl Iterator<Item = &z_core::Attestation<Self::Spec>>, Self::Error> {
+        todo!()
+    }
+
+    fn consensus_state(&self) -> Result<z_core::ConsensusState, Self::Error> {
+        todo!()
+    }
+
+    fn slot_for_block(&self, block_root: &Root) -> Result<u64, Self::Error> {
+        todo!()
     }
 }
 

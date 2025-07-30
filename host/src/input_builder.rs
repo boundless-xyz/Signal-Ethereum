@@ -12,35 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::ChainReader;
 use crate::conversions::TryAsBeaconType;
 use beacon_types::EthSpec;
-use ethereum_consensus::{electra::mainnet::SignedBeaconBlockHeader, types::mainnet::BeaconBlock};
 use std::collections::HashMap;
-use std::fmt::Display;
 use tracing::debug;
 use z_core::{
     Attestation, Checkpoint, ConsensusError, ConsensusState, Epoch, Input, Link, Root, ensure,
 };
-
-/// A trait to abstract reading data from an instance of a beacon chain
-/// This could be an RPC to a node or something else (e.g. test harness)
-pub trait ChainReader {
-    #[allow(async_fn_in_trait)]
-    async fn get_block_header(
-        &self,
-        block_id: impl Display,
-    ) -> Result<Option<SignedBeaconBlockHeader>, anyhow::Error>;
-
-    #[allow(async_fn_in_trait)]
-    async fn get_block(&self, block_id: impl Display)
-    -> Result<Option<BeaconBlock>, anyhow::Error>;
-
-    #[allow(async_fn_in_trait)]
-    async fn get_consensus_state(
-        &self,
-        state_id: impl Display,
-    ) -> Result<ConsensusState, anyhow::Error>;
-}
 
 #[derive(thiserror::Error, Debug)]
 pub enum InputBuilderError {

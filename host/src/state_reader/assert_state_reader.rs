@@ -15,7 +15,7 @@
 use alloy_primitives::B256;
 use beacon_types::{ChainSpec, EthSpec};
 use std::iter;
-use z_core::{Epoch, RandaoMixIndex, Root, InputReader, ValidatorIndex, ValidatorInfo};
+use z_core::{Epoch, InputReader, RandaoMixIndex, Root, ValidatorIndex, ValidatorInfo};
 
 /// A simple state reader used for debugging and testing.
 pub struct AssertStateReader<'a, S, R> {
@@ -91,6 +91,40 @@ impl<E: EthSpec, S: InputReader<Spec = E>, R: InputReader<Spec = E>> InputReader
     fn randao_mix(&self, epoch: Epoch, index: RandaoMixIndex) -> Result<Option<B256>, Self::Error> {
         let a = self.reader_a.randao_mix(epoch, index)?;
         let b = self.reader_b.randao_mix(epoch, index).unwrap();
+        assert_eq!(a, b);
+        Ok(a)
+    }
+
+    fn attestations(
+        &self,
+    ) -> Result<impl Iterator<Item = &z_core::Attestation<Self::Spec>>, Self::Error> {
+        let mut iter_a = self.reader_a.attestations()?;
+        let mut iter_b = self.reader_b.attestations().unwrap();
+        Ok(iter::from_fn(move || {
+            match (iter_a.next(), iter_b.next()) {
+                (None, None) => None,
+                (Some(a), Some(b)) => {
+                    assert_eq!(a, b);
+                    Some(a)
+                }
+                (a, b) => panic!(
+                    "One attestation iterator ended while the other has remaining attestations. Left={:?}, Right={:?}",
+                    a, b
+                ),
+            }
+        }))
+    }
+
+    fn consensus_state(&self) -> Result<z_core::ConsensusState, Self::Error> {
+        let a = self.reader_a.consensus_state()?;
+        let b = self.reader_b.consensus_state().unwrap();
+        assert_eq!(a, b);
+        Ok(a)
+    }
+
+    fn slot_for_block(&self, block_root: &Root) -> Result<u64, Self::Error> {
+        let a = self.reader_a.slot_for_block(block_root)?;
+        let b = self.reader_b.slot_for_block(block_root).unwrap();
         assert_eq!(a, b);
         Ok(a)
     }

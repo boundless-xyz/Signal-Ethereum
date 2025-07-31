@@ -82,7 +82,7 @@ pub struct GuestInput<'a, E: EthSpec> {
     pub block_slot_proofs: Vec<Multiproof<'a>>,
 }
 
-pub struct SszStateReader<E: EthSpec> {
+pub struct GuestInputReader<E: EthSpec> {
     spec: ChainSpec,
 
     // verified beacon state fields
@@ -149,7 +149,7 @@ impl<E: EthSpec> GuestInput<'_, E> {
     pub fn into_state_reader(
         mut self,
         spec: ChainSpec,
-    ) -> Result<SszStateReader<E>, GuestReaderError> {
+    ) -> Result<GuestInputReader<E>, GuestReaderError> {
         // the finalized checkpoint is the only state we can trust
         let trusted_checkpoint = self.consensus_state.finalized_checkpoint();
 
@@ -221,7 +221,7 @@ impl<E: EthSpec> GuestInput<'_, E> {
             block_slots.insert(root.into(), u64_from_chunk(slot, 0));
         }
 
-        Ok(SszStateReader {
+        Ok(GuestInputReader {
             spec,
             genesis_validators_root: state.genesis_validators_root,
             validators,
@@ -317,7 +317,7 @@ impl<E: EthSpec> GuestInput<'_, E> {
     }
 }
 
-impl<E: EthSpec> InputReader for SszStateReader<E> {
+impl<E: EthSpec> InputReader for GuestInputReader<E> {
     type Error = GuestReaderError;
     type Spec = E;
 

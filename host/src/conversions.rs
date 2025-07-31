@@ -77,15 +77,3 @@ impl TryAsBeaconType<ValidatorInfo> for ethereum_consensus::phase0::Validator {
         })
     }
 }
-
-impl TryAsBeaconType<z_core::BeaconBlockHeader> for ethereum_consensus::phase0::BeaconBlockHeader {
-    fn try_as_beacon_type(&self) -> Result<z_core::BeaconBlockHeader> {
-        Ok(z_core::BeaconBlockHeader {
-            slot: self.slot,
-            proposer_index: self.proposer_index as u64,
-            parent_root: self.parent_root,
-            state_root: self.state_root,
-            body_root: self.body_root,
-        })
-    }
-}

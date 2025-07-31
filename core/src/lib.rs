@@ -18,11 +18,7 @@ extern crate core;
 use crate::serde_utils::DiskAttestation;
 use alloy_primitives::B256;
 use serde::{Deserializer, Serializer};
-use serde_with::serde_as;
-use std::{
-    collections::HashMap,
-    fmt::{self, Display, Formatter},
-};
+use std::fmt::{self, Display, Formatter};
 use tree_hash::TreeHash;
 
 pub mod abi;
@@ -62,49 +58,6 @@ pub type ForkDigest = [u8; 4];
 
 // Mainnet constants
 pub const VALIDATOR_REGISTRY_LIMIT: u64 = 2u64.pow(40);
-
-/// Represents the complete set of inputs required for the consensus verification process.
-///
-/// This struct bundles a trusted [ConsensusState] with a collection of [Attestation]s.
-/// The attestations are treated as evidence that may justify advancing the finalized checkpoint of
-/// the consensus state. It is typically serialized and passed over an API for stateless verification.
-#[serde_as]
-#[derive(Clone, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct Input<E: EthSpec> {
-    /// The trusted consensus state that serves as the starting point.
-    ///
-    /// Any state transitions resulting from the verification of the `attestations` will be applied
-    /// relative to this state.
-    pub consensus_state: ConsensusState,
-
-    /// A list of attestations to be processed.
-    ///
-    /// This contains only the required attestations to advance the consensus state, i.e., they
-    /// each correspond to a supermajority link leading to a new justification.
-    ///
-    /// This vector is expected to be pre-sorted by
-    /// `(attestation.data.source, attestation.data.target)` so that all attestations
-    /// for the same link are grouped together.
-    #[serde_as(as = "Vec<DiskAttestation>")]
-    pub attestations: Vec<Attestation<E>>,
-
-    /// The beacon block header that is finalized by the attestations.
-    pub finalized_block: BeaconBlockHeader,
-}
-
-impl<E: EthSpec> fmt::Debug for Input<E> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let mut by_target: HashMap<_, usize> = HashMap::new();
-        for attestation in self.attestations.iter() {
-            *by_target.entry(&attestation.data().target).or_default() += 1;
-        }
-
-        f.debug_struct("Input")
-            .field("consensus_state", &self.consensus_state)
-            .field("attestations", &by_target)
-            .finish()
-    }
-}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ValidatorInfo {
@@ -248,19 +201,6 @@ impl Display for Link {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         write!(f, "{}->{}", self.source, self.target)
     }
-}
-
-// This is redefined here instead of importing from `beacon_types` as the ligthhouse version
-// uses #[serde(with = "serde_utils::quoted_u64")] which prevents non-json serialization
-#[derive(
-    Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize, tree_hash_derive::TreeHash,
-)]
-pub struct BeaconBlockHeader {
-    pub slot: u64,
-    pub proposer_index: u64,
-    pub parent_root: Root,
-    pub state_root: Root,
-    pub body_root: Root,
 }
 
 #[macro_export]

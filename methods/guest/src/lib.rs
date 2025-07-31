@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use risc0_zkvm::guest::env;
-use z_core::{ChainSpec, Config, EthSpec, InputReader, StateInput, abi, verify};
+use z_core::{ChainSpec, Config, EthSpec, GuestInput, InputReader, abi, verify};
 
 pub fn entry<E: EthSpec>(spec: ChainSpec, config: &Config) {
     env::log(&format!("Network: {}", spec.config_name.as_ref().unwrap()));
@@ -23,7 +23,7 @@ pub fn entry<E: EthSpec>(spec: ChainSpec, config: &Config) {
     env::log("Deserializing data...");
 
     let state_reader = {
-        let state_input: StateInput<E> = bincode::deserialize(&ssz_reader_bytes).unwrap();
+        let state_input: GuestInput<E> = bincode::deserialize(&ssz_reader_bytes).unwrap();
         env::log(&format!(
             "InputReader deserialized: {} bytes",
             ssz_reader_bytes.len()
@@ -40,10 +40,7 @@ pub fn entry<E: EthSpec>(spec: ChainSpec, config: &Config) {
     env::log("Verifying FFG state transitions...");
 
     let pre_state = state_reader.consensus_state().unwrap();
-    let post_state = verify(config, &state_reader).unwrap();
-    let finalized_slot = state_reader
-        .slot_for_block(&post_state.finalized_checkpoint().root())
-        .unwrap();
+    let (post_state, finalized_slot) = verify(config, &state_reader).unwrap();
 
     env::log(&format!(
         "New finalization: {}",

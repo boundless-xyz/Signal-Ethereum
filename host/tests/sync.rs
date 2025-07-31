@@ -24,7 +24,7 @@ use std::{
     sync::{Arc, LazyLock},
 };
 
-use anyhow::{Context, anyhow};
+use anyhow::Context;
 use beacon_chain::BlockError;
 use beacon_chain::test_utils::{AttestationStrategy, BlockStrategy};
 use beacon_types::{
@@ -40,7 +40,7 @@ use bls::{AggregateSignature, FixedBytesExtended, get_withdrawal_credentials};
 use chainspec::{ChainSpec, Config as ChainSpecConfig};
 use ethereum_consensus::deneb::FAR_FUTURE_EPOCH;
 use host::{
-    AssertStateReader, HostStateReader, InputBuilder, PreflightStateReader, TestHarness,
+    AssertInputReader, HostInputReader, PreflightInputReader, TestHarness,
     consensus_state_from_state, get_harness,
 };
 use methods::TEST_HARNESS_ELF;
@@ -50,7 +50,7 @@ use state_processing::{
 };
 use test_log::test;
 use z_core::{
-    AttestationData, Config, ConsensusState, Input, InputReader, StateInput, VerifyError, verify,
+    AttestationData, Config, ConsensusState, GuestInput, InputReader, VerifyError, verify,
 };
 
 const VALIDATOR_COUNT: u64 = 48;
@@ -102,9 +102,24 @@ async fn test_zkasper_sync(
     println!("Pre consensus state: {consensus_state:?}");
 
     loop {
-        let state_reader = HostStateReader::new((*harness.spec).clone(), harness);
-        let preflight_state_reader =
-            PreflightStateReader::new(&state_reader, consensus_state.finalized_checkpoint());
+        let state_reader = if let Ok(sr) = HostInputReader::new(
+            (*harness.spec).clone(),
+            harness,
+            harness,
+            consensus_state.finalized_checkpoint(),
+        )
+        .await
+        {
+            sr
+        } else {
+            // if the input building fails we'll assume that means we reached the tip
+            break;
+        };
+        let preflight_state_reader = PreflightInputReader::new(
+            &state_reader,
+            harness,
+            consensus_state.finalized_checkpoint(),
+        );
         println!(
             "n validators: {}",
             state_reader
@@ -113,46 +128,30 @@ async fn test_zkasper_sync(
                 .count()
         );
 
-        // Build the input and verify it
-        let builder = InputBuilder::new(harness);
-        match builder.build(consensus_state.finalized_checkpoint()).await {
-            Ok((input, _)) => {
-                dbg!(&input);
+        // Perform a preflight verification to record the data reads
+        _ = verify(cfg, &preflight_state_reader)?;
 
-                // Perform a preflight verification to record the state reads
-                _ = verify(cfg, &preflight_state_reader, input.clone())?;
+        // build a self-contained SSZ reader
+        let state_input = preflight_state_reader.to_input().unwrap();
+        let ssz_state_reader = state_input
+            .clone()
+            .into_state_reader(preflight_state_reader.chain_spec().clone())
+            .expect("Failed to convert to SSZ state reader");
+        // Merge into a single AssertInputReader that ensures identical data returned for each read
+        let assert_sr = AssertInputReader::new(&state_reader, &ssz_state_reader);
 
-                // build a self-contained SSZ reader
-                let state_input = preflight_state_reader.to_input().unwrap();
-                let ssz_state_reader = state_input
-                    .clone()
-                    .into_state_reader(
-                        preflight_state_reader.chain_spec().clone(),
-                        &consensus_state,
-                    )
-                    .expect("Failed to convert to SSZ state reader");
-                // Merge into a single AssertStateReader that ensures identical data returned for each read
-                let assert_sr = AssertStateReader::new(&state_reader, &ssz_state_reader);
+        // Verify again
+        let (next_state, _finalized_slot) = verify(cfg, &assert_sr)?;
+        consensus_state = next_state;
 
-                // Verify again
-                consensus_state = verify(cfg, &assert_sr, input.clone())?;
+        // Finally, if that succeeded, also verify in the R0VM
+        let (_, vm_consensus_state) = vm_verify(&CHAINSPEC.0, cfg, &state_input).unwrap();
+        assert_eq!(
+            consensus_state, vm_consensus_state,
+            "local and vm computed new state should match"
+        );
 
-                // Finally, if that succeeded, also verify in the R0VM
-                let (_, vm_consensus_state) =
-                    vm_verify(&CHAINSPEC.0, cfg, &state_input, &input).unwrap();
-                assert_eq!(
-                    consensus_state, vm_consensus_state,
-                    "local and vm computed new state should match"
-                );
-
-                println!("consensus state: {:?}", &consensus_state);
-            }
-            Err(e) => {
-                eprintln!("Error building input: {:#}", anyhow!(e));
-                eprintln!("Could not build more inputs so assuming sync complete");
-                break;
-            }
-        }
+        println!("consensus state: {:?}", &consensus_state);
     }
 
     assert_eq!(
@@ -994,18 +993,16 @@ impl io::Write for LinePrinter {
     }
 }
 
-fn vm_verify(
+fn vm_verify<E: EthSpec>(
     spec: &ChainSpecConfig,
     config: &Config,
-    state_input: &StateInput,
-    input: &Input<MainnetEthSpec>,
+    state_input: &GuestInput<E>,
 ) -> anyhow::Result<(ConsensusState, ConsensusState)> {
     let mut stdout = LinePrinter::default();
     let env = ExecutorEnv::builder()
         .write_frame(&serde_cbor::to_vec(spec)?)
         .write(config)?
         .write_frame(&bincode::serialize(state_input)?)
-        .write_frame(&bincode::serialize(input)?)
         .stdout(&mut stdout)
         .build()?;
 

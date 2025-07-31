@@ -32,9 +32,9 @@ mod committee_cache;
 mod config;
 mod consensus_state;
 mod guest_gindices;
+mod input_reader;
 pub mod serde_utils;
 mod state_patch;
-mod state_reader;
 mod verify;
 
 pub use attestation::*;
@@ -42,8 +42,8 @@ pub use bls::*;
 pub use committee_cache::*;
 pub use config::*;
 pub use consensus_state::*;
+pub use input_reader::*;
 pub use state_patch::*;
-pub use state_reader::*;
 pub use verify::*;
 
 pub use beacon_types::{ChainSpec, EthSpec, PublicKey};

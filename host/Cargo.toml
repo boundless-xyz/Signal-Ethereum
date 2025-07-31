@@ -10,8 +10,8 @@ name = "gen_gindices"
 test = false
 bench = false
 
-[[bin]]
-name = "zkasper_cli"
+# [[bin]]
+# name = "zkasper_cli"
 
 [dependencies]
 alloy-primitives = { workspace = true, features = ["rlp"] }

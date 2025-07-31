@@ -18,12 +18,12 @@ use std::iter;
 use z_core::{Epoch, InputReader, RandaoMixIndex, Root, ValidatorIndex, ValidatorInfo};
 
 /// A simple state reader used for debugging and testing.
-pub struct AssertStateReader<'a, S, R> {
+pub struct AssertInputReader<'a, S, R> {
     reader_a: &'a S,
     reader_b: &'a R,
 }
 
-impl<'a, S: InputReader, R: InputReader> AssertStateReader<'a, S, R> {
+impl<'a, S: InputReader, R: InputReader> AssertInputReader<'a, S, R> {
     pub fn new(inner: &'a S, reader: &'a R) -> Self {
         Self {
             reader_a: inner,
@@ -33,7 +33,7 @@ impl<'a, S: InputReader, R: InputReader> AssertStateReader<'a, S, R> {
 }
 
 impl<E: EthSpec, S: InputReader<Spec = E>, R: InputReader<Spec = E>> InputReader
-    for AssertStateReader<'_, S, R>
+    for AssertInputReader<'_, S, R>
 {
     type Error = S::Error;
     type Spec = E;

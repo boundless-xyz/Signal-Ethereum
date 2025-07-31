@@ -78,7 +78,7 @@ impl From<ArithError> for VerifyError {
 pub fn verify<S: InputReader>(
     cfg: &Config,
     input_reader: &S,
-) -> Result<ConsensusState, VerifyError> {
+) -> Result<(ConsensusState, u64), VerifyError> {
     let spec = input_reader.chain_spec();
     let mut consensus_state = input_reader.consensus_state().unwrap();
     let trusted_checkpoint = consensus_state.finalized_checkpoint();
@@ -156,7 +156,11 @@ pub fn verify<S: InputReader>(
         VerifyError::InvalidFinalization(consensus_state.finalized_checkpoint())
     );
 
-    Ok(consensus_state)
+    let finalized_slot = input_reader
+        .slot_for_block(&consensus_state.finalized_checkpoint().root())
+        .map_err(|e| VerifyError::StateReaderError(e.to_string()))?;
+
+    Ok((consensus_state, finalized_slot))
 }
 
 /// Validates an attestation's link against the internal config.

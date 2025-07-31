@@ -18,8 +18,8 @@ use beacon_types::{Attestation, ChainSpec, EthSpec, Unsigned};
 use safe_arith::{ArithError, SafeArith};
 use sha2::Digest;
 
-mod ssz_state_reader;
-pub use ssz_state_reader::*;
+mod guest_input_reader;
+pub use guest_input_reader::*;
 
 pub trait InputReader {
     type Error: std::error::Error + From<ArithError>;

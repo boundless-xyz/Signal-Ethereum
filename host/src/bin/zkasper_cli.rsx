@@ -33,8 +33,8 @@ use tracing::{debug, info, level_filters::LevelFilter, warn};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use url::Url;
 use z_core::{
-    Checkpoint, Config, ConsensusState, DEFAULT_CONFIG, Epoch, EthSpec, Input, MainnetEthSpec,
-    Slot, StateInput, InputReader, abi, verify,
+    Checkpoint, Config, ConsensusState, DEFAULT_CONFIG, Epoch, EthSpec, InputReader,
+    MainnetEthSpec, Slot, StateInput, abi, verify,
 };
 
 // all chains use the mainnet preset
@@ -176,7 +176,11 @@ async fn main() -> anyhow::Result<()> {
     };
 
     let provider = PersistentApiStateProvider::<Spec>::new(&state_dir, beacon_client.clone())?;
-    let reader = HostStateReader::new(spec, CacheStateProvider::new(provider));
+    let reader = HostStateReader::new(
+        spec,
+        CacheStateProvider::new(provider),
+        beacon_client.clone(),
+    );
 
     match args.command {
         Command::Verify {
@@ -281,8 +285,8 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn run_sync<E: EthSpec + Serialize>(
-    sr: HostStateReader<CacheStateProvider<PersistentApiStateProvider<E>>>,
+async fn run_sync<E: EthSpec + Serialize, CR: ChainReader>(
+    sr: HostStateReader<E, CacheStateProvider<PersistentApiStateProvider<E>>, CR>,
     start_slot: Slot,
     beacon_client: &BeaconClient,
     network: Network,
@@ -375,7 +379,7 @@ where
 
     info!("Running preflight");
     let reader = PreflightStateReader::new(reader, input.consensus_state.finalized_checkpoint());
-    let post_state = verify(&DEFAULT_CONFIG, &reader, input.clone()).context("preflight failed")?;
+    let post_state = verify(&DEFAULT_CONFIG, &reader).context("preflight failed")?;
     info!("Preflight succeeded");
 
     let state_input = reader.to_input()?;
@@ -402,18 +406,16 @@ fn run_verify<E: EthSpec + Serialize, R: InputReader<Spec = E> + StateProvider<S
     cfg: &Config,
     host_reader: &R,
 ) -> anyhow::Result<ConsensusState> {
-    let guest_input: Input<E> =
-        bincode::deserialize(input_bytes.as_ref()).context("failed to deserialize input")?;
     let guest_reader = {
-        let state_input: StateInput =
+        let state_input: StateInput<E> =
             bincode::deserialize(state_bytes.as_ref()).context("failed to deserialize state")?;
         state_input
-            .into_state_reader(host_reader.chain_spec().clone(), &pre_state)
+            .into_state_reader(host_reader.chain_spec().clone())
             .context("failed to validate input")?
     };
 
     // use the AssertStateReader to detect input issues already on the host
-    let post_state = verify(cfg, &guest_reader, guest_input).context("host verification failed")?;
+    let post_state = verify(cfg, &guest_reader).context("host verification failed")?;
 
     info!("Host verification succeeded");
 

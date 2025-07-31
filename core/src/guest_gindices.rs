@@ -64,6 +64,11 @@ pub(crate) const fn earliest_consolidation_epoch_gindex() -> u64 {
 pub(crate) const fn state_root_gindex() -> u64 {
     11u64
 }
+/// Returns the gindex of slot from BeaconBlock
+#[inline(always)]
+pub(crate) const fn block_slot_gindex() -> u64 {
+    8u64
+}
 /// Returns the gindex of public_key_0 from Validator i
 #[inline(always)]
 pub(crate) const fn public_key_0_gindex(i: crate::ValidatorIndex) -> u64 {

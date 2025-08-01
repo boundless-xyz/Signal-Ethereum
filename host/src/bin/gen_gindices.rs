@@ -149,12 +149,13 @@ where
     G: GeneralizedIndexable,
 {
     // Static paths for the BeaconBlock
-    [("state_root", Path::from(&["state_root".into()]))]
-        .map(|(name, path)| gen_gindices::<G>(name.to_string(), path))
-        .map(|(name, ret_type, value)| {
-            (name.to_string(), ret_type, "BeaconBlock".to_string(), value)
-        })
-        .to_vec()
+    [
+        ("state_root", Path::from(&["state_root".into()])),
+        ("block_slot", Path::from(&["slot".into()])),
+    ]
+    .map(|(name, path)| gen_gindices::<G>(name.to_string(), path))
+    .map(|(name, ret_type, value)| (name.to_string(), ret_type, "BeaconBlock".to_string(), value))
+    .to_vec()
 }
 
 // Returns name, return type, the root of the path, and value

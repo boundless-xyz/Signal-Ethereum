@@ -12,11 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-pub mod assert_state_reader;
-pub mod host_state_reader;
-pub mod preflight_state_reader;
-pub mod test_harness_state_reader;
+pub mod assert_input_reader;
+pub mod host_input_reader;
+pub mod preflight_input_reader;
+pub mod test_harness_readers;
 
-pub use assert_state_reader::*;
-pub use host_state_reader::*;
-pub use preflight_state_reader::*;
+pub use assert_input_reader::*;
+pub use host_input_reader::*;
+pub use preflight_input_reader::*;

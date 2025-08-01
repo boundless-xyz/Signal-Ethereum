@@ -22,7 +22,7 @@ use beacon_types::{
 use z_core::ConsensusState;
 
 type E = MainnetEthSpec;
-pub type TestHarness = crate::test_harness_state_reader::TestHarness<EphemeralHarnessType<E>>;
+pub type TestHarness = crate::test_harness_readers::TestHarness<EphemeralHarnessType<E>>;
 
 pub async fn get_harness(
     keypairs: Vec<Keypair>,

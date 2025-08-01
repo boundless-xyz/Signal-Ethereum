@@ -33,7 +33,7 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use url::Url;
 use z_core::{
     ChainSpec, Checkpoint, Config, ConsensusState, DEFAULT_CONFIG, Epoch, EthSpec, GuestInput,
-    InputReader, MainnetEthSpec, Slot, abi, verify,
+    MainnetEthSpec, Slot, abi, verify,
 };
 
 // all chains use the mainnet preset
@@ -94,9 +94,9 @@ enum Command {
         #[clap(long, default_value_t = ExecMode::Native)]
         mode: ExecMode,
 
-        /// Start slot
+        /// Trusted epoch
         #[clap(long)]
-        start_slot: Slot,
+        trusted_epoch: Epoch,
     },
     /// Attempts to sync a trusted block root to the latest state available on the Beacon API
     /// Optionally can log any places the resulting consensus state diverges from the chain for debugging
@@ -175,33 +175,28 @@ async fn main() -> anyhow::Result<()> {
     };
 
     let provider = PersistentApiStateProvider::<Spec>::new(&state_dir, beacon_client.clone())?;
+    let caching_provider = CacheStateProvider::new(provider);
 
     match args.command {
-        Command::Verify { mode, start_slot } => {
-            let consensus_state = beacon_client.get_consensus_state(start_slot).await?;
-
-            let reader = HostInputReader::new(
-                spec,
-                CacheStateProvider::new(provider),
-                beacon_client.clone(),
-                consensus_state.finalized_checkpoint(),
-            )
-            .await?;
-
-            let (input_bytes, pre_state, expected_state, _) = prepare_input(
-                consensus_state.finalized_checkpoint().epoch(),
-                &reader,
+        Command::Verify {
+            mode,
+            trusted_epoch,
+        } => {
+            let (input_bytes, pre_state, _post_state, _) = prepare_input(
+                spec.clone(),
+                trusted_epoch,
+                caching_provider,
                 &beacon_client,
             )
             .await?;
 
-            let post_state = run_verify(
-                consensus_state,
+            let post_state = run_verify::<Spec>(
+                spec,
+                pre_state,
                 &input_bytes,
                 args.network,
                 mode,
                 &DEFAULT_CONFIG,
-                &reader,
             )?;
             info!("Post-state: {:#?}", post_state);
         }
@@ -212,8 +207,8 @@ async fn main() -> anyhow::Result<()> {
         } => {
             run_sync(
                 spec,
-                CacheStateProvider::new(provider),
                 start_slot,
+                caching_provider,
                 &beacon_client,
                 args.network,
                 mode,
@@ -233,18 +228,6 @@ async fn main() -> anyhow::Result<()> {
                 .finalized
                 .epoch;
 
-            let consensus_state = beacon_client
-                .get_consensus_state(chain_finalized_epoch)
-                .await?;
-
-            let reader = HostInputReader::new(
-                spec,
-                CacheStateProvider::new(provider),
-                beacon_client.clone(),
-                consensus_state.finalized_checkpoint(),
-            )
-            .await?;
-
             // willem: We need this + 1 because the search for attestations probably looks
             // 1 epoch further ahead than it needs to in most cases and will go past the end of the chain
             if chain_finalized_epoch < finalized_epoch.as_u64() + 1 {
@@ -256,8 +239,13 @@ async fn main() -> anyhow::Result<()> {
                 continue;
             }
 
-            let (input_bytes, pre_state, post_state, finalized_slot) =
-                prepare_input(finalized_epoch, &reader, &beacon_client).await?;
+            let (input_bytes, pre_state, post_state, finalized_slot) = prepare_input(
+                spec.clone(),
+                finalized_epoch,
+                caching_provider.clone(),
+                &beacon_client,
+            )
+            .await?;
 
             let encoded_input =
                 encode_input_stdin(&input_bytes).context("failed to prepare input")?;
@@ -302,18 +290,15 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn run_sync<E: EthSpec + Serialize, CR: ChainReader, P: StateProvider>(
+async fn run_sync<E: EthSpec + Serialize, S: StateProvider<Spec = E> + Clone>(
     spec: ChainSpec,
-    provider: P,
     start_slot: Slot,
+    state_provider: S,
     beacon_client: &BeaconClient,
     network: Network,
     mode: ExecMode,
     log_path: Option<PathBuf>,
-) -> anyhow::Result<()>
-where
-    <P as StateProvider>::Spec: serde::Serialize,
-{
+) -> anyhow::Result<()> {
     info!("Running Sync in mode: {mode}");
 
     let logfile = match log_path {
@@ -332,22 +317,22 @@ where
     info!("Initial Consensus State: {:#?}", consensus_state);
 
     loop {
-        let reader = HostInputReader::new(
-            spec,
-            CacheStateProvider::new(provider),
-            beacon_client.clone(),
-            consensus_state.finalized_checkpoint(),
-        )
-        .await?;
-
         let (input_bytes, pre_state, expected_state, _) = prepare_input(
+            spec.clone(),
             consensus_state.finalized_checkpoint().epoch(),
-            &reader,
+            state_provider.clone(),
             beacon_client,
         )
         .await?;
 
-        let msg = match run_verify(pre_state, input_bytes, network, mode, &DEFAULT_CONFIG, &sr) {
+        let msg = match run_verify::<E>(
+            spec.clone(),
+            pre_state,
+            input_bytes,
+            network,
+            mode,
+            &DEFAULT_CONFIG,
+        ) {
             Ok(state) => {
                 info!("Verification successful. New state: {:#?}", &state);
                 if state != expected_state {
@@ -367,20 +352,17 @@ where
         consensus_state = expected_state;
 
         // uncache old states
-        let provider = sr.provider().inner();
-        provider.clear_states_before(consensus_state.finalized_checkpoint().epoch())?;
+        // state_provider.clear_states_before(consensus_state.finalized_checkpoint().epoch())?;
     }
 }
 
-async fn prepare_input<E: EthSpec + Serialize, S: InputReader<Spec = E> + StateProvider<Spec = E>>(
+async fn prepare_input<E: EthSpec + Serialize, S: StateProvider<Spec = E> + Clone>(
+    spec: ChainSpec,
     finalized_epoch: Epoch,
-    reader: &S,
+    state_provider: S,
     beacon_client: &BeaconClient,
-) -> anyhow::Result<(Vec<u8>, ConsensusState, ConsensusState, u64)>
-where
-    <S as InputReader>::Error: Sync + Send + 'static,
-{
-    let trusted_state = reader.state_at_epoch_boundary(finalized_epoch)?;
+) -> anyhow::Result<(Vec<u8>, ConsensusState, ConsensusState, u64)> {
+    let trusted_state = state_provider.state_at_epoch_boundary(finalized_epoch)?;
     let epoch_boundary_slot = trusted_state.latest_block_header().slot;
     let trusted_beacon_block = beacon_client
         .get_block(epoch_boundary_slot)
@@ -394,15 +376,22 @@ where
         Checkpoint::new(finalized_epoch, trusted_beacon_block.hash_tree_root()?);
     info!("Trusted checkpoint: {}", trusted_checkpoint);
 
+    let reader = HostInputReader::new(
+        spec,
+        state_provider.clone(),
+        beacon_client.clone(),
+        trusted_checkpoint,
+    )
+    .await?;
+
     info!("Running preflight");
-    let reader = PreflightInputReader::new(reader, beacon_client, trusted_checkpoint);
+    let reader = PreflightInputReader::new(&reader, beacon_client.clone(), trusted_checkpoint);
     let (post_state, finalized_slot) =
         verify(&DEFAULT_CONFIG, &reader).context("preflight failed")?;
     info!("Preflight succeeded");
 
     let input = reader.to_input()?;
-
-    let input_bytes = bincode::serialize(&input).context("failed to serialize input")?;
+    let input_bytes = bincode::serialize(&input).context("failed to serialize state")?;
 
     Ok((
         input_bytes,
@@ -412,19 +401,19 @@ where
     ))
 }
 
-fn run_verify<E: EthSpec + Serialize, R: InputReader<Spec = E> + StateProvider<Spec = E>>(
+fn run_verify<E: EthSpec + Serialize>(
+    chain_spec: ChainSpec,
     pre_state: ConsensusState,
     input_bytes: impl AsRef<[u8]>,
     network: Network,
     mode: ExecMode,
     cfg: &Config,
-    host_reader: &R,
 ) -> anyhow::Result<ConsensusState> {
     let guest_reader = {
-        let state_input: GuestInput<E> =
+        let input: GuestInput<E> =
             bincode::deserialize(input_bytes.as_ref()).context("failed to deserialize state")?;
-        state_input
-            .into_state_reader(host_reader.chain_spec().clone())
+        input
+            .into_reader(chain_spec)
             .context("failed to validate input")?
     };
 

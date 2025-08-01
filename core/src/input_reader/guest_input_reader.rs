@@ -146,10 +146,7 @@ impl<T> WithContext<T> for Result<T, ssz_multiproofs::Error> {
 }
 
 impl<E: EthSpec> GuestInput<'_, E> {
-    pub fn into_state_reader(
-        mut self,
-        spec: ChainSpec,
-    ) -> Result<GuestInputReader<E>, GuestReaderError> {
+    pub fn into_reader(mut self, spec: ChainSpec) -> Result<GuestInputReader<E>, GuestReaderError> {
         // the finalized checkpoint is the only state we can trust
         let trusted_checkpoint = self.consensus_state.finalized_checkpoint();
 

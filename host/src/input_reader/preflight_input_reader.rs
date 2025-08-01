@@ -175,7 +175,7 @@ where
                 let proof = MultiproofBuilder::new()
                     .with_path::<BeaconBlockHeader>(&["slot".into()])
                     .build(&block_header)?;
-                proof.verify(&root)?;
+                proof.verify(root)?;
                 Ok(proof)
             })
             .collect::<anyhow::Result<Vec<_>>>()?;

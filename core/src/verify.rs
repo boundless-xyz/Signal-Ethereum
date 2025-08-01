@@ -115,7 +115,7 @@ pub fn verify<S: InputReader>(
         let mut participating_indices = BTreeSet::new();
         for attestation in attestations {
             let attesting_indices =
-                process_attestation(input_reader, &active_validators, &committees, &attestation)?;
+                process_attestation(input_reader, &active_validators, &committees, attestation)?;
             participating_indices.extend(attesting_indices);
         }
 

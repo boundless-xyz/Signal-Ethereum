@@ -135,7 +135,7 @@ async fn test_zkasper_sync(
         let state_input = preflight_state_reader.to_input().unwrap();
         let ssz_state_reader = state_input
             .clone()
-            .into_state_reader(preflight_state_reader.chain_spec().clone())
+            .into_reader(preflight_state_reader.chain_spec().clone())
             .expect("Failed to convert to SSZ state reader");
         // Merge into a single AssertInputReader that ensures identical data returned for each read
         let assert_sr = AssertInputReader::new(&state_reader, &ssz_state_reader);

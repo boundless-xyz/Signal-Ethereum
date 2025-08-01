@@ -108,8 +108,7 @@ impl<E: EthSpec, S: InputReader<Spec = E>, R: InputReader<Spec = E>> InputReader
                     Some(a)
                 }
                 (a, b) => panic!(
-                    "One attestation iterator ended while the other has remaining attestations. Left={:?}, Right={:?}",
-                    a, b
+                    "One attestation iterator ended while the other has remaining attestations. Left={a:?}, Right={b:?}"
                 ),
             }
         }))

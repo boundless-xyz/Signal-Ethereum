@@ -79,7 +79,6 @@ pub struct HostInputReader<E: EthSpec, P, CR> {
 }
 
 impl<E: EthSpec, P: StateProvider, CR: ChainReader> HostInputReader<E, P, CR> {
-    #[must_use]
     pub async fn new(
         spec: ChainSpec,
         provider: P,

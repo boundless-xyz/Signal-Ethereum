@@ -30,7 +30,7 @@ pub fn entry<E: EthSpec>(spec: ChainSpec, config: &Config) {
         ));
 
         env::log("Verifying InputReader...");
-        state_input.into_state_reader(spec)
+        state_input.into_reader(spec)
     }
     .unwrap();
 

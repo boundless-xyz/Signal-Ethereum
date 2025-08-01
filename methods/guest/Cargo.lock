@@ -5066,7 +5066,6 @@ dependencies = [
  "thiserror 2.0.12",
  "tracing",
  "tree_hash",
- "tree_hash_derive",
  "types",
 ]
 

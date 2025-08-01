@@ -215,7 +215,7 @@ impl<E: EthSpec> GuestInput<'_, E> {
                 .values()
                 .next_assert_gindex(block_slot_gindex())
                 .context("Failed to extract beacon block slot")?;
-            block_slots.insert(root.into(), u64_from_chunk(slot, 0));
+            block_slots.insert(root.into(), u64_from_chunk::<Leftmost>(slot));
         }
 
         Ok(GuestInputReader {
@@ -403,7 +403,7 @@ fn extract_beacon_state_multiproof(
     let fork = Fork {
         previous_version: fork_previous_version[0..4].try_into().unwrap(),
         current_version: fork_current_version[0..4].try_into().unwrap(),
-        epoch: u64_from_chunk(fork_epoch, 0).into(),
+        epoch: u64_from_chunk::<Leftmost>(fork_epoch).into(),
     };
     let validators_root = values.next_assert_gindex(validators_gindex())?;
     let finalized_checkpoint_epoch =
@@ -416,12 +416,13 @@ fn extract_beacon_state_multiproof(
 
     Ok(StateInfo {
         genesis_validators_root: genesis_validators_root.into(),
-        slot: u64_from_chunk(slot, 0).into(),
+        slot: u64_from_chunk::<Leftmost>(slot).into(),
         fork,
         validators_root: validators_root.into(),
-        finalized_checkpoint_epoch: u64_from_chunk(finalized_checkpoint_epoch, 0).into(),
-        earliest_exit_epoch: u64_from_chunk(earliest_exit_epoch, 0).into(),
-        earliest_consolidation_epoch: u64_from_chunk(earliest_consolidation_epoch, 0).into(),
+        finalized_checkpoint_epoch: u64_from_chunk::<Leftmost>(finalized_checkpoint_epoch).into(),
+        earliest_exit_epoch: u64_from_chunk::<Leftmost>(earliest_exit_epoch).into(),
+        earliest_consolidation_epoch: u64_from_chunk::<Leftmost>(earliest_consolidation_epoch)
+            .into(),
     })
 }
 
@@ -450,7 +451,7 @@ fn extract_validators_multiproof(
 
         if gindex == &exit_epoch_gindex(validator_index) {
             let (_, exit_epoch) = values.next().unwrap();
-            let exit_epoch = u64_from_chunk(exit_epoch, 0);
+            let exit_epoch = u64_from_chunk::<Leftmost>(exit_epoch);
 
             assert!(exit_epoch <= current_epoch.into());
         } else {
@@ -474,7 +475,7 @@ fn extract_validators_multiproof(
             let (gindex, effective_balance) =
                 values.next().ok_or(ssz_multiproofs::Error::MissingValue)?;
             assert_eq!(gindex, effective_balance_gindex(validator_index));
-            let effective_balance = u64_from_chunk(effective_balance, 0);
+            let effective_balance = u64_from_chunk::<Leftmost>(effective_balance);
 
             let (gindex, slashed) = values.next().ok_or(ssz_multiproofs::Error::MissingValue)?;
             assert_eq!(gindex, slashed_gindex(validator_index));
@@ -483,16 +484,17 @@ fn extract_validators_multiproof(
             let (gindex, activation_eligibility_epoch) =
                 values.next().ok_or(ssz_multiproofs::Error::MissingValue)?;
             assert_eq!(gindex, activation_eligibility_epoch_gindex(validator_index));
-            let activation_eligibility_epoch = u64_from_chunk(activation_eligibility_epoch, 0);
+            let activation_eligibility_epoch =
+                u64_from_chunk::<Leftmost>(activation_eligibility_epoch);
 
             let (gindex, activation_epoch) =
                 values.next().ok_or(ssz_multiproofs::Error::MissingValue)?;
             assert_eq!(gindex, activation_epoch_gindex(validator_index));
-            let activation_epoch = u64_from_chunk(activation_epoch, 0);
+            let activation_epoch = u64_from_chunk::<Leftmost>(activation_epoch);
 
             let (gindex, exit_epoch) = values.next().ok_or(ssz_multiproofs::Error::MissingValue)?;
             assert_eq!(gindex, exit_epoch_gindex(validator_index));
-            let exit_epoch = u64_from_chunk(exit_epoch, 0);
+            let exit_epoch = u64_from_chunk::<Leftmost>(exit_epoch);
 
             let validator_info = ValidatorInfo {
                 pubkey,
@@ -509,7 +511,7 @@ fn extract_validators_multiproof(
     }
 
     let (_, length) = values.next().unwrap();
-    let length = u64_from_chunk(length, 0);
+    let length = u64_from_chunk::<Leftmost>(length);
     assert_eq!(validator_index as u64, length);
 
     assert!(values.next().is_none());
@@ -549,9 +551,21 @@ fn get_balance_churn_limit(spec: &ChainSpec, total_active_balance: u64) -> Resul
     churn.safe_sub(churn.safe_rem(spec.effective_balance_increment)?)
 }
 
-/// Extracts an u64 from a 32-byte SSZ chunk and a position which is in [0,1,2,3]
-fn u64_from_chunk(node: &[u8; 32], pos: usize) -> u64 {
-    u64::from_le_bytes(node[(pos * 8)..((pos + 1) * 8)].try_into().unwrap())
+trait U64ChunkPos {
+    fn as_range() -> std::ops::Range<usize>;
+}
+
+struct Leftmost;
+
+impl U64ChunkPos for Leftmost {
+    fn as_range() -> std::ops::Range<usize> {
+        0..8
+    }
+}
+
+/// Extracts an u64 from a 32-byte SSZ chunk
+fn u64_from_chunk<P: U64ChunkPos>(node: &[u8; 32]) -> u64 {
+    u64::from_le_bytes(node[P::as_range()].try_into().unwrap())
 }
 
 /// Extracts a bool from a 32-byte SSZ chunk.

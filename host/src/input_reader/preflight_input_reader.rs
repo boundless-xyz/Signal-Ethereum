@@ -13,8 +13,8 @@
 // limitations under the License.
 
 use crate::{
-    HostReaderError, StatePatchBuilder, StateProvider, mainnet::BeaconState,
-    mainnet::ElectraBeaconState,
+    ChainReader, HostReaderError, StatePatchBuilder, StateProvider,
+    mainnet::{BeaconState, ElectraBeaconState},
 };
 use alloy_primitives::B256;
 use beacon_types::{ChainSpec, EthSpec};
@@ -32,31 +32,36 @@ use std::{
 };
 use tracing::{debug, info};
 use z_core::{
-    Checkpoint, Epoch, RandaoMixIndex, Root, StateInput, StateReader, ValidatorIndex, ValidatorInfo,
+    Checkpoint, Epoch, GuestInput, InputReader, RandaoMixIndex, Root, ValidatorIndex, ValidatorInfo,
 };
 
-pub struct PreflightStateReader<'a, SR> {
+pub struct PreflightInputReader<'a, SR, CR> {
     trusted_checkpoint: Checkpoint,
     inner: &'a SR,
+    chain_reader: CR,
     validator_epochs: RefCell<BTreeSet<Epoch>>,
     mix_epochs: RefCell<BTreeMap<Epoch, BTreeSet<RandaoMixIndex>>>,
+    beacon_block_reads: RefCell<BTreeSet<Root>>,
 }
 
-impl<'a, S, E: EthSpec> PreflightStateReader<'a, S>
+impl<'a, S, CR, E: EthSpec> PreflightInputReader<'a, S, CR>
 where
-    S: StateReader<Spec = E> + StateProvider<Spec = E>,
-    <S as StateReader>::Error: std::error::Error + Send + Sync + 'static,
+    S: InputReader<Spec = E> + StateProvider<Spec = E>,
+    CR: ChainReader,
+    <S as InputReader>::Error: std::error::Error + Send + Sync + 'static,
 {
-    pub fn new(reader: &'a S, trusted_checkpoint: Checkpoint) -> Self {
+    pub fn new(reader: &'a S, chain_reader: CR, trusted_checkpoint: Checkpoint) -> Self {
         Self {
             trusted_checkpoint,
             inner: reader,
+            chain_reader,
             validator_epochs: Default::default(),
             mix_epochs: Default::default(),
+            beacon_block_reads: Default::default(),
         }
     }
 
-    pub fn to_input(&self) -> anyhow::Result<StateInput> {
+    pub fn to_input(&self) -> anyhow::Result<GuestInput<E>> {
         let trusted_state = self.inner.state_at_checkpoint(self.trusted_checkpoint)?;
         let beacon_state_root = trusted_state.hash_tree_root()?;
 
@@ -157,12 +162,33 @@ where
             .map(|(k, v)| (k, v.build::<E>()))
             .collect();
 
-        Ok(StateInput {
+        let block_slot_proofs = self
+            .beacon_block_reads
+            .borrow()
+            .iter()
+            .map(|root| {
+                let block_header =
+                    futures::executor::block_on(self.chain_reader.get_block_header(*root))?
+                        .ok_or(anyhow::anyhow!("Block not found for root {}", root))?
+                        .message;
+
+                let proof = MultiproofBuilder::new()
+                    .with_path::<BeaconBlockHeader>(&["slot".into()])
+                    .build(&block_header)?;
+                proof.verify(root)?;
+                Ok(proof)
+            })
+            .collect::<anyhow::Result<Vec<_>>>()?;
+
+        Ok(GuestInput {
             beacon_block: block_multiproof,
             beacon_state: state_multiproof,
             active_validators: validator_multiproof,
             public_keys,
             patches,
+            consensus_state: self.inner.consensus_state()?,
+            attestations: self.inner.attestations()?.cloned().collect(),
+            block_slot_proofs,
         })
     }
 
@@ -175,9 +201,9 @@ where
     }
 }
 
-impl<SR> StateReader for PreflightStateReader<'_, SR>
+impl<SR, CR> InputReader for PreflightInputReader<'_, SR, CR>
 where
-    SR: StateReader,
+    SR: InputReader,
 {
     type Error = SR::Error;
     type Spec = SR::Spec;
@@ -216,5 +242,21 @@ where
             .insert(idx);
 
         Ok(Some(randao))
+    }
+
+    fn attestations(
+        &self,
+    ) -> Result<impl Iterator<Item = &z_core::Attestation<Self::Spec>>, Self::Error> {
+        self.inner.attestations()
+    }
+
+    fn consensus_state(&self) -> Result<z_core::ConsensusState, Self::Error> {
+        self.inner.consensus_state()
+    }
+
+    fn slot_for_block(&self, block_root: &Root) -> Result<u64, Self::Error> {
+        let slot = self.inner.slot_for_block(block_root)?;
+        self.beacon_block_reads.borrow_mut().insert(*block_root);
+        Ok(slot)
     }
 }

@@ -18,22 +18,19 @@ extern crate core;
 use crate::serde_utils::DiskAttestation;
 use alloy_primitives::B256;
 use serde::{Deserializer, Serializer};
-use serde_with::serde_as;
-use std::{
-    collections::HashMap,
-    fmt::{self, Display, Formatter},
-};
+use std::fmt::{self, Display, Formatter};
 use tree_hash::TreeHash;
 
+pub mod abi;
 mod attestation;
 mod bls;
 mod committee_cache;
 mod config;
 mod consensus_state;
 mod guest_gindices;
+mod input_reader;
 pub mod serde_utils;
 mod state_patch;
-mod state_reader;
 mod verify;
 
 pub use attestation::*;
@@ -41,8 +38,8 @@ pub use bls::*;
 pub use committee_cache::*;
 pub use config::*;
 pub use consensus_state::*;
+pub use input_reader::*;
 pub use state_patch::*;
-pub use state_reader::*;
 pub use verify::*;
 
 pub use beacon_types::{ChainSpec, EthSpec, PublicKey};
@@ -61,46 +58,6 @@ pub type ForkDigest = [u8; 4];
 
 // Mainnet constants
 pub const VALIDATOR_REGISTRY_LIMIT: u64 = 2u64.pow(40);
-
-/// Represents the complete set of inputs required for the consensus verification process.
-///
-/// This struct bundles a trusted [ConsensusState] with a collection of [Attestation]s.
-/// The attestations are treated as evidence that may justify advancing the finalized checkpoint of
-/// the consensus state. It is typically serialized and passed over an API for stateless verification.
-#[serde_as]
-#[derive(Clone, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct Input<E: EthSpec> {
-    /// The trusted consensus state that serves as the starting point.
-    ///
-    /// Any state transitions resulting from the verification of the `attestations` will be applied
-    /// relative to this state.
-    pub consensus_state: ConsensusState,
-
-    /// A list of attestations to be processed.
-    ///
-    /// This contains only the required attestations to advance the consensus state, i.e., they
-    /// each correspond to a supermajority link leading to a new justification.
-    ///
-    /// This vector is expected to be pre-sorted by
-    /// `(attestation.data.source, attestation.data.target)` so that all attestations
-    /// for the same link are grouped together.
-    #[serde_as(as = "Vec<DiskAttestation>")]
-    pub attestations: Vec<Attestation<E>>,
-}
-
-impl<E: EthSpec> fmt::Debug for Input<E> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let mut by_target: HashMap<_, usize> = HashMap::new();
-        for attestation in self.attestations.iter() {
-            *by_target.entry(&attestation.data().target).or_default() += 1;
-        }
-
-        f.debug_struct("Input")
-            .field("consensus_state", &self.consensus_state)
-            .field("attestations", &by_target)
-            .finish()
-    }
-}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ValidatorInfo {

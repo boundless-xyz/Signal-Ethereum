@@ -15,9 +15,8 @@
 use anyhow::{Context, ensure};
 use clap::{Parser, ValueEnum};
 use host::{
-    BeaconClient, CacheStateProvider, ChainReader, InputBuilder, PersistentApiStateProvider,
-    StateProvider, host_state_reader::HostStateReader,
-    preflight_state_reader::PreflightStateReader,
+    BeaconClient, CacheStateProvider, ChainReader, PersistentApiStateProvider, StateProvider,
+    host_input_reader::HostInputReader, preflight_input_reader::PreflightInputReader,
 };
 use methods::{MAINNET_ELF, SEPOLIA_ELF};
 use risc0_zkvm::{ExecutorEnv, default_executor};
@@ -33,8 +32,8 @@ use tracing::{debug, info, level_filters::LevelFilter, warn};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use url::Url;
 use z_core::{
-    Checkpoint, Config, ConsensusState, DEFAULT_CONFIG, Epoch, EthSpec, Input, MainnetEthSpec,
-    Slot, StateInput, StateReader, verify,
+    ChainSpec, Checkpoint, Config, ConsensusState, DEFAULT_CONFIG, Epoch, EthSpec, GuestInput,
+    MainnetEthSpec, Slot, abi, verify,
 };
 
 // all chains use the mainnet preset
@@ -176,24 +175,28 @@ async fn main() -> anyhow::Result<()> {
     };
 
     let provider = PersistentApiStateProvider::<Spec>::new(&state_dir, beacon_client.clone())?;
-    let reader = HostStateReader::new(spec, CacheStateProvider::new(provider));
+    let caching_provider = CacheStateProvider::new(provider);
 
     match args.command {
         Command::Verify {
             mode,
             trusted_epoch,
         } => {
-            let (state_bytes, input_bytes, pre_state, _post_state) =
-                prepare_input(trusted_epoch, &reader, &beacon_client).await?;
+            let (input_bytes, pre_state, _post_state, _) = prepare_input(
+                spec.clone(),
+                trusted_epoch,
+                caching_provider,
+                &beacon_client,
+            )
+            .await?;
 
-            let post_state = run_verify(
+            let post_state = run_verify::<Spec>(
+                spec,
                 pre_state,
-                &state_bytes,
                 &input_bytes,
                 args.network,
                 mode,
                 &DEFAULT_CONFIG,
-                &reader,
             )?;
             info!("Post-state: {:#?}", post_state);
         }
@@ -203,8 +206,9 @@ async fn main() -> anyhow::Result<()> {
             log_path,
         } => {
             run_sync(
-                reader,
+                spec,
                 start_slot,
+                caching_provider,
                 &beacon_client,
                 args.network,
                 mode,
@@ -235,11 +239,16 @@ async fn main() -> anyhow::Result<()> {
                 continue;
             }
 
-            let (state_bytes, input_bytes, pre_state, post_state) =
-                prepare_input(finalized_epoch, &reader, &beacon_client).await?;
+            let (input_bytes, pre_state, post_state, finalized_slot) = prepare_input(
+                spec.clone(),
+                finalized_epoch,
+                caching_provider.clone(),
+                &beacon_client,
+            )
+            .await?;
 
-            let encoded_input = encode_input_stdin(&state_bytes, &input_bytes)
-                .context("failed to prepare input")?;
+            let encoded_input =
+                encode_input_stdin(&input_bytes).context("failed to prepare input")?;
 
             let inputs_dir = args.data_dir.join(args.network.to_string()).join("inputs");
             fs::create_dir_all(&inputs_dir).context("failed to create encoded inputs directory")?;
@@ -261,12 +270,12 @@ async fn main() -> anyhow::Result<()> {
                 .context("failed to write input to file")?;
             info!("Input written to {:?}", input_file);
 
+            let journal = abi::Journal::new(&pre_state, &post_state, finalized_slot);
+
             journal_file
-                .write_all(&pre_state.abi_encode())
-                .context("failed to write pre_state to file")?;
-            journal_file
-                .write_all(&post_state.abi_encode())
-                .context("failed to write post_state to file")?;
+                .write_all(&journal.encode())
+                .context("failed to write journal to file")?;
+
             info!("Journal written to {:?}", journal_file);
 
             // update for next iteration
@@ -281,9 +290,10 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn run_sync<E: EthSpec + Serialize>(
-    sr: HostStateReader<CacheStateProvider<PersistentApiStateProvider<E>>>,
+async fn run_sync<E: EthSpec + Serialize, S: StateProvider<Spec = E> + Clone>(
+    spec: ChainSpec,
     start_slot: Slot,
+    state_provider: S,
     beacon_client: &BeaconClient,
     network: Network,
     mode: ExecMode,
@@ -307,21 +317,21 @@ async fn run_sync<E: EthSpec + Serialize>(
     info!("Initial Consensus State: {:#?}", consensus_state);
 
     loop {
-        let (state_bytes, input_bytes, pre_state, expected_state) = prepare_input(
+        let (input_bytes, pre_state, expected_state, _) = prepare_input(
+            spec.clone(),
             consensus_state.finalized_checkpoint().epoch(),
-            &sr,
+            state_provider.clone(),
             beacon_client,
         )
         .await?;
 
-        let msg = match run_verify(
+        let msg = match run_verify::<E>(
+            spec.clone(),
             pre_state,
-            state_bytes,
             input_bytes,
             network,
             mode,
             &DEFAULT_CONFIG,
-            &sr,
         ) {
             Ok(state) => {
                 info!("Verification successful. New state: {:#?}", &state);
@@ -342,20 +352,17 @@ async fn run_sync<E: EthSpec + Serialize>(
         consensus_state = expected_state;
 
         // uncache old states
-        let provider = sr.provider().inner();
-        provider.clear_states_before(consensus_state.finalized_checkpoint().epoch())?;
+        // state_provider.clear_states_before(consensus_state.finalized_checkpoint().epoch())?;
     }
 }
 
-async fn prepare_input<E: EthSpec + Serialize, S: StateReader<Spec = E> + StateProvider<Spec = E>>(
+async fn prepare_input<E: EthSpec + Serialize, S: StateProvider<Spec = E> + Clone>(
+    spec: ChainSpec,
     finalized_epoch: Epoch,
-    reader: &S,
+    state_provider: S,
     beacon_client: &BeaconClient,
-) -> anyhow::Result<(Vec<u8>, Vec<u8>, ConsensusState, ConsensusState)>
-where
-    <S as StateReader>::Error: Sync + Send + 'static,
-{
-    let trusted_state = reader.state_at_epoch_boundary(finalized_epoch)?;
+) -> anyhow::Result<(Vec<u8>, ConsensusState, ConsensusState, u64)> {
+    let trusted_state = state_provider.state_at_epoch_boundary(finalized_epoch)?;
     let epoch_boundary_slot = trusted_state.latest_block_header().slot;
     let trusted_beacon_block = beacon_client
         .get_block(epoch_boundary_slot)
@@ -369,52 +376,57 @@ where
         Checkpoint::new(finalized_epoch, trusted_beacon_block.hash_tree_root()?);
     info!("Trusted checkpoint: {}", trusted_checkpoint);
 
-    let builder = InputBuilder::<E, _>::new(beacon_client.clone());
-
-    let (input, _) = builder.build(trusted_checkpoint).await?;
+    let reader = HostInputReader::new(
+        spec,
+        state_provider.clone(),
+        beacon_client.clone(),
+        trusted_checkpoint,
+    )
+    .await?;
 
     info!("Running preflight");
-    let reader = PreflightStateReader::new(reader, input.consensus_state.finalized_checkpoint());
-    let post_state = verify(&DEFAULT_CONFIG, &reader, input.clone()).context("preflight failed")?;
+    let reader = PreflightInputReader::new(&reader, beacon_client.clone(), trusted_checkpoint);
+    let (post_state, finalized_slot) =
+        verify(&DEFAULT_CONFIG, &reader).context("preflight failed")?;
     info!("Preflight succeeded");
 
-    let state_input = reader.to_input()?;
+    let input = reader.to_input()?;
+    let input_bytes = bincode::serialize(&input).context("failed to serialize state")?;
 
-    let state_bytes = bincode::serialize(&state_input).context("failed to serialize state")?;
-    debug!(len = state_bytes.len(), "State serialized");
-    let input_bytes = bincode::serialize(&input).context("failed to serialize input")?;
-
-    Ok((state_bytes, input_bytes, input.consensus_state, post_state))
+    Ok((
+        input_bytes,
+        input.consensus_state,
+        post_state,
+        finalized_slot,
+    ))
 }
 
-fn run_verify<E: EthSpec + Serialize, R: StateReader<Spec = E> + StateProvider<Spec = E>>(
+fn run_verify<E: EthSpec + Serialize>(
+    chain_spec: ChainSpec,
     pre_state: ConsensusState,
-    state_bytes: impl AsRef<[u8]>,
     input_bytes: impl AsRef<[u8]>,
     network: Network,
     mode: ExecMode,
     cfg: &Config,
-    host_reader: &R,
 ) -> anyhow::Result<ConsensusState> {
-    let guest_input: Input<E> =
-        bincode::deserialize(input_bytes.as_ref()).context("failed to deserialize input")?;
     let guest_reader = {
-        let state_input: StateInput =
-            bincode::deserialize(state_bytes.as_ref()).context("failed to deserialize state")?;
-        state_input
-            .into_state_reader(host_reader.chain_spec().clone(), &pre_state)
+        let input: GuestInput<E> =
+            bincode::deserialize(input_bytes.as_ref()).context("failed to deserialize state")?;
+        input
+            .into_reader(chain_spec)
             .context("failed to validate input")?
     };
 
     // use the AssertStateReader to detect input issues already on the host
-    let post_state = verify(cfg, &guest_reader, guest_input).context("host verification failed")?;
+    let (post_state, _finalized_slot) =
+        verify(cfg, &guest_reader).context("host verification failed")?;
 
     info!("Host verification succeeded");
 
     if mode == ExecMode::R0vm {
         info!("Executing guest verification");
-        let journal = execute_guest_program(network, state_bytes, input_bytes)
-            .context("guest verification failed")?;
+        let journal =
+            execute_guest_program(network, input_bytes).context("guest verification failed")?;
         // decode the journal
         let (guest_pre_state, guest_post_state) =
             journal.split_at(ConsensusState::abi_encoded_size());
@@ -433,10 +445,7 @@ fn run_verify<E: EthSpec + Serialize, R: StateReader<Spec = E> + StateProvider<S
 }
 
 /// Produce the full stdin stream expected by the consensus client.
-fn encode_input_stdin(
-    state_bytes: impl AsRef<[u8]>,
-    input_bytes: impl AsRef<[u8]>,
-) -> anyhow::Result<Vec<u8>> {
+fn encode_input_stdin(input_bytes: impl AsRef<[u8]>) -> anyhow::Result<Vec<u8>> {
     let mut buffer = vec![];
 
     fn write_frame(buffer: &mut Vec<u8>, state_bytes: impl AsRef<[u8]>) -> anyhow::Result<()> {
@@ -448,21 +457,13 @@ fn encode_input_stdin(
         Ok(())
     }
 
-    write_frame(&mut buffer, state_bytes)?;
     write_frame(&mut buffer, input_bytes)?;
 
     Ok(buffer)
 }
 
-fn execute_guest_program(
-    network: Network,
-    state: impl AsRef<[u8]>,
-    input: impl AsRef<[u8]>,
-) -> anyhow::Result<Vec<u8>> {
-    let env = ExecutorEnv::builder()
-        .write_frame(state.as_ref())
-        .write_frame(input.as_ref())
-        .build()?;
+fn execute_guest_program(network: Network, input: impl AsRef<[u8]>) -> anyhow::Result<Vec<u8>> {
+    let env = ExecutorEnv::builder().write_frame(input.as_ref()).build()?;
     let elf = match network {
         Network::Mainnet => MAINNET_ELF,
         Network::Sepolia => SEPOLIA_ELF,

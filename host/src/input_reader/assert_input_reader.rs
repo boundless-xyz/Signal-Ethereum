@@ -15,15 +15,15 @@
 use alloy_primitives::B256;
 use beacon_types::{ChainSpec, EthSpec};
 use std::iter;
-use z_core::{Epoch, RandaoMixIndex, Root, StateReader, ValidatorIndex, ValidatorInfo};
+use z_core::{Epoch, InputReader, RandaoMixIndex, Root, ValidatorIndex, ValidatorInfo};
 
 /// A simple state reader used for debugging and testing.
-pub struct AssertStateReader<'a, S, R> {
+pub struct AssertInputReader<'a, S, R> {
     reader_a: &'a S,
     reader_b: &'a R,
 }
 
-impl<'a, S: StateReader, R: StateReader> AssertStateReader<'a, S, R> {
+impl<'a, S: InputReader, R: InputReader> AssertInputReader<'a, S, R> {
     pub fn new(inner: &'a S, reader: &'a R) -> Self {
         Self {
             reader_a: inner,
@@ -32,8 +32,8 @@ impl<'a, S: StateReader, R: StateReader> AssertStateReader<'a, S, R> {
     }
 }
 
-impl<E: EthSpec, S: StateReader<Spec = E>, R: StateReader<Spec = E>> StateReader
-    for AssertStateReader<'_, S, R>
+impl<E: EthSpec, S: InputReader<Spec = E>, R: InputReader<Spec = E>> InputReader
+    for AssertInputReader<'_, S, R>
 {
     type Error = S::Error;
     type Spec = E;
@@ -91,6 +91,39 @@ impl<E: EthSpec, S: StateReader<Spec = E>, R: StateReader<Spec = E>> StateReader
     fn randao_mix(&self, epoch: Epoch, index: RandaoMixIndex) -> Result<Option<B256>, Self::Error> {
         let a = self.reader_a.randao_mix(epoch, index)?;
         let b = self.reader_b.randao_mix(epoch, index).unwrap();
+        assert_eq!(a, b);
+        Ok(a)
+    }
+
+    fn attestations(
+        &self,
+    ) -> Result<impl Iterator<Item = &z_core::Attestation<Self::Spec>>, Self::Error> {
+        let mut iter_a = self.reader_a.attestations()?;
+        let mut iter_b = self.reader_b.attestations().unwrap();
+        Ok(iter::from_fn(move || {
+            match (iter_a.next(), iter_b.next()) {
+                (None, None) => None,
+                (Some(a), Some(b)) => {
+                    assert_eq!(a, b);
+                    Some(a)
+                }
+                (a, b) => panic!(
+                    "One attestation iterator ended while the other has remaining attestations. Left={a:?}, Right={b:?}"
+                ),
+            }
+        }))
+    }
+
+    fn consensus_state(&self) -> Result<z_core::ConsensusState, Self::Error> {
+        let a = self.reader_a.consensus_state()?;
+        let b = self.reader_b.consensus_state().unwrap();
+        assert_eq!(a, b);
+        Ok(a)
+    }
+
+    fn slot_for_block(&self, block_root: &Root) -> Result<u64, Self::Error> {
+        let a = self.reader_a.slot_for_block(block_root)?;
+        let b = self.reader_b.slot_for_block(block_root).unwrap();
         assert_eq!(a, b);
         Ok(a)
     }

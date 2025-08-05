@@ -12,12 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::StateReader;
+use super::InputReader;
 use crate::{
-    Checkpoint, ConsensusState, EMPTY_STATE_PATCH, Epoch, PublicKey, RandaoMixIndex, Root, Slot,
-    StatePatch, ValidatorIndex, ValidatorInfo, ensure, get_total_balance,
+    Checkpoint, ConsensusState, DiskAttestation, EMPTY_STATE_PATCH, Epoch, PublicKey,
+    RandaoMixIndex, Root, Slot, StatePatch, ValidatorIndex, ValidatorInfo, ensure,
+    get_total_balance,
     guest_gindices::{
-        activation_eligibility_epoch_gindex, activation_epoch_gindex,
+        activation_eligibility_epoch_gindex, activation_epoch_gindex, block_slot_gindex,
         earliest_consolidation_epoch_gindex, earliest_exit_epoch_gindex, effective_balance_gindex,
         exit_epoch_gindex, finalized_checkpoint_epoch_gindex, fork_current_version_gindex,
         fork_epoch_gindex, fork_previous_version_gindex, genesis_validators_root_gindex,
@@ -27,7 +28,7 @@ use crate::{
     has_compressed_chunks, serde_utils,
 };
 use alloy_primitives::B256;
-use beacon_types::{ChainSpec, EthSpec, Fork};
+use beacon_types::{Attestation, ChainSpec, EthSpec, Fork};
 use itertools::Itertools;
 use safe_arith::{ArithError, SafeArith};
 use serde::{Deserialize, Serialize};
@@ -38,7 +39,7 @@ use tracing::{debug, trace};
 
 #[serde_as]
 #[derive(Clone, PartialEq, Deserialize, Serialize)]
-pub struct StateInput<'a> {
+pub struct GuestInput<'a, E: EthSpec> {
     /// Used fields of the beacon block plus their inclusion proof against the block root.
     #[serde(borrow)]
     pub beacon_block: Multiproof<'a>,
@@ -58,9 +59,30 @@ pub struct StateInput<'a> {
     /// State patches to "look ahead" to future states.
     #[serde_as(as = "BTreeMap<serde_utils::U64, _>")]
     pub patches: BTreeMap<Epoch, StatePatch>,
+
+    /// The trusted consensus state that serves as the starting point.
+    ///
+    /// Any state transitions resulting from the verification of the `attestations` will be applied
+    /// relative to this state.
+    pub consensus_state: ConsensusState,
+
+    /// A list of attestations to be processed.
+    ///
+    /// This contains only the required attestations to advance the consensus state, i.e., they
+    /// each correspond to a supermajority link leading to a new justification.
+    ///
+    /// This vector is expected to be pre-sorted by
+    /// `(attestation.data.source, attestation.data.target)` so that all attestations
+    /// for the same link are grouped together.
+    #[serde_as(as = "Vec<DiskAttestation>")]
+    pub attestations: Vec<Attestation<E>>,
+
+    /// Proofs the blocks with the given roots contain the given slots
+    #[serde(borrow)]
+    pub block_slot_proofs: Vec<Multiproof<'a>>,
 }
 
-pub struct SszStateReader<E: EthSpec> {
+pub struct GuestInputReader<E: EthSpec> {
     spec: ChainSpec,
 
     // verified beacon state fields
@@ -69,6 +91,14 @@ pub struct SszStateReader<E: EthSpec> {
 
     // additional unverified data
     patches: BTreeMap<Epoch, StatePatch>,
+
+    consensus_state: ConsensusState,
+
+    /// A list of attestations to be processed.
+    attestations: Vec<Attestation<E>>,
+
+    /// Trusted block slots
+    block_slots: BTreeMap<Root, u64>,
 
     _phantom: PhantomData<E>,
 }
@@ -86,7 +116,7 @@ struct StateInfo {
 }
 
 #[derive(thiserror::Error, Debug)]
-pub enum SszReaderError {
+pub enum GuestReaderError {
     #[error("{msg}: Ssz multiproof error: {source}")]
     SszMultiproof {
         msg: &'static str,
@@ -99,30 +129,26 @@ pub enum SszReaderError {
     ArithError(ArithError),
 }
 
-impl From<ArithError> for SszReaderError {
+impl From<ArithError> for GuestReaderError {
     fn from(e: ArithError) -> Self {
-        SszReaderError::ArithError(e)
+        GuestReaderError::ArithError(e)
     }
 }
 
 trait WithContext<T> {
-    fn context(self, msg: &'static str) -> Result<T, SszReaderError>;
+    fn context(self, msg: &'static str) -> Result<T, GuestReaderError>;
 }
 
 impl<T> WithContext<T> for Result<T, ssz_multiproofs::Error> {
-    fn context(self, msg: &'static str) -> Result<T, SszReaderError> {
-        self.map_err(|e| SszReaderError::SszMultiproof { msg, source: e })
+    fn context(self, msg: &'static str) -> Result<T, GuestReaderError> {
+        self.map_err(|e| GuestReaderError::SszMultiproof { msg, source: e })
     }
 }
 
-impl StateInput<'_> {
-    pub fn into_state_reader<E: EthSpec>(
-        mut self,
-        spec: ChainSpec,
-        consensus_state: &ConsensusState,
-    ) -> Result<SszStateReader<E>, SszReaderError> {
+impl<E: EthSpec> GuestInput<'_, E> {
+    pub fn into_reader(mut self, spec: ChainSpec) -> Result<GuestInputReader<E>, GuestReaderError> {
         // the finalized checkpoint is the only state we can trust
-        let trusted_checkpoint = consensus_state.finalized_checkpoint();
+        let trusted_checkpoint = self.consensus_state.finalized_checkpoint();
 
         // check that the beacon block proofs correspond to the finalized epoch boundary
         self.beacon_block
@@ -155,14 +181,14 @@ impl StateInput<'_> {
         let state_epoch = state.slot.epoch(E::slots_per_epoch());
         ensure!(
             state.fork == spec.fork_at_epoch(state_epoch),
-            SszReaderError::ConfigError("Beacon state's fork does not match the chain spec")
+            GuestReaderError::ConfigError("Beacon state's fork does not match the chain spec")
         );
 
         // Our trusted state is from `slot`, but our consensus state is at
         // `current_justified_checkpoint`. This means that we have missed all the state changes
         // introduced by the intermediate `state_transition()` calls. From the trusted state, we
         // only use the validator registry, so it boils down to the process_registry_updates().
-        let current_justified_epoch = consensus_state.current_justified_checkpoint().epoch();
+        let current_justified_epoch = self.consensus_state.current_justified_checkpoint().epoch();
         for epoch in state_epoch.as_u64()..=current_justified_epoch.as_u64() {
             let epoch = Epoch::from(epoch);
             // By definition, we know that the next finalization will happen at the
@@ -179,11 +205,27 @@ impl StateInput<'_> {
         // the state patches are unverified, but we have to perform some plausibility checks
         self.validate_state_patches(&spec, &trusted_checkpoint, &state, &validators)?;
 
-        Ok(SszStateReader {
+        // Build the map from block roots to their slots
+        let mut block_slots = BTreeMap::new();
+        for proof in &self.block_slot_proofs {
+            let root = proof
+                .calculate_root()
+                .context("Failed to calculate block root")?;
+            let slot = proof
+                .values()
+                .next_assert_gindex(block_slot_gindex())
+                .context("Failed to extract beacon block slot")?;
+            block_slots.insert(root.into(), u64_from_chunk::<Leftmost>(slot));
+        }
+
+        Ok(GuestInputReader {
             spec,
             genesis_validators_root: state.genesis_validators_root,
             validators,
             patches: self.patches,
+            consensus_state: self.consensus_state,
+            attestations: self.attestations,
+            block_slots,
             _phantom: PhantomData,
         })
     }
@@ -194,7 +236,7 @@ impl StateInput<'_> {
         trusted_checkpoint: &Checkpoint,
         state: &StateInfo,
         validators: &BTreeMap<ValidatorIndex, ValidatorInfo>,
-    ) -> Result<(), SszReaderError> {
+    ) -> Result<(), GuestReaderError> {
         // get the total active balance at the trusted checkpoint
         let active_validators = validators
             .iter()
@@ -272,8 +314,8 @@ impl StateInput<'_> {
     }
 }
 
-impl<E: EthSpec> StateReader for SszStateReader<E> {
-    type Error = SszReaderError;
+impl<E: EthSpec> InputReader for GuestInputReader<E> {
+    type Error = GuestReaderError;
     type Spec = E;
 
     fn chain_spec(&self) -> &ChainSpec {
@@ -307,6 +349,28 @@ impl<E: EthSpec> StateReader for SszStateReader<E> {
 
         Ok(randao.cloned())
     }
+
+    /// Returns the attestations that were added to this input
+    /// NOTE: These are untrusted values
+    fn attestations(&self) -> Result<impl Iterator<Item = &Attestation<Self::Spec>>, Self::Error> {
+        Ok(self.attestations.iter())
+    }
+
+    /// Returns the consensus state that was used to create this input. This is the starting point
+    /// for the state transition process
+    /// NOTE: This is an untrusted value and must be constrained in the journal
+    fn consensus_state(&self) -> Result<ConsensusState, Self::Error> {
+        Ok(self.consensus_state.clone())
+    }
+
+    // The slot field of a block identified by its root
+    // This can be trusted as internally an SSZ proof of the slot value is verified against this root
+    fn slot_for_block(&self, root: &Root) -> Result<u64, Self::Error> {
+        self.block_slots
+            .get(root)
+            .copied()
+            .ok_or(GuestReaderError::ConfigError("Block slot not found"))
+    }
 }
 
 /// Extracts the relevant fields from the beacon block [Multiproof].
@@ -339,7 +403,7 @@ fn extract_beacon_state_multiproof(
     let fork = Fork {
         previous_version: fork_previous_version[0..4].try_into().unwrap(),
         current_version: fork_current_version[0..4].try_into().unwrap(),
-        epoch: u64_from_chunk(fork_epoch).into(),
+        epoch: u64_from_chunk::<Leftmost>(fork_epoch).into(),
     };
     let validators_root = values.next_assert_gindex(validators_gindex())?;
     let finalized_checkpoint_epoch =
@@ -352,12 +416,13 @@ fn extract_beacon_state_multiproof(
 
     Ok(StateInfo {
         genesis_validators_root: genesis_validators_root.into(),
-        slot: u64_from_chunk(slot).into(),
+        slot: u64_from_chunk::<Leftmost>(slot).into(),
         fork,
         validators_root: validators_root.into(),
-        finalized_checkpoint_epoch: u64_from_chunk(finalized_checkpoint_epoch).into(),
-        earliest_exit_epoch: u64_from_chunk(earliest_exit_epoch).into(),
-        earliest_consolidation_epoch: u64_from_chunk(earliest_consolidation_epoch).into(),
+        finalized_checkpoint_epoch: u64_from_chunk::<Leftmost>(finalized_checkpoint_epoch).into(),
+        earliest_exit_epoch: u64_from_chunk::<Leftmost>(earliest_exit_epoch).into(),
+        earliest_consolidation_epoch: u64_from_chunk::<Leftmost>(earliest_consolidation_epoch)
+            .into(),
     })
 }
 
@@ -386,7 +451,7 @@ fn extract_validators_multiproof(
 
         if gindex == &exit_epoch_gindex(validator_index) {
             let (_, exit_epoch) = values.next().unwrap();
-            let exit_epoch = u64_from_chunk(exit_epoch);
+            let exit_epoch = u64_from_chunk::<Leftmost>(exit_epoch);
 
             assert!(exit_epoch <= current_epoch.into());
         } else {
@@ -410,7 +475,7 @@ fn extract_validators_multiproof(
             let (gindex, effective_balance) =
                 values.next().ok_or(ssz_multiproofs::Error::MissingValue)?;
             assert_eq!(gindex, effective_balance_gindex(validator_index));
-            let effective_balance = u64_from_chunk(effective_balance);
+            let effective_balance = u64_from_chunk::<Leftmost>(effective_balance);
 
             let (gindex, slashed) = values.next().ok_or(ssz_multiproofs::Error::MissingValue)?;
             assert_eq!(gindex, slashed_gindex(validator_index));
@@ -419,16 +484,17 @@ fn extract_validators_multiproof(
             let (gindex, activation_eligibility_epoch) =
                 values.next().ok_or(ssz_multiproofs::Error::MissingValue)?;
             assert_eq!(gindex, activation_eligibility_epoch_gindex(validator_index));
-            let activation_eligibility_epoch = u64_from_chunk(activation_eligibility_epoch);
+            let activation_eligibility_epoch =
+                u64_from_chunk::<Leftmost>(activation_eligibility_epoch);
 
             let (gindex, activation_epoch) =
                 values.next().ok_or(ssz_multiproofs::Error::MissingValue)?;
             assert_eq!(gindex, activation_epoch_gindex(validator_index));
-            let activation_epoch = u64_from_chunk(activation_epoch);
+            let activation_epoch = u64_from_chunk::<Leftmost>(activation_epoch);
 
             let (gindex, exit_epoch) = values.next().ok_or(ssz_multiproofs::Error::MissingValue)?;
             assert_eq!(gindex, exit_epoch_gindex(validator_index));
-            let exit_epoch = u64_from_chunk(exit_epoch);
+            let exit_epoch = u64_from_chunk::<Leftmost>(exit_epoch);
 
             let validator_info = ValidatorInfo {
                 pubkey,
@@ -445,7 +511,7 @@ fn extract_validators_multiproof(
     }
 
     let (_, length) = values.next().unwrap();
-    let length = u64_from_chunk(length);
+    let length = u64_from_chunk::<Leftmost>(length);
     assert_eq!(validator_index as u64, length);
 
     assert!(values.next().is_none());
@@ -485,10 +551,21 @@ fn get_balance_churn_limit(spec: &ChainSpec, total_active_balance: u64) -> Resul
     churn.safe_sub(churn.safe_rem(spec.effective_balance_increment)?)
 }
 
-/// Extracts an u64 from a 32-byte SSZ chunk.
-fn u64_from_chunk(node: &[u8; 32]) -> u64 {
-    assert!(node[8..].iter().all(|&b| b == 0));
-    u64::from_le_bytes(node[..8].try_into().unwrap())
+trait U64ChunkPos {
+    fn as_range() -> std::ops::Range<usize>;
+}
+
+struct Leftmost;
+
+impl U64ChunkPos for Leftmost {
+    fn as_range() -> std::ops::Range<usize> {
+        0..8
+    }
+}
+
+/// Extracts an u64 from a 32-byte SSZ chunk
+fn u64_from_chunk<P: U64ChunkPos>(node: &[u8; 32]) -> u64 {
+    u64::from_le_bytes(node[P::as_range()].try_into().unwrap())
 }
 
 /// Extracts a bool from a 32-byte SSZ chunk.
@@ -504,14 +581,17 @@ fn bool_from_chunk(node: &[u8; 32]) -> bool {
 #[cfg(test)]
 mod tests {
     mod state_input {
-        use crate::{Epoch, RandaoMixIndex, StateInput, StatePatch, ValidatorIndex};
+        use crate::{
+            ConsensusState, Epoch, GuestInput, MainnetEthSpec, RandaoMixIndex, StatePatch,
+            ValidatorIndex,
+        };
         use alloy_primitives::B256;
         use bls::SecretKey;
         use std::collections::BTreeMap;
 
         #[test]
         fn bincode() {
-            let input = StateInput {
+            let input = GuestInput {
                 beacon_block: Default::default(),
                 beacon_state: Default::default(),
                 active_validators: Default::default(),
@@ -526,10 +606,13 @@ mod tests {
                         validator_exits: BTreeMap::from([(ValidatorIndex::MAX, Epoch::new(1))]),
                     },
                 )]),
+                consensus_state: ConsensusState::default(),
+                attestations: Vec::new(),
+                block_slot_proofs: Vec::new(),
             };
 
             let bytes = bincode::serialize(&input).unwrap();
-            let de = bincode::deserialize::<StateInput>(&bytes).unwrap();
+            let de = bincode::deserialize::<GuestInput<MainnetEthSpec>>(&bytes).unwrap();
             assert!(input == de);
         }
     }

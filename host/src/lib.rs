@@ -14,17 +14,17 @@
 
 mod beacon_client;
 mod beacon_state;
+mod chain_reader;
 mod conversions;
-mod input_builder;
+mod input_reader;
 mod state_patch_builder;
 mod state_provider;
-mod state_reader;
 mod test_utils;
 
 pub use beacon_client::*;
 pub use beacon_state::*;
-pub use input_builder::*;
+pub use chain_reader::*;
+pub use input_reader::*;
 pub use state_patch_builder::*;
 pub use state_provider::*;
-pub use state_reader::*;
 pub use test_utils::*;

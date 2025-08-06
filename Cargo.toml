@@ -46,11 +46,11 @@ thiserror = "2.0"
 tokio = { version = "1.45", features = ["full"] }
 
 # Lighthouse crates
-beacon_chain = { git = "https://github.com/risc0-labs/lighthouse.git", rev = "04b8ea4cdedac4bb0d2f61988d1dd89437a77e2e" }
-beacon_types = { package = "types", git = "https://github.com/risc0-labs/lighthouse.git", rev = "04b8ea4cdedac4bb0d2f61988d1dd89437a77e2e", default-features = false, features = ["legacy-arith"] }
-bls = { git = "https://github.com/risc0-labs/lighthouse.git", rev = "04b8ea4cdedac4bb0d2f61988d1dd89437a77e2e" }
-swap_or_not_shuffle = { git = "https://github.com/risc0-labs/lighthouse.git", rev = "04b8ea4cdedac4bb0d2f61988d1dd89437a77e2e" }
-safe_arith = { git = "https://github.com/risc0-labs/lighthouse.git", rev = "04b8ea4cdedac4bb0d2f61988d1dd89437a77e2e" }
+beacon_chain = { git = "https://github.com/sigp/lighthouse.git", rev = "9c972201bcce642a3dadaa6c98958cf6b440a4e2" }
+beacon_types = { package = "types", git = "https://github.com/sigp/lighthouse.git", rev = "9c972201bcce642a3dadaa6c98958cf6b440a4e2", default-features = false, features = ["legacy-arith"] }
+bls = { git = "https://github.com/sigp/lighthouse.git", rev = "9c972201bcce642a3dadaa6c98958cf6b440a4e2" }
+swap_or_not_shuffle = { git = "https://github.com/sigp/lighthouse.git", rev = "9c972201bcce642a3dadaa6c98958cf6b440a4e2" }
+safe_arith = { git = "https://github.com/sigp/lighthouse.git", rev = "9c972201bcce642a3dadaa6c98958cf6b440a4e2" }
 
 [patch."https://github.com/ralexstokes/ssz-rs"]
 # Get the merkle tree empty node virtualization so non-trivial merkle trees actually fit in memory

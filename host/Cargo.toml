@@ -62,6 +62,6 @@ methods = { workspace = true }
 rand = "0.9"
 risc0-zkvm = { workspace = true, features = ["std", "unstable", "prove"] }
 serde_cbor = "0.11"
-state_processing = { git = "https://github.com/risc0-labs/lighthouse.git", rev = "04b8ea4cdedac4bb0d2f61988d1dd89437a77e2e" }
+state_processing = { git = "https://github.com/sigp/lighthouse.git", rev = "9c972201bcce642a3dadaa6c98958cf6b440a4e2" }
 test-log = { version = "0.2", features = ["trace"] }
 tokio = { workspace = true }

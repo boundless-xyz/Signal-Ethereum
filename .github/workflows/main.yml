@@ -101,7 +101,7 @@ jobs:
         run: python license-check.py
 
       - name: lint rust code
-        run: cargo fmt --all --check --locked
+        run: cargo fmt --all --check
 
       - name: cargo clippy
         env:
@@ -111,7 +111,7 @@ jobs:
 
       - name: lint guest code
         working-directory: methods/guest
-        run: cargo fmt --all --check --locked
+        run: cargo fmt --all --check
 
       - name: Show sccache stats
         run: sccache --show-stats

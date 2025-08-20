@@ -115,3 +115,39 @@ jobs:
 
       - name: Show sccache stats
         run: sccache --show-stats
+
+  build-docker:
+    runs-on: [ self-hosted, prod, "${{ matrix.os }}", "${{ matrix.arch }}", "${{ matrix.device }}" ]
+    strategy:
+      matrix:
+        include:
+          - os: Linux
+            arch: X64
+            feature: default
+            device: cpu
+    steps:
+      - name: clone repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install rust
+        uses: risc0/risc0/.github/actions/rustup@fbe1d0bb75c21fe36cefd87bae25f424b711b291
+
+      - name: Install sccache
+        uses: risc0/risc0/.github/actions/sccache@fbe1d0bb75c21fe36cefd87bae25f424b711b291
+        with:
+          key: Linux-default
+
+      - name: install cargo risczero
+        uses: ./.github/actions/bininstall-risc0
+        with:
+          risczero-version: ${{ env.RISC0_VERSION }}
+          toolchain-version: ${{ env.RISC0_RUST_TOOLCHAIN_VERSION }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: build guest with docker
+        env:
+          RISC0_USE_DOCKER: 1
+        run: cargo build --manifest-path=methods/Cargo.toml 

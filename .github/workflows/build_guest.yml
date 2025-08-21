@@ -48,7 +48,7 @@ jobs:
       - name: build guest with docker
         env:
           RISC0_USE_DOCKER: 1
-        run: cargo build --manifest-path=methods/Cargo.toml 
+        run: cargo build --manifest-path=methods/Cargo.toml --locked
 
       - name: compute image ids
         id: compute-image-ids

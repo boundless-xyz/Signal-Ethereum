@@ -27,6 +27,7 @@ fn main() {
     if env::var("RISC0_USE_DOCKER").is_ok() {
         let docker_options = DockerOptionsBuilder::default()
             .root_dir(manifest_dir.join(".."))
+            .docker_container_tag("r0.1.88.0")
             .build()
             .unwrap();
         builder.use_docker(docker_options);

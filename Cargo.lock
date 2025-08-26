@@ -2717,7 +2717,7 @@ dependencies = [
 [[package]]
 name = "ethereum-consensus"
 version = "0.1.1"
-source = "git+https://github.com/boundless/ethereum-consensus.git?rev=b60278d73cdfc871f17e06493f707a034f3599cb#b60278d73cdfc871f17e06493f707a034f3599cb"
+source = "git+https://github.com/boundless-xyz/ethereum-consensus.git?rev=b60278d73cdfc871f17e06493f707a034f3599cb#b60278d73cdfc871f17e06493f707a034f3599cb"
 dependencies = [
  "blst",
  "bs58 0.4.0",

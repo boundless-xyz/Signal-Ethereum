@@ -37,7 +37,7 @@ risc0-zkvm = { version = "2.3.0", default-features = false }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 serde = "1.0"
 sha2 = { version = "=0.10.8", default-features = false }
-ethereum-consensus = { git = "https://github.com/boundless/ethereum-consensus.git", rev = "b60278d73cdfc871f17e06493f707a034f3599cb", default-features = false }
+ethereum-consensus = { git = "https://github.com/boundless-xyz/ethereum-consensus.git", rev = "b60278d73cdfc871f17e06493f707a034f3599cb", default-features = false }
 ssz_rs = { git = "https://github.com/willemolding/ssz-rs", rev = "d939604c3693aadaff63dcacf9a810d8845fafef", default-features = false }
 bitvec = { version = "1", features = ["serde"] }
 tracing = "0.1.41"

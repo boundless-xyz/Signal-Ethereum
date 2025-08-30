@@ -1525,7 +1525,7 @@ dependencies = [
 [[package]]
 name = "ethereum_hashing"
 version = "0.7.0"
-source = "git+https://github.com/risc0/ethereum_hashing?rev=f9826065df48bab455afe6a0639d5c625ced57a2#f9826065df48bab455afe6a0639d5c625ced57a2"
+source = "git+https://github.com/boundless-xyz/ethereum_hashing?rev=f9826065df48bab455afe6a0639d5c625ced57a2#f9826065df48bab455afe6a0639d5c625ced57a2"
 dependencies = [
  "sha2",
 ]

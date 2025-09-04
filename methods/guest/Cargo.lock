@@ -3977,7 +3977,6 @@ dependencies = [
  "alloy-primitives",
  "bitvec",
  "itertools 0.14.0",
- "risc0-zkvm",
  "serde",
  "sha2",
  "thiserror",

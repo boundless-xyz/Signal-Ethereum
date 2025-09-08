@@ -30,10 +30,10 @@ jobs:
           submodules: recursive
 
       - name: Install rust
-        uses: risc0/risc0/.github/actions/rustup@fbe1d0bb75c21fe36cefd87bae25f424b711b291
+        uses: risc0/risc0/.github/actions/rustup@main
 
       - name: Install sccache
-        uses: risc0/risc0/.github/actions/sccache@fbe1d0bb75c21fe36cefd87bae25f424b711b291
+        uses: risc0/risc0/.github/actions/sccache@main
         with:
           key: Linux-default
 

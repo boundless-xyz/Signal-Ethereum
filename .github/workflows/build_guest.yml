@@ -33,7 +33,7 @@ jobs:
         uses: risc0/risc0/.github/actions/rustup@main
 
       - name: Install sccache
-        uses: risc0/risc0/.github/actions/sccache@main
+        uses: boundless-xyz/boundless/.github/actions/sccache@main
         with:
           key: Linux-default
 

@@ -11,10 +11,9 @@ builder = ["dep:ssz_rs", "dep:ethereum-consensus", "dep:rayon", "dep:smallvec"]
 progress-bar = ["dep:indicatif"]
 
 [dependencies]
-serde.workspace = true
+serde = { workspace = true, features = ["derive"] }
 sha2.workspace = true
 alloy-primitives.workspace = true
-risc0-zkvm.workspace = true
 bitvec.workspace = true
 thiserror = "2.0.6"
 tracing.workspace = true

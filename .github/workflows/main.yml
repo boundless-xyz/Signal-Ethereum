@@ -21,7 +21,7 @@ env:
   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
   RUST_BACKTRACE: "1"
   RISC0_RUST_TOOLCHAIN_VERSION: 1.88.0
-  RISC0_VERSION: 2.3.0
+  RISC0_VERSION: 3.0.3
 
 jobs:
   test:
@@ -44,7 +44,7 @@ jobs:
           submodules: recursive
 
       - name: Install rust
-        uses: risc0/risc0/.github/actions/rustup@fbe1d0bb75c21fe36cefd87bae25f424b711b291
+        uses: risc0/risc0/.github/actions/rustup@main
 
       - name: Install sccache
         uses: boundless-xyz/boundless/.github/actions/sccache@main
@@ -90,7 +90,7 @@ jobs:
           python-version: "3.10"
 
       - name: install rust
-        uses: risc0/risc0/.github/actions/rustup@fbe1d0bb75c21fe36cefd87bae25f424b711b291
+        uses: risc0/risc0/.github/actions/rustup@main
 
       - name: Install sccache
         uses: boundless-xyz/boundless/.github/actions/sccache@main
@@ -132,7 +132,7 @@ jobs:
           submodules: recursive
 
       - name: Install rust
-        uses: risc0/risc0/.github/actions/rustup@fbe1d0bb75c21fe36cefd87bae25f424b711b291
+        uses: risc0/risc0/.github/actions/rustup@main
 
       - name: Install sccache
         uses: boundless-xyz/boundless/.github/actions/sccache@main

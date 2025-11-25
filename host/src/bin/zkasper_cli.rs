@@ -418,8 +418,7 @@ fn run_verify<E: EthSpec + Serialize>(
     };
 
     // use the AssertStateReader to detect input issues already on the host
-    let (post_state, _finalized_slot) =
-        verify(cfg, &guest_reader).context("host verification failed")?;
+    let (post_state, _finalized_slot) = verify(cfg, &guest_reader).unwrap(); //.context("host verification failed")?;
 
     info!("Host verification succeeded");
 

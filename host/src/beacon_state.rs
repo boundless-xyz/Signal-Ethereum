@@ -67,6 +67,22 @@ pub mod mainnet {
         PENDING_PARTIAL_WITHDRAWALS_LIMIT,
         PENDING_CONSOLIDATIONS_LIMIT,
     >;
+    pub type FuluBeaconState = super::fulu::BeaconState<
+        SLOTS_PER_HISTORICAL_ROOT,
+        HISTORICAL_ROOTS_LIMIT,
+        ETH1_DATA_VOTES_BOUND,
+        VALIDATOR_REGISTRY_LIMIT,
+        EPOCHS_PER_HISTORICAL_VECTOR,
+        EPOCHS_PER_SLASHINGS_VECTOR,
+        MAX_VALIDATORS_PER_COMMITTEE,
+        SYNC_COMMITTEE_SIZE,
+        BYTES_PER_LOGS_BLOOM,
+        MAX_EXTRA_DATA_BYTES,
+        PENDING_DEPOSITS_LIMIT,
+        PENDING_PARTIAL_WITHDRAWALS_LIMIT,
+        PENDING_CONSOLIDATIONS_LIMIT,
+        { ((MIN_SEED_LOOKAHEAD + 1) * SLOTS_PER_EPOCH) as usize },
+    >;
 }
 
 mod electra {
@@ -280,7 +296,7 @@ mod fulu {
             List<PendingPartialWithdrawal, PENDING_PARTIAL_WITHDRAWALS_LIMIT>,
         pub pending_consolidations: List<PendingConsolidation, PENDING_CONSOLIDATIONS_LIMIT>,
         #[serde(with = "seq_of_str")]
-        pub proposer_lookahead: List<u64, PROPOSER_LOOKAHEAD>,
+        pub proposer_lookahead: Vector<ValidatorIndex, PROPOSER_LOOKAHEAD>,
     }
 }
 

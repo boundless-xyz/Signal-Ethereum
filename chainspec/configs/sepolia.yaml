@@ -40,6 +40,10 @@ DENEB_FORK_EPOCH: 132608
 ELECTRA_FORK_VERSION: 0x90000074
 ELECTRA_FORK_EPOCH: 222464
 
+# Fulu
+FULU_FORK_VERSION: 0x90000075
+FULU_FORK_EPOCH: 272640
+
 # Time parameters
 # ---------------------------------------------------------------
 # 12 seconds

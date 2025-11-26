@@ -36,7 +36,7 @@ pub struct Config {
 /// The default configuration.
 pub static DEFAULT_CONFIG: Config = Config {
     min_version: ForkName::Electra,
-    max_version: ForkName::Electra,
+    max_version: ForkName::Fulu,
     epoch_lookahead_limit: Epoch::new(4),
     justification_threshold_factor: 85,
     justification_threshold_quotient: 100,

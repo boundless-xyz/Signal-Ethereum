@@ -14,7 +14,7 @@
 
 use crate::{
     ChainReader, HostReaderError, StatePatchBuilder, StateProvider,
-    mainnet::{BeaconState, ElectraBeaconState},
+    mainnet::{BeaconState, ElectraBeaconState, FuluBeaconState},
 };
 use alloy_primitives::B256;
 use beacon_types::{ChainSpec, EthSpec};
@@ -86,6 +86,17 @@ where
                 .with_path::<ElectraBeaconState>(&["finalized_checkpoint".into(), "epoch".into()])
                 .with_path::<ElectraBeaconState>(&["earliest_exit_epoch".into()])
                 .with_path::<ElectraBeaconState>(&["earliest_consolidation_epoch".into()])
+                .build(state)?,
+            BeaconState::Fulu(state) => MultiproofBuilder::new()
+                .with_path::<FuluBeaconState>(&["genesis_validators_root".into()])
+                .with_path::<FuluBeaconState>(&["slot".into()])
+                .with_path::<FuluBeaconState>(&["fork".into(), "previous_version".into()])
+                .with_path::<FuluBeaconState>(&["fork".into(), "current_version".into()])
+                .with_path::<FuluBeaconState>(&["fork".into(), "epoch".into()])
+                .with_path::<FuluBeaconState>(&["validators".into()])
+                .with_path::<FuluBeaconState>(&["finalized_checkpoint".into(), "epoch".into()])
+                .with_path::<FuluBeaconState>(&["earliest_exit_epoch".into()])
+                .with_path::<FuluBeaconState>(&["earliest_consolidation_epoch".into()])
                 .build(state)?,
             _ => {
                 panic!("Unsupported beacon fork. electra only for now")

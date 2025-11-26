@@ -18,7 +18,7 @@ If using TSEth to build a bridge or a light-client it is important to understand
 
 - There is no long-range attack protection from the proofs alone. Similar to the above consumers of TSEth proofs need to ensure they only accept state transitions while within the slashability period of the supermajority of attesting validators. They should also ensure that very long range updates (e.g. longer than the weak-subjectivity period) are not allowed.
 
-- The implementation currently supports the Electra hard-fork only. Attempting to process epochs prior to this fork will fail. Due to how attestations are structured prior to EIP-7549, verifying them is much more expensive (around 60x) and so it is unlikely pre-Electra will be supported.
+- The implementation currently supports Electra and Fulu hard-forks only (and can process the Electra->Fulu fork successfully). Attempting to process epochs prior to this fork will fail. Due to how attestations are structured prior to EIP-7549, verifying them is much more expensive (around 60x) and so it is unlikely pre-Electra will be supported.
 
 ## Repository Structure
 

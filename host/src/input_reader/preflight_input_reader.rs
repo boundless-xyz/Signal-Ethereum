@@ -12,18 +12,17 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::{
-    ChainReader, HostReaderError, StatePatchBuilder, StateProvider,
-    mainnet::{BeaconState, ElectraBeaconState, FuluBeaconState},
-};
+use crate::{ChainReader, HostReaderError, StatePatchBuilder, StateProvider, mainnet::BeaconState};
 use alloy_primitives::B256;
+use anyhow::bail;
 use beacon_types::{ChainSpec, EthSpec};
 use bls::PublicKey;
 use ethereum_consensus::{
+    Fork,
     electra::{Validator, mainnet::VALIDATOR_REGISTRY_LIMIT},
     phase0::BeaconBlockHeader,
 };
-use ssz_multiproofs::MultiproofBuilder;
+use ssz_multiproofs::{Multiproof, MultiproofBuilder};
 use ssz_rs::prelude::*;
 use std::{
     cell::RefCell,
@@ -76,32 +75,15 @@ where
 
         info!("Building beacon state proof");
         let state_multiproof = match trusted_state.deref() {
-            BeaconState::Electra(state) => MultiproofBuilder::new()
-                .with_path::<ElectraBeaconState>(&["genesis_validators_root".into()])
-                .with_path::<ElectraBeaconState>(&["slot".into()])
-                .with_path::<ElectraBeaconState>(&["fork".into(), "previous_version".into()])
-                .with_path::<ElectraBeaconState>(&["fork".into(), "current_version".into()])
-                .with_path::<ElectraBeaconState>(&["fork".into(), "epoch".into()])
-                .with_path::<ElectraBeaconState>(&["validators".into()])
-                .with_path::<ElectraBeaconState>(&["finalized_checkpoint".into(), "epoch".into()])
-                .with_path::<ElectraBeaconState>(&["earliest_exit_epoch".into()])
-                .with_path::<ElectraBeaconState>(&["earliest_consolidation_epoch".into()])
-                .build(state)?,
-            BeaconState::Fulu(state) => MultiproofBuilder::new()
-                .with_path::<FuluBeaconState>(&["genesis_validators_root".into()])
-                .with_path::<FuluBeaconState>(&["slot".into()])
-                .with_path::<FuluBeaconState>(&["fork".into(), "previous_version".into()])
-                .with_path::<FuluBeaconState>(&["fork".into(), "current_version".into()])
-                .with_path::<FuluBeaconState>(&["fork".into(), "epoch".into()])
-                .with_path::<FuluBeaconState>(&["validators".into()])
-                .with_path::<FuluBeaconState>(&["finalized_checkpoint".into(), "epoch".into()])
-                .with_path::<FuluBeaconState>(&["earliest_exit_epoch".into()])
-                .with_path::<FuluBeaconState>(&["earliest_consolidation_epoch".into()])
-                .build(state)?,
-            _ => {
-                panic!("Unsupported beacon fork. electra only for now")
-            }
+            BeaconState::Electra(state) => build_state_multiproof(state)?,
+            BeaconState::Fulu(state) => build_state_multiproof(state)?,
+            _ => bail!(
+                "invalid beacon state version: expected >= {}; got {}",
+                Fork::Electra,
+                trusted_state.version()
+            ),
         };
+
         state_multiproof.verify(&beacon_state_root)?;
         info!("Beacon state proof finished");
 
@@ -270,4 +252,21 @@ where
         self.beacon_block_reads.borrow_mut().insert(*block_root);
         Ok(slot)
     }
+}
+
+fn build_state_multiproof<T>(state: &T) -> ssz_multiproofs::Result<Multiproof<'static>>
+where
+    T: GeneralizedIndexable + Prove + Sync,
+{
+    MultiproofBuilder::new()
+        .with_path::<T>(&["genesis_validators_root".into()])
+        .with_path::<T>(&["slot".into()])
+        .with_path::<T>(&["fork".into(), "previous_version".into()])
+        .with_path::<T>(&["fork".into(), "current_version".into()])
+        .with_path::<T>(&["fork".into(), "epoch".into()])
+        .with_path::<T>(&["validators".into()])
+        .with_path::<T>(&["finalized_checkpoint".into(), "epoch".into()])
+        .with_path::<T>(&["earliest_exit_epoch".into()])
+        .with_path::<T>(&["earliest_consolidation_epoch".into()])
+        .build(state)
 }

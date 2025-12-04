@@ -12,12 +12,12 @@ repository = "https://github.com/boundless-xyz/The-Signal.Ethereum/"
 opt-level = 3
 
 [profile.release]
-opt-level = 3 # Optimize for build time and code size; use "3" for maximum runtime performance
-codegen-units = 16 # Increases parallelism in code generation
-debug = false # Disable debug information to speed up builds
-lto = false # Link Time Optimization disabled for faster linking
-panic = "unwind" # Keeps unwinding for better build speed; "abort" is faster but changes behavior
-incremental = false # Disable incremental compilation for deterministic builds
+opt-level = 3           # Optimize for build time and code size; use "3" for maximum runtime performance
+codegen-units = 16      # Increases parallelism in code generation
+debug = false           # Disable debug information to speed up builds
+lto = false             # Link Time Optimization disabled for faster linking
+panic = "unwind"        # Keeps unwinding for better build speed; "abort" is faster but changes behavior
+incremental = false     # Disable incremental compilation for deterministic builds
 overflow-checks = false # Skip overflow checks for better performance
 
 [workspace.dependencies]
@@ -36,9 +36,9 @@ risc0-zkvm = { version = "3.0.3", default-features = false }
 
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 serde = "1.0"
-sha2 = { version = "0.10.8", default-features = false }
+sha2 = { version = "0.10.9", default-features = false }
 ethereum-consensus = { git = "https://github.com/boundless-xyz/ethereum-consensus.git", rev = "1186e3e50bd10f00ef2caf1846ee8d62f5c8e4ef", default-features = false }
-ssz_rs = { git = "https://github.com/willemolding/ssz-rs", rev = "d939604c3693aadaff63dcacf9a810d8845fafef", default-features = false }
+ssz_rs = { git = "https://github.com/willemolding/ssz-rs", rev = "f9348a9c91948e69b820cd91daef28666b37133b", default-features = false }
 bitvec = { version = "1", features = ["serde"] }
 tracing = "0.1.41"
 anyhow = "1.0.57"
@@ -47,11 +47,13 @@ tokio = { version = "1.45", features = ["full"] }
 
 # Lighthouse crates
 beacon_chain = { git = "https://github.com/sigp/lighthouse.git", rev = "9c972201bcce642a3dadaa6c98958cf6b440a4e2" }
-beacon_types = { package = "types", git = "https://github.com/sigp/lighthouse.git", rev = "9c972201bcce642a3dadaa6c98958cf6b440a4e2", default-features = false, features = ["legacy-arith"] }
+beacon_types = { package = "types", git = "https://github.com/sigp/lighthouse.git", rev = "9c972201bcce642a3dadaa6c98958cf6b440a4e2", default-features = false, features = [
+    "legacy-arith",
+] }
 bls = { git = "https://github.com/sigp/lighthouse.git", rev = "9c972201bcce642a3dadaa6c98958cf6b440a4e2" }
 swap_or_not_shuffle = { git = "https://github.com/sigp/lighthouse.git", rev = "9c972201bcce642a3dadaa6c98958cf6b440a4e2" }
 safe_arith = { git = "https://github.com/sigp/lighthouse.git", rev = "9c972201bcce642a3dadaa6c98958cf6b440a4e2" }
 
 [patch."https://github.com/ralexstokes/ssz-rs"]
 # Get the merkle tree empty node virtualization so non-trivial merkle trees actually fit in memory
-ssz_rs = { git = "https://github.com/willemolding/ssz-rs", rev = "d939604c3693aadaff63dcacf9a810d8845fafef" }
+ssz_rs = { git = "https://github.com/willemolding/ssz-rs", rev = "f9348a9c91948e69b820cd91daef28666b37133b" }

@@ -246,7 +246,7 @@ dependencies = [
  "digest 0.10.7",
  "fnv",
  "merlin",
- "sha2",
+ "sha2 0.10.9",
 ]
 
 [[package]]
@@ -624,7 +624,7 @@ dependencies = [
  "chainspec",
  "risc0-zkvm",
  "serde_cbor",
- "sha2",
+ "sha2 0.10.9",
  "z-core",
 ]
 
@@ -1088,7 +1088,7 @@ dependencies = [
  "crate_crypto_internal_eth_kzg_maybe_rayon",
  "crate_crypto_internal_eth_kzg_polynomial",
  "hex",
- "sha2",
+ "sha2 0.10.9",
 ]
 
 [[package]]
@@ -1529,7 +1529,7 @@ name = "ethereum_hashing"
 version = "0.7.0"
 source = "git+https://github.com/boundless-xyz/ethereum_hashing?rev=f9826065df48bab455afe6a0639d5c625ced57a2#f9826065df48bab455afe6a0639d5c625ced57a2"
 dependencies = [
- "sha2",
+ "sha2 0.10.8",
 ]
 
 [[package]]
@@ -2253,7 +2253,7 @@ dependencies = [
  "elliptic-curve",
  "once_cell",
  "risc0-bigint2",
- "sha2",
+ "sha2 0.10.9",
 ]
 
 [[package]]
@@ -3409,7 +3409,7 @@ dependencies = [
  "risc0-core",
  "risc0-zkvm-platform",
  "serde",
- "sha2",
+ "sha2 0.10.9",
  "stability",
  "tracing",
 ]
@@ -3444,7 +3444,7 @@ dependencies = [
  "rzup",
  "semver 1.0.26",
  "serde",
- "sha2",
+ "sha2 0.10.9",
  "stability",
  "tempfile",
  "tracing",
@@ -3682,7 +3682,7 @@ dependencies = [
  "semver 1.0.26",
  "serde",
  "serde_with",
- "sha2",
+ "sha2 0.10.9",
  "strum",
  "tempfile",
  "thiserror",
@@ -3894,6 +3894,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "sha2"
+version = "0.10.9"
+source = "git+https://github.com/risc0/RustCrypto-hashes?tag=sha2-v0.10.9-risczero.0#8631fabdea7bdffa97b11868e04e73491d8e5bcf"
+dependencies = [
+ "cfg-if",
+ "cpufeatures",
+ "digest 0.10.7",
+]
+
+[[package]]
 name = "sha3"
 version = "0.10.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3978,7 +3988,7 @@ dependencies = [
  "bitvec",
  "itertools 0.14.0",
  "serde",
- "sha2",
+ "sha2 0.10.9",
  "thiserror",
  "tracing",
 ]
@@ -5053,7 +5063,7 @@ dependencies = [
  "serde",
  "serde_arrays",
  "serde_with",
- "sha2",
+ "sha2 0.10.9",
  "ssz-multiproofs",
  "swap_or_not_shuffle",
  "thiserror",

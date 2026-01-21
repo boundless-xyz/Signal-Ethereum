@@ -14,10 +14,16 @@
 
 #![no_main]
 
-use z_core::{DEFAULT_CONFIG, MainnetEthSpec};
+use chainspec::{ChainSpec, Config as ChainConfig};
+use z_core::{Config, MainnetEthSpec};
 
-risc0_zkvm::guest::entry!(main);
+sp1_zkvm::entrypoint!(main);
 
 fn main() {
-    beacon_guest::entry::<MainnetEthSpec>(chainspec::mainnet_spec(), &DEFAULT_CONFIG);
+    // for the tests we load the chain spec and config
+    let config: ChainConfig = serde_cbor::from_slice(&sp1_zkvm::io::read_vec()).unwrap();
+    let spec = ChainSpec::from_config::<MainnetEthSpec>(&config).unwrap();
+    let config: Config = sp1_zkvm::io::read();
+
+    beacon_guest::entry::<MainnetEthSpec>(spec, &config);
 }

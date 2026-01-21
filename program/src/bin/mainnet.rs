@@ -12,4 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-include!(concat!(env!("OUT_DIR"), "/methods.rs"));
+#![no_main]
+sp1_zkvm::entrypoint!(main);
+
+use z_core::{DEFAULT_CONFIG, MainnetEthSpec};
+
+fn main() {
+    beacon_guest::entry::<MainnetEthSpec>(chainspec::mainnet_spec(), &DEFAULT_CONFIG);
+}

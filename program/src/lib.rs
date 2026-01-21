@@ -12,24 +12,23 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use risc0_zkvm::guest::env;
 use z_core::{ChainSpec, Config, EthSpec, GuestInput, InputReader, abi, verify};
 
 pub fn entry<E: EthSpec>(spec: ChainSpec, config: &Config) {
-    env::log(&format!("Network: {}", spec.config_name.as_ref().unwrap()));
+    // sp1_zkvm::io::log(&format!("Network: {}", spec.config_name.as_ref().unwrap()));
 
-    env::log("Reading frames...");
-    let ssz_reader_bytes = env::read_frame();
-    env::log("Deserializing data...");
+    // env::log("Reading frames...");
+    let ssz_reader_bytes = sp1_zkvm::io::read_vec();
+    // env::log("Deserializing data...");
 
     let state_reader = {
         let state_input: GuestInput<E> = bincode::deserialize(&ssz_reader_bytes).unwrap();
-        env::log(&format!(
-            "InputReader deserialized: {} bytes",
-            ssz_reader_bytes.len()
-        ));
+        // env::log(&format!(
+        //     "InputReader deserialized: {} bytes",
+        //     ssz_reader_bytes.len()
+        // ));
 
-        env::log("Verifying InputReader...");
+        // env::log("Verifying InputReader...");
         state_input.into_reader(spec)
     }
     .unwrap();
@@ -37,17 +36,17 @@ pub fn entry<E: EthSpec>(spec: ChainSpec, config: &Config) {
     // the input bytes are no longer needed
     drop(ssz_reader_bytes);
 
-    env::log("Verifying FFG state transitions...");
+    // env::log("Verifying FFG state transitions...");
 
     let pre_state = state_reader.consensus_state().unwrap();
     let (post_state, finalized_slot) = verify(config, &state_reader).unwrap();
 
-    env::log(&format!(
-        "New finalization: {}",
-        &post_state.finalized_checkpoint()
-    ));
+    // env::log(&format!(
+    //     "New finalization: {}",
+    //     &post_state.finalized_checkpoint()
+    // ));
 
     // write public output to the journal
     let journal = abi::Journal::new(&pre_state, &post_state, finalized_slot);
-    env::commit_slice(&journal.encode());
+    sp1_zkvm::io::commit_slice(&journal.encode());
 }

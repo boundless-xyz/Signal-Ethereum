@@ -3,7 +3,7 @@ SEPOLIA_ELECTRA_SLOT := "7118912" # two epochs after the fork, otherwise we will
 SEPOLIA_PRE_FULU_SLOT := "8724478" # two epochs before the Fulu fork to test the fork boundary transition
 
 test-sync network slot:
-    cargo run -r --bin zkasper_cli --no-default-features --features {{network}} -- --network {{network}} sync --start-slot {{slot}} --log-path ./logs/{{network}}.log --mode ssz
+    cargo run -r --bin zkasper_cli --no-default-features --features {{network}} -- --network {{network}} sync --start-slot {{slot}} --log-path ./logs/{{network}}.log --mode r0vm
 
 test-sync-full-mainnet:
     @echo "Testing sync on mainnet from slot $(MAINNET_ELECTRA_SLOT)"

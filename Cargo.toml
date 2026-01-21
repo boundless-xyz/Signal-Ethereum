@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["chainspec", "core", "host", "ssz-multiproofs", "script"]
+members = ["chainspec", "core", "host", "ssz-multiproofs"]
 
 [workspace.package]
 version = "1.0.0"

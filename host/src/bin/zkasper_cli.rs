@@ -18,9 +18,8 @@ use host::{
     BeaconClient, CacheStateProvider, ChainReader, PersistentApiStateProvider, StateProvider,
     host_input_reader::HostInputReader, preflight_input_reader::PreflightInputReader,
 };
-use methods::{MAINNET_ELF, SEPOLIA_ELF};
-use risc0_zkvm::{ExecutorEnv, default_executor};
 use serde::Serialize;
+use sp1_sdk::include_elf;
 use ssz_rs::HashTreeRoot;
 use std::{
     fmt::{self, Display},
@@ -35,6 +34,9 @@ use z_core::{
     ChainSpec, Checkpoint, Config, ConsensusState, DEFAULT_CONFIG, Epoch, EthSpec, GuestInput,
     MainnetEthSpec, Slot, abi, verify,
 };
+
+const MAINNET_ELF: &[u8] = include_elf!("mainnet");
+const SEPOLIA_ELF: &[u8] = include_elf!("sepolia");
 
 // all chains use the mainnet preset
 type Spec = MainnetEthSpec;
@@ -462,16 +464,20 @@ fn encode_input_stdin(input_bytes: impl AsRef<[u8]>) -> anyhow::Result<Vec<u8>> 
     Ok(buffer)
 }
 
+use sp1_sdk::SP1Stdin;
+
 fn execute_guest_program(network: Network, input: impl AsRef<[u8]>) -> anyhow::Result<Vec<u8>> {
-    let env = ExecutorEnv::builder().write_frame(input.as_ref()).build()?;
+    let mut stdin = SP1Stdin::new();
+    stdin.write_slice(input.as_ref());
     let elf = match network {
         Network::Mainnet => MAINNET_ELF,
         Network::Sepolia => SEPOLIA_ELF,
     };
-    let session_info = default_executor().execute(env, elf)?;
-    debug!(cycles = session_info.cycles(), "Session info");
+    let client = sp1_sdk::ProverClient::from_env();
+    let (output, report) = client.execute(elf, &stdin).run()?;
+    debug!(cycles = report.total_instruction_count(), "Session info");
 
-    Ok(session_info.journal.bytes)
+    Ok(output.as_slice().to_vec())
 }
 
 fn log_sync(file: &File, from: &ConsensusState, to: &ConsensusState, message: &str) {

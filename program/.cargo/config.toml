@@ -1,3 +1,5 @@
+# Set these to the risc0 cpp toolchain that is installed with `rzup install cpp`
+
 [env]
 CC_riscv32im_succinct_zkvm_elf = "/Users/willem/.risc0/cpp/bin/riscv32-unknown-elf-gcc"
 AR_riscv32im_succinct_zkvm_elf = "/Users/willem/.risc0/cpp/bin/riscv32-unknown-elf-ar"

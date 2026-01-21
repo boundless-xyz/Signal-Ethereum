@@ -1,0 +1,3 @@
+[env]
+CC_riscv32im_succinct_zkvm_elf = "/Users/willem/.risc0/cpp/bin/riscv32-unknown-elf-gcc"
+AR_riscv32im_succinct_zkvm_elf = "/Users/willem/.risc0/cpp/bin/riscv32-unknown-elf-ar"

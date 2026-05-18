@@ -1,4 +1,4 @@
-// Copyright 2025 RISC Zero, Inc.
+// Copyright 2026 Boundless Foundation, Inc.
 //
 // This file is based on or incorporates material from the Lighthouse project
 // (https://github.com/sigp/lighthouse), licensed under the Apache License 2.0.

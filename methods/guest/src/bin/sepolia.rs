@@ -1,4 +1,4 @@
-// Copyright 2025 RISC Zero, Inc.
+// Copyright 2026 RISC Zero, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -14,10 +14,10 @@
 
 #![no_main]
 
-use z_core::{DEFAULT_CONFIG, MainnetEthSpec};
+use z_core::{MainnetEthSpec, SEPOLIA_CONFIG};
 
 risc0_zkvm::guest::entry!(main);
 
 fn main() {
-    beacon_guest::entry::<MainnetEthSpec>(chainspec::sepolia_spec(), &DEFAULT_CONFIG);
+    beacon_guest::entry::<MainnetEthSpec>(chainspec::sepolia_spec(), &SEPOLIA_CONFIG);
 }

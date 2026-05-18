@@ -1,4 +1,4 @@
-// Copyright 2025 RISC Zero, Inc.
+// Copyright 2026 RISC Zero, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -39,6 +39,16 @@ pub static DEFAULT_CONFIG: Config = Config {
     max_version: ForkName::Fulu,
     epoch_lookahead_limit: Epoch::new(4),
     justification_threshold_factor: 85,
+    justification_threshold_quotient: 100,
+};
+
+/// Sepolia-specific configuration with a lowered justification threshold (70%
+/// vs the 85% default).
+pub static SEPOLIA_CONFIG: Config = Config {
+    min_version: ForkName::Electra,
+    max_version: ForkName::Fulu,
+    epoch_lookahead_limit: Epoch::new(4),
+    justification_threshold_factor: 70,
     justification_threshold_quotient: 100,
 };
 

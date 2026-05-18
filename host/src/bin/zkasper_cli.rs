@@ -33,7 +33,7 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use url::Url;
 use z_core::{
     ChainSpec, Checkpoint, Config, ConsensusState, DEFAULT_CONFIG, Epoch, EthSpec, GuestInput,
-    MainnetEthSpec, Slot, abi, verify,
+    MainnetEthSpec, SEPOLIA_CONFIG, Slot, abi, verify,
 };
 
 // all chains use the mainnet preset
@@ -147,6 +147,16 @@ impl fmt::Display for Network {
     }
 }
 
+/// Returns the verification config to use for the given network. Sepolia
+/// uses a lower justification threshold to tolerate sustained dips in
+/// testnet attestation participation; mainnet uses the strict default.
+fn config_for(network: Network) -> &'static Config {
+    match network {
+        Network::Sepolia => &SEPOLIA_CONFIG,
+        Network::Mainnet => &DEFAULT_CONFIG,
+    }
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let args = Args::try_parse()?;
@@ -187,6 +197,7 @@ async fn main() -> anyhow::Result<()> {
                 trusted_epoch,
                 caching_provider,
                 &beacon_client,
+                config_for(args.network),
             )
             .await?;
 
@@ -196,7 +207,7 @@ async fn main() -> anyhow::Result<()> {
                 &input_bytes,
                 args.network,
                 mode,
-                &DEFAULT_CONFIG,
+                config_for(args.network),
             )?;
             info!("Post-state: {:#?}", post_state);
         }
@@ -244,6 +255,7 @@ async fn main() -> anyhow::Result<()> {
                 finalized_epoch,
                 caching_provider.clone(),
                 &beacon_client,
+                config_for(args.network),
             )
             .await?;
 
@@ -322,6 +334,7 @@ async fn run_sync<E: EthSpec + Serialize, S: StateProvider<Spec = E> + Clone>(
             consensus_state.finalized_checkpoint().epoch(),
             state_provider.clone(),
             beacon_client,
+            config_for(network),
         )
         .await?;
 
@@ -331,7 +344,7 @@ async fn run_sync<E: EthSpec + Serialize, S: StateProvider<Spec = E> + Clone>(
             input_bytes,
             network,
             mode,
-            &DEFAULT_CONFIG,
+            config_for(network),
         ) {
             Ok(state) => {
                 info!("Verification successful. New state: {:#?}", &state);
@@ -361,6 +374,7 @@ async fn prepare_input<E: EthSpec + Serialize, S: StateProvider<Spec = E> + Clon
     finalized_epoch: Epoch,
     state_provider: S,
     beacon_client: &BeaconClient,
+    config: &Config,
 ) -> anyhow::Result<(Vec<u8>, ConsensusState, ConsensusState, u64)> {
     let trusted_state = state_provider.state_at_epoch_boundary(finalized_epoch)?;
     let epoch_boundary_slot = trusted_state.latest_block_header().slot;
@@ -387,7 +401,7 @@ async fn prepare_input<E: EthSpec + Serialize, S: StateProvider<Spec = E> + Clon
     info!("Running preflight");
     let reader = PreflightInputReader::new(&reader, beacon_client.clone(), trusted_checkpoint);
     let (post_state, finalized_slot) =
-        verify(&DEFAULT_CONFIG, &reader).context("preflight failed")?;
+        verify(config, &reader).context("preflight failed")?;
     info!("Preflight succeeded");
 
     let input = reader.to_input()?;

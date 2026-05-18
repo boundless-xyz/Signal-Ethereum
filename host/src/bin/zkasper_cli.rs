@@ -400,8 +400,7 @@ async fn prepare_input<E: EthSpec + Serialize, S: StateProvider<Spec = E> + Clon
 
     info!("Running preflight");
     let reader = PreflightInputReader::new(&reader, beacon_client.clone(), trusted_checkpoint);
-    let (post_state, finalized_slot) =
-        verify(config, &reader).context("preflight failed")?;
+    let (post_state, finalized_slot) = verify(config, &reader).context("preflight failed")?;
     info!("Preflight succeeded");
 
     let input = reader.to_input()?;
